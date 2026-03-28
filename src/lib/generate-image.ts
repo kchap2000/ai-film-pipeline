@@ -259,7 +259,7 @@ async function generateWithGemini(
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash-exp",
+      model: "gemini-2.5-flash-image",
       contents: prompt,
       config: {
         responseModalities: [Modality.IMAGE, Modality.TEXT],
@@ -284,8 +284,16 @@ async function generateWithGemini(
 
     console.error("Gemini returned no image data, falling back to placeholder");
     return generatePlaceholder(characterName, prompt, variationNumber);
-  } catch (err) {
-    console.error("Gemini image generation failed:", err);
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error("Gemini image generation failed:", errMsg);
+    // Surface quota/auth errors instead of silently falling back
+    if (errMsg.includes("429") || errMsg.includes("quota")) {
+      throw new Error(`Gemini API quota exceeded. Please check your Google AI billing at https://aistudio.google.com/`);
+    }
+    if (errMsg.includes("403") || errMsg.includes("401")) {
+      throw new Error(`Gemini API authentication failed. Check your GOOGLE_AI_API_KEY.`);
+    }
     return generatePlaceholder(characterName, prompt, variationNumber);
   }
 }
