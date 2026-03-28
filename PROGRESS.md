@@ -106,6 +106,11 @@
 | 2026-03-25 | Phase 7 built: Storyboard Generation — PIPELINE COMPLETE |
 | 2026-03-26 | UX fix: navigation dead-ends — Bible extraction button, Cast empty state, early phase links |
 | 2026-03-27 | Bug fixes B1-B6: stale phase status, Bible approve UX, cast API timeouts + error feedback, sidebar status |
+| 2026-03-28 | Deployed to Vercel — live at https://ai-film-pipeline-git-main-khalil-chapmans-projects.vercel.app |
+| 2026-03-28 | Fixed Gemini model: upgraded to gemini-3.1-flash-image-preview (confirmed generating real JPEG images) |
+| 2026-03-28 | Fixed Claude model: updated extract.ts to claude-sonnet-4-6 (needs push + redeploy) |
+| 2026-03-28 | DB cleanup: deleted 11 SVG placeholder cast_variations, deleted Test project, cleared approved_cast_id |
+| 2026-03-28 | Verified both Google AI and Anthropic APIs working with billing enabled |
 
 ---
 
@@ -277,5 +282,7 @@
 
 ### Remaining Work (Post-Pipeline)
 - [ ] Auth (Supabase Auth or Clerk)
-- [ ] Run Phase 6 + 7 SQL in Supabase SQL Editor
-- [ ] Deploy to Vercel
+- [x] Deploy to Vercel — live 2026-03-28
+- [x] Gemini image generation working end-to-end (gemini-3.1-flash-image-preview)
+- [ ] Push extract.ts Claude model fix + redeploy (commit 38ed7cb is local, needs `git push`)
+- [ ] Run final extraction test post-redeploy to confirm Claude extraction works end-to-end
