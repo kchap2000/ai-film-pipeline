@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Film Pipeline — System Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --black: #0a0a0a;
+    --offwhite: #f2ede6;
+    --cream: #e8e0d4;
+    --amber: #c8852a;
+    --amber-light: #e8a844;
+    --amber-dim: #7a4f18;
+    --rust: #a63a1e;
+    --slate: #1a1a1f;
+    --muted: #6b6560;
+    --rule: rgba(200,133,42,0.25);
+  }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background-color: var(--black);
+    color: var(--offwhite);
+    font-family: 'DM Mono', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    overflow-x: hidden;
+  }
+
+  /* ── GRAIN OVERLAY ── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='1'/%3E%3C/svg%3E");
+    opacity: 0.035;
+    pointer-events: none;
+    z-index: 999;
+  }
+
+  /* ── HEADER ── */
+  header {
+    padding: 64px 48px 48px;
+    border-bottom: 1px solid var(--rule);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: end;
+    gap: 24px;
+  }
+
+  .header-eyebrow {
+    font-family: 'DM Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    color: var(--amber);
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+
+  h1 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(52px, 8vw, 96px);
+    line-height: 0.9;
+    letter-spacing: 0.02em;
+    color: var(--offwhite);
+  }
+
+  h1 span {
+    color: var(--amber);
+  }
+
+  .header-meta {
+    text-align: right;
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 2;
+  }
+
+  .header-meta strong {
+    color: var(--offwhite);
+    display: block;
+    font-size: 13px;
+  }
+
+  /* ── NAV ── */
+  nav {
+    padding: 0 48px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+  }
+
+  nav a {
+    display: block;
+    padding: 18px 24px;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 11px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+    transition: color 0.2s, border-color 0.2s;
+  }
+
+  nav a:hover {
+    color: var(--amber);
+    border-bottom-color: var(--amber);
+  }
+
+  /* ── MAIN LAYOUT ── */
+  main {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 48px 96px;
+  }
+
+  section {
+    padding: 72px 0 0;
+  }
+
+  .section-label {
+    font-size: 10px;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin-bottom: 8px;
+  }
+
+  h2 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: clamp(32px, 4vw, 48px);
+    letter-spacing: 0.04em;
+    color: var(--offwhite);
+    margin-bottom: 32px;
+    line-height: 1;
+  }
+
+  /* ── OVERVIEW SUMMARY ── */
+  .overview-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    margin-bottom: 48px;
+  }
+
+  .overview-cell {
+    background: var(--black);
+    padding: 28px 32px;
+  }
+
+  .overview-cell .label {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 10px;
+  }
+
+  .overview-cell .value {
+    font-family: 'Instrument Serif', serif;
+    font-size: 18px;
+    color: var(--offwhite);
+    line-height: 1.4;
+  }
+
+  .overview-cell .value em {
+    color: var(--amber-light);
+    font-style: italic;
+  }
+
+  /* ── PIPELINE PHASES ── */
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .phase {
+    background: var(--slate);
+    border: 1px solid transparent;
+    border-left: 3px solid var(--amber-dim);
+    display: grid;
+    grid-template-columns: 72px 1fr auto;
+    align-items: start;
+    gap: 32px;
+    padding: 32px 32px 32px 28px;
+    transition: border-color 0.25s, background 0.25s;
+    cursor: default;
+  }
+
+  .phase:hover {
+    border-color: var(--amber);
+    border-left-color: var(--amber);
+    background: #131318;
+  }
+
+  .phase-num {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 52px;
+    color: var(--amber-dim);
+    line-height: 1;
+    transition: color 0.25s;
+  }
+
+  .phase:hover .phase-num {
+    color: var(--amber);
+  }
+
+  .phase-body h3 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 22px;
+    letter-spacing: 0.06em;
+    color: var(--offwhite);
+    margin-bottom: 8px;
+  }
+
+  .phase-body p {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.8;
+    max-width: 640px;
+    margin-bottom: 20px;
+  }
+
+  .phase-details {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .detail-tag {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 5px 12px;
+    border: 1px solid var(--rule);
+    color: var(--muted);
+    border-radius: 2px;
+  }
+
+  .detail-tag.highlight {
+    border-color: var(--amber-dim);
+    color: var(--amber-light);
+    background: rgba(200,133,42,0.06);
+  }
+
+  .phase-status {
+    text-align: right;
+    min-width: 100px;
+  }
+
+  .status-badge {
+    display: inline-block;
+    font-size: 9px;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    padding: 5px 10px;
+    border-radius: 2px;
+  }
+
+  .status-badge.core { background: rgba(200,133,42,0.15); color: var(--amber); border: 1px solid var(--amber-dim); }
+  .status-badge.api { background: rgba(166,58,30,0.15); color: #e07055; border: 1px solid #7a2a18; }
+  .status-badge.ui { background: rgba(40,80,120,0.2); color: #7aaddd; border: 1px solid #2a4f72; }
+
+  .connector {
+    height: 24px;
+    width: 3px;
+    background: linear-gradient(to bottom, var(--amber-dim), transparent);
+    margin-left: 100px;
+  }
+
+  /* ── TECH STACK ── */
+  .stack-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+  }
+
+  .stack-cell {
+    background: var(--black);
+    padding: 28px 28px;
+  }
+
+  .stack-cell h4 {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .stack-item {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(200,133,42,0.07);
+    font-size: 12px;
+  }
+
+  .stack-item:last-child { border-bottom: none; }
+
+  .stack-item .tech-name {
+    color: var(--offwhite);
+    min-width: 130px;
+  }
+
+  .stack-item .tech-role {
+    color: var(--muted);
+    font-size: 11px;
+    font-style: italic;
+  }
+
+  /* ── DATA MODEL ── */
+  .data-model {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 2px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+  }
+
+  .entity {
+    background: var(--black);
+    padding: 28px;
+  }
+
+  .entity h4 {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 20px;
+    letter-spacing: 0.06em;
+    color: var(--amber-light);
+    margin-bottom: 16px;
+  }
+
+  .field {
+    display: grid;
+    grid-template-columns: 140px 1fr;
+    gap: 12px;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(200,133,42,0.07);
+    font-size: 11px;
+  }
+
+  .field:last-child { border-bottom: none; }
+
+  .field-name {
+    color: var(--offwhite);
+    font-family: 'DM Mono', monospace;
+  }
+
+  .field-type {
+    color: var(--muted);
+    font-style: italic;
+  }
+
+  .field-type.key { color: var(--amber); font-style: normal; }
+  .field-type.ref { color: #7aaddd; font-style: normal; }
+
+  /* ── DEPLOYMENT ── */
+  .deploy-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 2px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+  }
+
+  .deploy-cell {
+    background: var(--black);
+    padding: 28px;
+  }
+
+  .deploy-cell h4 {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--amber);
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .deploy-item {
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(200,133,42,0.07);
+    font-size: 12px;
+    color: var(--offwhite);
+  }
+
+  .deploy-item:last-child { border-bottom: none; }
+
+  .deploy-item .sub {
+    color: var(--muted);
+    font-size: 11px;
+    margin-top: 3px;
+  }
+
+  /* ── OPEN QUESTIONS ── */
+  .questions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .question-item {
+    background: var(--slate);
+    border-left: 3px solid var(--rust);
+    padding: 20px 24px;
+    display: grid;
+    grid-template-columns: 24px 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+
+  .question-num {
+    color: var(--rust);
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 18px;
+  }
+
+  .question-text {
+    color: var(--offwhite);
+    font-size: 13px;
+    line-height: 1.7;
+  }
+
+  .question-text .sub {
+    color: var(--muted);
+    font-size: 11px;
+    margin-top: 6px;
+  }
+
+  /* ── FOOTER ── */
+  footer {
+    margin-top: 96px;
+    padding: 32px 48px;
+    border-top: 1px solid var(--rule);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  footer strong { color: var(--amber); }
+
+  /* ── RESPONSIVE ── */
+  @media (max-width: 900px) {
+    header, nav, main, footer { padding-left: 24px; padding-right: 24px; }
+    .phase { grid-template-columns: 48px 1fr; }
+    .phase-status { display: none; }
+    .stack-grid, .deploy-grid { grid-template-columns: 1fr; }
+    .data-model { grid-template-columns: 1fr; }
+    .overview-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="header-eyebrow">System Architecture · v0.1 · Draft</div>
+    <h1>AI Film<br><span>Production</span><br>Pipeline</h1>
+  </div>
+  <div class="header-meta">
+    <strong>AI for Real Life</strong>
+    Khalil Chapman<br>
+    Charleston, SC<br>
+    March 2026
+  </div>
+</header>
+
+<nav>
+  <a href="#overview">Overview</a>
+  <a href="#phases">Pipeline Phases</a>
+  <a href="#tech">Tech Stack</a>
+  <a href="#data">Data Model</a>
+  <a href="#deployment">Deployment</a>
+  <a href="#questions">Open Questions</a>
+</nav>
+
+<main>
+
+  <!-- OVERVIEW -->
+  <section id="overview">
+    <div class="section-label">00 — Overview</div>
+    <h2>What This System Is</h2>
+    <div class="overview-grid">
+      <div class="overview-cell">
+        <div class="label">Purpose</div>
+        <div class="value">A hosted web app that manages <em>all AI film projects</em> — client and personal — through a structured, phase-locked production pipeline from raw script to finished storyboard.</div>
+      </div>
+      <div class="overview-cell">
+        <div class="label">Primary User</div>
+        <div class="value">Khalil (director/producer), optionally shared with clients for review and approval at each phase gate.</div>
+      </div>
+      <div class="overview-cell">
+        <div class="label">Core Concept</div>
+        <div class="value">Script in → <em>everything extracted automatically</em> → approve phase by phase → storyboard out. Nothing moves forward without a lock.</div>
+      </div>
+      <div class="overview-cell">
+        <div class="label">Hosting Target</div>
+        <div class="value">Vercel (frontend) + Supabase (database + auth) + Vercel Edge Functions (API layer). <em>Google Imagen</em> for all image generation.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PIPELINE PHASES -->
+  <section id="phases">
+    <div class="section-label">01 — Production Pipeline</div>
+    <h2>Phase-by-Phase Breakdown</h2>
+
+    <div class="pipeline">
+
+      <div class="phase">
+        <div class="phase-num">01</div>
+        <div class="phase-body">
+          <h3>Project Creation & Asset Ingestion</h3>
+          <p>User creates a new project (client or personal), uploads the script, treatment, director notes, or any combination of documents. System accepts PDF, DOCX, and plain text. Files are stored and associated with the project record.</p>
+          <div class="phase-details">
+            <span class="detail-tag">File Upload (PDF, DOCX, TXT)</span>
+            <span class="detail-tag">Project Type: Client / Personal</span>
+            <span class="detail-tag">Multi-doc support</span>
+          </div>
+        </div>
+        <div class="phase-status"><span class="status-badge ui">UI Layer</span></div>
+      </div>
+
+      <div class="connector"></div>
+
+      <div class="phase">
+        <div class="phase-num">02</div>
+        <div class="phase-body">
+          <h3>LLM Extraction Engine</h3>
+          <p>Uploaded documents are passed to Claude (via Anthropic API). The LLM extracts and structures: all characters (with physical descriptions, personality, role), all scenes (location, time of day, action, mood), props per scene, wardrobe per character per scene, episode/act structure, and thematic notes. Output is stored as structured JSON in the database.</p>
+          <div class="phase-details">
+            <span class="detail-tag highlight">Anthropic Claude API</span>
+            <span class="detail-tag">Characters + Descriptions</span>
+            <span class="detail-tag">Scene Breakdown</span>
+            <span class="detail-tag">Props + Wardrobe</span>
+            <span class="detail-tag">Episode Structure</span>
+            <span class="detail-tag">JSON Output → DB</span>
+          </div>
+        </div>
+        <div class="phase-status"><span class="status-badge api">API Core</span></div>
+      </div>
+
+      <div class="connector"></div>
+
+      <div class="phase">
+        <div class="phase-num">03</div>
+        <div class="phase-body">
+          <h3>Film Bible (Auto-Generated)</h3>
+          <p>Extracted data is rendered into a beautiful, web-native Film Bible. Think: a polished editorial document inside the app — not a PDF export. Sections for characters, locations, tone/mood, episode breakdown. Khalil or the client can read, annotate, and request edits before anything is locked. Bible is version-controlled.</p>
+          <div class="phase-details">
+            <span class="detail-tag">Web-rendered document</span>
+            <span class="detail-tag">Annotation / Edit requests</span>
+            <span class="detail-tag highlight">Phase Gate: Must approve to proceed</span>
+            <span class="detail-tag">Version history</span>
+          </div>
+        </div>
+        <div class="phase-status"><span class="status-badge ui">UI Layer</span></div>
+      </div>
+
+      <div class="connector"></div>
+
+      <div class="phase">
+        <div class="phase-num">04</div>
+        <div class="phase-body">
+          <h3>AI Casting (Character Visualization)</h3>
+          <p>For each character, Google Imagen generates 10 visual variations using the extracted physical description as the prompt base. Khalil reviews each set: approve, reject with notes ("too old", "different skin tone"), or flag for revision. Approved characters move to the pose phase.</p>
+          <div class="phase-details">
+            <span class="detail-tag highlight">Google Imagen API</span>
+            <span class="detail-tag">10 variations per character</span>
+            <span class="detail-tag">Approve / Reject / Note</span>
+            <span class="detail-tag">Prompt built from extraction data</span>
+          </div>
+        </div>
+        <div class="phase-status"><span class="status-badge api">API Core</span></div>
+      </div>
+
+      <div class="connector"></div>
+
+      <div class="phase">
+        <div class="phase-num">05</div>
+        <div class="phase-body">
+          <h3>Character Lock & Reference Poses</h3>
+          <p>Approved cast headshot is used as the seed for a reference pose shoot — front, 3/4, profile — generated via Imagen. These locked reference images become the character's canonical visual identity, used in all downstream storyboard generation. Locked images are stored in the Film Bible.</p>
+          <div class="phase-details">
+            <span class="detail-tag highlight">Google Imagen API</span>
+            <span class="detail-tag">Front / 3-quarter / Profile</span>
+            <span class="detail-tag">Locked into Film Bible</span>
+            <span class="detail-tag highlight">Phase Gate: All characters must lock</span>
+          </div>
+        </div>
+        <div class="phase-status"><span class="status-badge api">API Core</span></div>
+      </div>
+
+      <div class="connector"></div>
+
+      <div class="phase">
+        <div class="phase-num">06</div>
+        <div class="phase-body">
+          <h3>Location & Scene Bible</h3>
+          <p>Same approval loop as casting, but for locations. Imagen generates visual reference images for each location based on extracted scene descriptions. Approved locations lock into the Scene Bible. Scene-level details (time of day, mood, props in frame) are editable before lock.</p>
+          <div class="phase-details">
+            <span class="detail-tag highlight">Google Imagen API</span>
+            <span class="detail-tag">Per-location visual references</span>
+            <span class="detail-tag">Scene-level metadata</span>
+            <span class="detail-tag highlight">Phase Gate: All locations must lock</span>
+          </div>
+        </div>
+        <div class="phase-status"><span class="status-badge api">API Core</span></div>
+      </div>
+
+      <div class="connector"></div>
+
+      <div class="phase">
+        <div class="phase-num">07</div>
+        <div class="phase-body">
+          <h3>Storyboard Generation</h3>
+          <p>With all assets locked, Khalil selects a scene to storyboard. The system composes prompts for each shot using: the locked character reference images, the locked location image, the scene action and mood from the extraction, and the shot description. Imagen generates a panel-by-panel storyboard. Panels can be individually regenerated or annotated with shot notes (camera angle, lens, movement).</p>
+          <div class="phase-details">
+            <span class="detail-tag highlight">Google Imagen API</span>
+            <span class="detail-tag">Character + Location compositing</span>
+            <span class="detail-tag">Shot-by-shot panels</span>
+            <span class="detail-tag">Camera / Lens / Movement notes</span>
+            <span class="detail-tag">Per-panel regen</span>
+            <span class="detail-tag">Exportable</span>
+          </div>
+        </div>
+        <div class="phase-status"><span class="status-badge core">Output</span></div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- TECH STACK -->
+  <section id="tech">
+    <div class="section-label">02 — Technology</div>
+    <h2>Recommended Tech Stack</h2>
+
+    <div class="stack-grid">
+      <div class="stack-cell">
+        <h4>Frontend</h4>
+        <div class="stack-item">
+          <span class="tech-name">Next.js 14 (App Router)</span>
+          <span class="tech-role">React framework, file-based routing</span>
+        </div>
+        <div class="stack-item">
+          <span class="tech-name">Tailwind CSS</span>
+          <span class="tech-role">Utility-first styling</span>
+        </div>
+        <div class="stack-item">
+          <span class="tech-name">Framer Motion</span>
+          <span class="tech-role">Phase transitions, UI animation</span>
+        </div>
+        <div class="stack-item">
+          <span class="tech-name">React Query</span>
+          <span class="tech-role">Server state, caching, polling</span>
+        </div>
+        <div class="stack-item">
+          <span class="tech-name">Vercel</span>
+          <span class="tech-role">Hosting, Edge Functions, CI/CD</span>
+        </div>
+      </div>
+
+      <div class="stack-cell">
+        <h4>Backend / API</h4>
+        <div class="stack-item">
+          <span class="tech-name">Vercel Edge Functions</span>
+          <span class="tech-role">API routes (serverless)</span>
+        </div>
+        <div class="stack-item">
+          <span class="tech-name">Supabase</span>
+          <span class="tech-role">Postgres DB + Auth + Storage</span>
+        </div>
+        <div class="stack-item">
+          <span class="tech-name">Anthropic Claude API</span>
+          <span class="tech-role">Script extraction (claude-sonnet)</span>
+        </div>
+        <div class="stack-item">
+          <span class="tech-name">Google Imagen API</span>
+          <span class="tech-role">Casting, locations, storyboards</span>
+        </div>
+        <div class="stack-item">
+          <span class="tech-name">Supabase Storage</span>
+          <span class="tech-role">Images, uploaded docs, exports</span>
+        </div>
+      </div>
+
+      <div class="stack-cell">
+        <h4>Supporting Services</h4>
+        <div class="stack-item">
+          <span class="tech-name">Clerk or Supabase Auth</span>
+          <span class="tech-role">User auth (you + client access)</span>
+        </div>
+        <div class="stack-item">
+          <span class="tech-name">Uploadthing or S3</span>
+          <span class="tech-role">Document upload handling</span>
+        </div>
+        <div class="stack-item">
+          <span class="tech-name">Resend</span>
+          <span class="tech-role">Client notifications (optional)</span>
+        </div>
+        <div class="stack-item">
+          <span class="tech-name">Vercel Analytics</span>
+          <span class="tech-role">Usage tracking</span>
+        </div>
+        <div class="stack-item">
+          <span class="tech-name">GitHub</span>
+          <span class="tech-role">Version control, deploy pipeline</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DATA MODEL -->
+  <section id="data">
+    <div class="section-label">03 — Data Model</div>
+    <h2>Core Database Entities</h2>
+
+    <div class="data-model">
+      <div class="entity">
+        <h4>Project</h4>
+        <div class="field"><span class="field-name">id</span><span class="field-type key">UUID · PK</span></div>
+        <div class="field"><span class="field-name">title</span><span class="field-type">string</span></div>
+        <div class="field"><span class="field-name">type</span><span class="field-type">enum: client | personal</span></div>
+        <div class="field"><span class="field-name">client_name</span><span class="field-type">string | null</span></div>
+        <div class="field"><span class="field-name">phase_status</span><span class="field-type">enum: ingestion → extraction → bible → casting → lock → scene_bible → storyboard</span></div>
+        <div class="field"><span class="field-name">created_at</span><span class="field-type">timestamp</span></div>
+        <div class="field"><span class="field-name">owner_id</span><span class="field-type ref">→ User</span></div>
+      </div>
+
+      <div class="entity">
+        <h4>Character</h4>
+        <div class="field"><span class="field-name">id</span><span class="field-type key">UUID · PK</span></div>
+        <div class="field"><span class="field-name">project_id</span><span class="field-type ref">→ Project</span></div>
+        <div class="field"><span class="field-name">name</span><span class="field-type">string</span></div>
+        <div class="field"><span class="field-name">description</span><span class="field-type">text (extracted)</span></div>
+        <div class="field"><span class="field-name">role</span><span class="field-type">string (lead, support…)</span></div>
+        <div class="field"><span class="field-name">cast_variations</span><span class="field-type">string[] (Imagen URLs)</span></div>
+        <div class="field"><span class="field-name">approved_cast_url</span><span class="field-type">string | null</span></div>
+        <div class="field"><span class="field-name">pose_refs</span><span class="field-type">JSON (front/3q/profile URLs)</span></div>
+        <div class="field"><span class="field-name">locked</span><span class="field-type">boolean</span></div>
+      </div>
+
+      <div class="entity">
+        <h4>Scene</h4>
+        <div class="field"><span class="field-name">id</span><span class="field-type key">UUID · PK</span></div>
+        <div class="field"><span class="field-name">project_id</span><span class="field-type ref">→ Project</span></div>
+        <div class="field"><span class="field-name">scene_number</span><span class="field-type">integer</span></div>
+        <div class="field"><span class="field-name">location</span><span class="field-type ref">→ Location</span></div>
+        <div class="field"><span class="field-name">characters_present</span><span class="field-type ref">→ Character[]</span></div>
+        <div class="field"><span class="field-name">time_of_day</span><span class="field-type">string</span></div>
+        <div class="field"><span class="field-name">action_summary</span><span class="field-type">text</span></div>
+        <div class="field"><span class="field-name">mood</span><span class="field-type">string</span></div>
+        <div class="field"><span class="field-name">props</span><span class="field-type">string[]</span></div>
+        <div class="field"><span class="field-name">locked</span><span class="field-type">boolean</span></div>
+      </div>
+
+      <div class="entity">
+        <h4>Storyboard Panel</h4>
+        <div class="field"><span class="field-name">id</span><span class="field-type key">UUID · PK</span></div>
+        <div class="field"><span class="field-name">scene_id</span><span class="field-type ref">→ Scene</span></div>
+        <div class="field"><span class="field-name">panel_order</span><span class="field-type">integer</span></div>
+        <div class="field"><span class="field-name">shot_description</span><span class="field-type">text</span></div>
+        <div class="field"><span class="field-name">camera_notes</span><span class="field-type">JSON (angle, lens, movement)</span></div>
+        <div class="field"><span class="field-name">generated_image_url</span><span class="field-type">string</span></div>
+        <div class="field"><span class="field-name">prompt_used</span><span class="field-type">text (logged for debugging)</span></div>
+        <div class="field"><span class="field-name">approved</span><span class="field-type">boolean</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DEPLOYMENT -->
+  <section id="deployment">
+    <div class="section-label">04 — Deployment</div>
+    <h2>Hosting Architecture</h2>
+
+    <div class="deploy-grid">
+      <div class="deploy-cell">
+        <h4>Frontend (Vercel)</h4>
+        <div class="deploy-item">
+          Next.js App
+          <div class="sub">Auto-deploys from GitHub main branch</div>
+        </div>
+        <div class="deploy-item">
+          Edge Functions
+          <div class="sub">API routes for Claude + Imagen calls</div>
+        </div>
+        <div class="deploy-item">
+          Custom Domain
+          <div class="sub">yourpipeline.com or studio.aiforlife.co</div>
+        </div>
+        <div class="deploy-item">
+          Preview Deployments
+          <div class="sub">Auto-generated per PR / branch</div>
+        </div>
+      </div>
+
+      <div class="deploy-cell">
+        <h4>Backend (Supabase)</h4>
+        <div class="deploy-item">
+          Postgres Database
+          <div class="sub">All project, character, scene, panel data</div>
+        </div>
+        <div class="deploy-item">
+          Supabase Storage
+          <div class="sub">Uploaded docs + all generated images</div>
+        </div>
+        <div class="deploy-item">
+          Row-Level Security
+          <div class="sub">Projects scoped per user/client</div>
+        </div>
+        <div class="deploy-item">
+          Realtime (optional)
+          <div class="sub">Live updates while images generate</div>
+        </div>
+      </div>
+
+      <div class="deploy-cell">
+        <h4>External APIs</h4>
+        <div class="deploy-item">
+          Anthropic Claude
+          <div class="sub">Extraction engine (claude-sonnet-4)</div>
+        </div>
+        <div class="deploy-item">
+          Google Imagen
+          <div class="sub">Casting, pose refs, locations, storyboards</div>
+        </div>
+        <div class="deploy-item">
+          API Keys
+          <div class="sub">Stored in Vercel environment variables</div>
+        </div>
+        <div class="deploy-item">
+          Cost Model
+          <div class="sub">Pay-per-generation; no fixed infra cost</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- OPEN QUESTIONS -->
+  <section id="questions">
+    <div class="section-label">05 — Open Questions</div>
+    <h2>Decisions Still Needed</h2>
+
+    <div class="questions-list">
+      <div class="question-item">
+        <span class="question-num">Q1</span>
+        <div class="question-text">
+          <strong>Client access model</strong> — Do clients get their own login, or does Khalil share a read-only link per project? (Affects auth complexity significantly.)
+          <div class="sub">Option A: Full client auth (Clerk/Supabase) · Option B: Shareable magic link per project (simpler, faster to build)</div>
+        </div>
+      </div>
+      <div class="question-item">
+        <span class="question-num">Q2</span>
+        <div class="question-text">
+          <strong>Google Imagen access</strong> — Imagen 3 is currently available via Google Vertex AI, which requires a GCP project and billing setup. Do you have a GCP account, or do we need to plan that setup step?
+          <div class="sub">Alternative fallback: fal.ai (Flux) until Imagen is configured — same API pattern, easy swap.</div>
+        </div>
+      </div>
+      <div class="question-item">
+        <span class="question-num">Q3</span>
+        <div class="question-text">
+          <strong>Character consistency across storyboard panels</strong> — Imagen doesn't natively lock character identity across generations. What's the acceptable approach?
+          <div class="sub">Option A: Use approved headshot as image reference in each prompt · Option B: Accept variation, handle consistency in post (Kling/Veo) · Option C: Explore ControlNet-style seeds via a different provider</div>
+        </div>
+      </div>
+      <div class="question-item">
+        <span class="question-num">Q4</span>
+        <div class="question-text">
+          <strong>Export format</strong> — What does the final storyboard output look like? Web-view only, PDF export, or slide deck (Google Slides / PPTX)?
+          <div class="sub">This affects whether we need a PDF generation layer (e.g. Puppeteer or a third-party export service).</div>
+        </div>
+      </div>
+      <div class="question-item">
+        <span class="question-num">Q5</span>
+        <div class="question-text">
+          <strong>Build approach</strong> — Claude Code (autonomous, terminal-based) vs. Claude + Cursor vs. traditional dev? Given your GitHub familiarity, Claude Code may be the fastest path.
+          <div class="sub">This determines how we structure the first build sprint and what kind of scaffolding docs we prep next.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div>AI Film Production Pipeline · Architecture v0.1 · <strong>AI for Real Life</strong></div>
+  <div>Next step: Answer Open Questions → Begin Phase 1 Build</div>
+</footer>
+
+</body>
+</html>
