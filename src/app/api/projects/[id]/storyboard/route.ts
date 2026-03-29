@@ -116,7 +116,7 @@ export async function POST(
 
     // Use Claude to break the scene into shots
     const shotBreakdown = await anthropic.messages.create({
-      model: "claude-sonnet-4-5-20250514",
+      model: "claude-sonnet-4-6",
       max_tokens: 2000,
       system: `You are a film storyboard artist breaking a scene into individual shots.
 For each shot, provide: shot_type (wide/medium/close-up/extreme-close-up/OTS/POV/two-shot/insert), camera_angle (eye-level/low/high/dutch/bird's-eye/worm's-eye), camera_movement (static/pan-left/pan-right/tilt-up/tilt-down/dolly-in/dolly-out/crane-up/crane-down/handheld/steadicam), action_description (what happens in this shot), dialogue (any dialogue in this shot, empty string if none), characters_in_shot (array of character names visible), duration_seconds (estimated duration 1.0-10.0).

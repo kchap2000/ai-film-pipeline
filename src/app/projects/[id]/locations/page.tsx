@@ -39,6 +39,7 @@ export default function LocationBiblePage() {
   const [locations, setLocations] = useState<Location[]>([]);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
   const [locking, setLocking] = useState(false);
   const [selectedLoc, setSelectedLoc] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
@@ -62,11 +63,20 @@ export default function LocationBiblePage() {
 
   const generateVariations = async (locationId?: string) => {
     setGenerating(true);
-    await fetch(`/api/projects/${id}/locations`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(locationId ? { location_id: locationId } : {}),
-    });
+    setGenError(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/locations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(locationId ? { location_id: locationId } : {}),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setGenError(data.error || `Generation failed (${res.status}). Please try again.`);
+      }
+    } catch {
+      setGenError("Network error. Please check your connection and try again.");
+    }
     await fetchData();
     setGenerating(false);
   };
@@ -169,7 +179,31 @@ export default function LocationBiblePage() {
         </div>
       </header>
 
-      {locations.length === 0 ? (
+      {/* Error banner */}
+      {genError && (
+        <div className="border border-red-900/50 bg-red-950/20 p-4 mb-6 flex items-center justify-between">
+          <p className="text-red-400 text-xs">{genError}</p>
+          <button
+            onClick={() => setGenError(null)}
+            className="text-red-500 text-[10px] uppercase tracking-widest border border-red-900/50 px-3 py-1 hover:bg-red-950/30 transition-colors ml-4 flex-shrink-0"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Generating skeleton when locations.length === 0 */}
+      {generating && locations.length === 0 ? (
+        <div className="border border-amber-900/30 bg-amber-950/10 p-10 text-center">
+          <div className="flex items-center justify-center gap-3 mb-3">
+            <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+            <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+            <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+          </div>
+          <p className="text-amber-400 text-xs uppercase tracking-widest mb-1">Extracting locations & generating images</p>
+          <p className="text-neutral-600 text-xs">This takes 60–90 seconds. Images will appear when complete.</p>
+        </div>
+      ) : locations.length === 0 ? (
         <div className="border border-neutral-800 p-12 text-center">
           <p className="text-neutral-500 text-sm mb-2">
             No locations extracted yet
@@ -359,6 +393,16 @@ export default function LocationBiblePage() {
                         )}
                       </div>
                     ))}
+                  </div>
+                ) : generating ? (
+                  <div className="border border-amber-900/30 bg-amber-950/10 p-10 text-center mb-8">
+                    <div className="flex items-center justify-center gap-3 mb-3">
+                      <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                      <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                      <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                    </div>
+                    <p className="text-amber-400 text-xs uppercase tracking-widest mb-1">Generating location images</p>
+                    <p className="text-neutral-600 text-xs">This takes 60–90 seconds. Images will appear when complete.</p>
                   </div>
                 ) : (
                   <div className="border-2 border-dashed border-neutral-700 p-12 text-center mb-8">

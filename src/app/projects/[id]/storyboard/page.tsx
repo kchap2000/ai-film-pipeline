@@ -43,6 +43,7 @@ export default function StoryboardPage() {
   const [totalPanels, setTotalPanels] = useState(0);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
   const [genScene, setGenScene] = useState<string | null>(null);
   const [expandedScene, setExpandedScene] = useState<string | null>(null);
 
@@ -66,12 +67,21 @@ export default function StoryboardPage() {
 
   const generatePanels = async (sceneId?: string) => {
     setGenerating(true);
+    setGenError(null);
     if (sceneId) setGenScene(sceneId);
-    await fetch(`/api/projects/${id}/storyboard`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(sceneId ? { scene_id: sceneId } : {}),
-    });
+    try {
+      const res = await fetch(`/api/projects/${id}/storyboard`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sceneId ? { scene_id: sceneId } : {}),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setGenError(data.error || `Generation failed (${res.status}). Please try again.`);
+      }
+    } catch {
+      setGenError("Network error. Please check your connection and try again.");
+    }
     await fetchData();
     setGenerating(false);
     setGenScene(null);
@@ -127,6 +137,19 @@ export default function StoryboardPage() {
           </div>
         </div>
       </header>
+
+      {/* Error banner */}
+      {genError && (
+        <div className="border border-red-900/50 bg-red-950/20 p-4 mb-6 flex items-center justify-between">
+          <p className="text-red-400 text-xs">{genError}</p>
+          <button
+            onClick={() => setGenError(null)}
+            className="text-red-500 text-[10px] uppercase tracking-widest border border-red-900/50 px-3 py-1 hover:bg-red-950/30 transition-colors ml-4 flex-shrink-0"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* Character cast strip */}
       {characters.length > 0 && (
@@ -262,6 +285,19 @@ export default function StoryboardPage() {
                         </button>
                       )}
                     </div>
+
+                    {/* Generating indicator */}
+                    {!hasPanels && generating && genScene === scene.id && (
+                      <div className="border border-amber-900/30 bg-amber-950/10 p-8 text-center mt-4">
+                        <div className="flex items-center justify-center gap-3 mb-3">
+                          <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                          <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                          <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                        </div>
+                        <p className="text-amber-400 text-xs uppercase tracking-widest mb-1">Breaking scene into shots & generating panels</p>
+                        <p className="text-neutral-600 text-xs">This may take 30–60 seconds per scene.</p>
+                      </div>
+                    )}
 
                     {/* Panel strip */}
                     {hasPanels && (
