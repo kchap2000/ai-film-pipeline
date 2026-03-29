@@ -1,6 +1,8 @@
 import { getSupabase } from "@/lib/supabase";
 import { extractFromText } from "@/lib/extract";
 import { NextRequest, NextResponse } from "next/server";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const pdfParse = require("pdf-parse");
 
 export const maxDuration = 60; // Allow up to 60s for Claude extraction
 
@@ -70,9 +72,9 @@ export async function POST(req: NextRequest) {
       file.file_type === "application/pdf" ||
       file.file_name.endsWith(".pdf")
     ) {
-      // PDF: extract raw text (basic — strips binary, keeps readable chars)
+      // PDF: extract text using pdf-parse
       const buffer = await fileData.arrayBuffer();
-      text = extractTextFromPDF(Buffer.from(buffer));
+      text = await extractTextFromPDF(Buffer.from(buffer));
     } else if (
       file.file_type ===
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
@@ -175,34 +177,17 @@ export async function POST(req: NextRequest) {
 }
 
 /**
- * Basic PDF text extraction — pulls readable ASCII/UTF strings from PDF binary.
- * For production, consider pdf-parse or pdfjs-dist.
+ * PDF text extraction using pdf-parse.
+ * Handles FlateDecode-compressed PDFs correctly.
  */
-function extractTextFromPDF(buffer: Buffer): string {
-  const raw = buffer.toString("latin1");
-
-  // Extract text between BT (begin text) and ET (end text) operators
-  const textBlocks: string[] = [];
-  const btEtRegex = /BT\s([\s\S]*?)ET/g;
-  let match;
-
-  while ((match = btEtRegex.exec(raw)) !== null) {
-    const block = match[1];
-    // Extract strings in parentheses (Tj operator)
-    const tjRegex = /\(([^)]*)\)/g;
-    let tjMatch;
-    while ((tjMatch = tjRegex.exec(block)) !== null) {
-      textBlocks.push(tjMatch[1]);
-    }
+async function extractTextFromPDF(buffer: Buffer): Promise<string> {
+  try {
+    const data = await pdfParse(buffer);
+    return data.text || "";
+  } catch (err) {
+    console.error("PDF parse failed:", err);
+    return "";
   }
-
-  if (textBlocks.length > 0) {
-    return textBlocks.join(" ").replace(/\\n/g, "\n").replace(/\s+/g, " ").trim();
-  }
-
-  // Fallback: extract any readable text strings
-  const readable = raw.replace(/[^\x20-\x7E\n\r\t]/g, " ");
-  return readable.replace(/\s{3,}/g, "\n").trim();
 }
 
 /**
