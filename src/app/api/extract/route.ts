@@ -1,8 +1,15 @@
 import { getSupabase } from "@/lib/supabase";
 import { extractFromText } from "@/lib/extract";
 import { NextRequest, NextResponse } from "next/server";
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require("pdf-parse");
+// Lazy-load pdf-parse to avoid its test-file-loading side effect at build time
+let _pdfParse: typeof import("pdf-parse") | null = null;
+function getPdfParse() {
+  if (!_pdfParse) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    _pdfParse = require("pdf-parse");
+  }
+  return _pdfParse;
+}
 
 export const maxDuration = 60; // Allow up to 60s for Claude extraction
 
@@ -182,7 +189,8 @@ export async function POST(req: NextRequest) {
  */
 async function extractTextFromPDF(buffer: Buffer): Promise<string> {
   try {
-    const data = await pdfParse(buffer);
+    const parse = getPdfParse();
+    const data = await parse(buffer);
     return data.text || "";
   } catch (err) {
     console.error("PDF parse failed:", err);
