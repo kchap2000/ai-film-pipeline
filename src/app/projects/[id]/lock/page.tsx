@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import ProjectNav from "@/components/ProjectNav";
 
 interface Pose {
   id: string;
@@ -93,6 +94,8 @@ export default function CharacterLockPage() {
   const noCast = castCharacters.length === 0;
 
   return (
+    <>
+    <ProjectNav projectId={id} />
     <div className="max-w-6xl mx-auto px-6 py-12">
       {/* Header */}
       <header className="border-b border-amber-900/25 pb-8 mb-8">
@@ -276,5 +279,6 @@ export default function CharacterLockPage() {
         </div>
       )}
     </div>
+    </>
   );
 }

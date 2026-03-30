@@ -281,7 +281,7 @@
 | B7 | Storyboard | `POST /api/projects/:id/storyboard` returns 503 — wrong Claude model string `claude-sonnet-4-5-20250514` in route | Critical | ✅ Fixed — changed to `claude-sonnet-4-6` in `src/app/api/projects/[id]/storyboard/route.ts` line 119 |
 | B8 | Location, Storyboard | No loading indicator in content area during AI generation — UI appears frozen for 60–90s | High | ✅ Fixed — added animated bounce spinner + descriptive message to location and storyboard pages during generation |
 | B9 | Location, Storyboard | API errors silently swallowed — no user feedback on failure | High | ✅ Fixed — added try/catch with genError state and dismissible red error banner on both pages |
-| B10 | Extract API | pdf-parse fails on Vercel serverless even with lazy loading — test-file init runs at call time and throws, catch block returns empty string | Critical | ✅ Fixed in sandbox — changed to `require("pdf-parse/lib/pdf-parse.js")` to skip test-file initialization. Awaiting Claude Code push. |
+| B10 | Extract API | pdf-parse fails on Vercel serverless even with lazy loading — test-file init runs at call time and throws, catch block returns empty string | Critical | ✅ Fixed — changed to `require("pdf-parse/lib/pdf-parse.js")` (commit 1996bd0). Confirmed working: WAYW Ep2 PDF extracts 4 chars, 21 scenes, full act structure directly from compressed PDF. |
 
 ---
 
@@ -295,4 +295,32 @@
 - [x] Fixed B7/B8/B9 in sandbox (2026-03-29) — Claude Code deployed commit 75cdc91
 - [x] B7 confirmed working in production — storyboard POST returns 200, Scene 1 generated 7 cinematic panels
 - [x] WAYW Ep2 PDF tested — discovered pdf-parse still fails on Vercel (test-file loading issue even with lazy load)
-- [x] Fix: changed to require("pdf-parse/lib/pdf-parse.js") to bypass test-file init — awaiting Claude Code push
+- [x] Fix: changed to require("pdf-parse/lib/pdf-parse.js") (commit 1996bd0) — CONFIRMED WORKING in production
+- [x] WAYW Ep2 PDF now extracts 4 characters, 21 scenes, full 3-act structure, logline, genre directly from compressed PDF
+- [x] Aggressive improvements pass (2026-03-29) — extraction prompt overhaul, voice_only, scene_type, bible inline editing, ProjectNav, cast V.O. handling
+
+---
+
+### 🔄 Next Up: Deploy Aggressive Improvements Pass
+
+**Requires Claude Code push + Supabase migration:**
+
+1. **Supabase migration** (run in Supabase SQL editor):
+   ```sql
+   ALTER TABLE characters ADD COLUMN IF NOT EXISTS voice_only boolean NOT NULL DEFAULT false;
+   ALTER TABLE scenes ADD COLUMN IF NOT EXISTS scene_type text NOT NULL DEFAULT 'real';
+   ```
+
+2. **Files changed in this pass (git commit + push to Vercel):**
+   - `src/lib/types.ts` — voice_only on Character, scene_type on Scene
+   - `src/lib/extract.ts` — new EXTRACTION_SYSTEM_PROMPT + voice_only/scene_type interfaces
+   - `src/app/api/extract/route.ts` — INSERTs now store voice_only and scene_type
+   - `src/app/api/projects/[id]/bible/route.ts` — new PATCH handler for inline character editing
+   - `src/app/projects/[id]/bible/page.tsx` — inline edit UI (description, personality, role, voice_only toggle), scene_type badge
+   - `src/app/projects/[id]/cast/page.tsx` — V.O. badge, skip generate for voice-only chars, purple info panel
+   - `src/components/ProjectNav.tsx` — NEW: sticky phase navigation bar (self-fetching)
+   - `src/app/projects/[id]/lock/page.tsx` — ProjectNav added
+   - `src/app/projects/[id]/locations/page.tsx` — ProjectNav added
+   - `src/app/projects/[id]/storyboard/page.tsx` — ProjectNav added
+   - `supabase/schema.sql` — migration section appended at bottom
+

@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import ProjectNav from "@/components/ProjectNav";
 
 interface CastVariation {
   id: string;
@@ -19,6 +20,7 @@ interface CastCharacter {
   name: string;
   description: string;
   role: string;
+  voice_only: boolean;
   approved_cast_id: string | null;
   variations: CastVariation[];
 }
@@ -73,8 +75,8 @@ export default function CastingPage() {
     const chars: CastCharacter[] = data.characters || [];
 
     const targetChars = characterId
-      ? chars.filter((c) => c.id === characterId)
-      : chars;
+      ? chars.filter((c) => c.id === characterId && !c.voice_only)
+      : chars.filter((c) => !c.voice_only);
 
     for (const char of targetChars) {
       const existingNums = new Set(char.variations.map((v) => v.variation_number));
@@ -150,8 +152,10 @@ export default function CastingPage() {
   }
 
   const activeChar = characters.find((c) => c.id === selectedChar);
-  const hasVariations = characters.some((c) => c.variations.length > 0);
-  const allCast = characters.every((c) => c.approved_cast_id !== null && c.variations.length > 0);
+  // Exclude voice-only from counts and generation (they're never on screen)
+  const castableChars = characters.filter((c) => !c.voice_only);
+  const hasVariations = castableChars.some((c) => c.variations.length > 0);
+  const allCast = castableChars.length > 0 && castableChars.every((c) => c.approved_cast_id !== null && c.variations.length > 0);
 
   if (characters.length === 0) {
     return (
@@ -188,6 +192,8 @@ export default function CastingPage() {
   }
 
   return (
+    <>
+    <ProjectNav projectId={id} />
     <div className="max-w-6xl mx-auto px-6 py-12">
       {/* Header */}
       <header className="border-b border-amber-900/25 pb-8 mb-8">
@@ -203,7 +209,12 @@ export default function CastingPage() {
               AI Casting
             </h1>
             <p className="text-xs text-neutral-500 mt-2">
-              {characters.length} characters &middot; {TOTAL_VARIATIONS} variations each
+              {castableChars.length} castable characters &middot; {TOTAL_VARIATIONS} variations each
+              {characters.length > castableChars.length && (
+                <span className="text-neutral-600">
+                  {" "}&middot; {characters.length - castableChars.length} voice-only
+                </span>
+              )}
             </p>
           </div>
           {!hasVariations && (
@@ -270,6 +281,8 @@ export default function CastingPage() {
                 className={`w-full text-left px-4 py-3 border transition-colors ${
                   selectedChar === char.id
                     ? "border-amber-700 bg-amber-950/20"
+                    : char.voice_only
+                    ? "border-neutral-800/50 opacity-60 hover:opacity-80"
                     : "border-neutral-800 hover:border-neutral-700"
                 }`}
               >
@@ -281,7 +294,9 @@ export default function CastingPage() {
                   >
                     {char.name}
                   </span>
-                  {approved ? (
+                  {char.voice_only ? (
+                    <span className="text-purple-400 text-[9px] uppercase tracking-widest">V.O.</span>
+                  ) : approved ? (
                     <span className="text-green-500 text-[10px]">CAST</span>
                   ) : hasPending ? (
                     <span className="text-amber-600 text-[10px]">REVIEW</span>
@@ -320,12 +335,19 @@ export default function CastingPage() {
             <>
               <div className="flex items-start justify-between mb-6">
                 <div>
-                  <h2 className="text-xl text-neutral-100">{activeChar.name}</h2>
+                  <div className="flex items-center gap-3">
+                    <h2 className="text-xl text-neutral-100">{activeChar.name}</h2>
+                    {activeChar.voice_only && (
+                      <span className="text-[10px] uppercase tracking-widest text-purple-400 border border-purple-800/50 bg-purple-950/20 px-2 py-0.5">
+                        Voice Only
+                      </span>
+                    )}
+                  </div>
                   <p className="text-xs text-neutral-500 mt-1 max-w-lg">
                     {activeChar.description}
                   </p>
                 </div>
-                {activeChar.variations.length < TOTAL_VARIATIONS && (
+                {!activeChar.voice_only && activeChar.variations.length < TOTAL_VARIATIONS && (
                   <button
                     onClick={() => generateVariations(activeChar.id)}
                     disabled={generating}
@@ -340,7 +362,19 @@ export default function CastingPage() {
                 )}
               </div>
 
-              {activeChar.variations.length === 0 ? (
+              {activeChar.voice_only ? (
+                <div className="border border-purple-900/30 bg-purple-950/10 p-10 text-center">
+                  <p className="text-purple-400 text-sm mb-2">Voice Only Character</p>
+                  <p className="text-neutral-500 text-xs max-w-sm mx-auto">
+                    This character is never physically present on screen — they appear only via voiceover, phone recording, or narration. No casting images are generated.
+                  </p>
+                  {activeChar.description && !activeChar.description.startsWith("No physical") && (
+                    <p className="text-neutral-400 text-xs mt-4 italic max-w-sm mx-auto">
+                      {activeChar.description}
+                    </p>
+                  )}
+                </div>
+              ) : activeChar.variations.length === 0 ? (
                 <div className="border-2 border-dashed border-neutral-700 p-12 text-center">
                   <p className="text-neutral-500 text-sm">No variations generated yet</p>
                   <p className="text-neutral-600 text-xs mt-1">
@@ -461,5 +495,6 @@ export default function CastingPage() {
         </div>
       </div>
     </div>
+    </>
   );
 }

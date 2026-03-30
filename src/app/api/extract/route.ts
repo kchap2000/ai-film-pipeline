@@ -130,6 +130,7 @@ export async function POST(req: NextRequest) {
         description: c.description || "",
         role: c.role || "minor",
         personality: c.personality || "",
+        voice_only: c.voice_only ?? false,
       }))
     );
     if (charError) {
@@ -145,6 +146,7 @@ export async function POST(req: NextRequest) {
         scene_number: s.scene_number,
         location: s.location || "",
         time_of_day: s.time_of_day || "",
+        scene_type: s.scene_type || "real",
         action_summary: s.action_summary || "",
         mood: s.mood || "",
         props: s.props || [],

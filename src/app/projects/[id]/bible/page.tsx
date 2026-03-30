@@ -10,6 +10,7 @@ import {
   PHASE_LABELS,
   PHASE_ORDER,
 } from "@/lib/types";
+import ProjectNav from "@/components/ProjectNav";
 
 interface ExtractionData {
   structure: {
@@ -31,6 +32,13 @@ const ROLE_COLORS: Record<string, string> = {
   mentioned: "border-neutral-800 text-neutral-600",
 };
 
+interface EditState {
+  description: string;
+  personality: string;
+  role: string;
+  voice_only: boolean;
+}
+
 export default function FilmBible() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -43,6 +51,9 @@ export default function FilmBible() {
   const [extracting, setExtracting] = useState(false);
   const [extractError, setExtractError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"overview" | "characters" | "scenes">("overview");
+  const [editingCharId, setEditingCharId] = useState<string | null>(null);
+  const [editState, setEditState] = useState<EditState>({ description: "", personality: "", role: "", voice_only: false });
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     fetch(`/api/projects/${id}/bible`)
@@ -101,6 +112,36 @@ export default function FilmBible() {
     }
   };
 
+  const startEdit = (char: Character) => {
+    setEditingCharId(char.id);
+    setEditState({
+      description: char.description || "",
+      personality: char.personality || "",
+      role: char.role,
+      voice_only: char.voice_only ?? false,
+    });
+  };
+
+  const saveCharacter = async (charId: string) => {
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/bible`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ character_id: charId, ...editState }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setCharacters((prev) =>
+          prev.map((c) => (c.id === charId ? data.character : c))
+        );
+        setEditingCharId(null);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (!project || (characters.length === 0 && scenes.length === 0 && !extracting)) {
     return (
       <div className="max-w-5xl mx-auto px-6 py-12">
@@ -148,6 +189,8 @@ export default function FilmBible() {
   );
 
   return (
+    <>
+    <ProjectNav projectId={id} currentPhase={project.phase_status} />
     <div className="max-w-5xl mx-auto px-6 py-12">
       {/* Header */}
       <header className="border-b border-amber-900/25 pb-8 mb-8">
@@ -289,43 +332,138 @@ export default function FilmBible() {
       {/* Characters Tab */}
       {activeTab === "characters" && (
         <div className="space-y-px">
-          {sortedCharacters.map((char) => (
-            <div
-              key={char.id}
-              className="border border-neutral-800 p-5 hover:border-neutral-700 transition-colors"
-            >
-              <div className="flex items-start justify-between mb-3">
-                <h3 className="text-lg text-neutral-100">{char.name}</h3>
-                <span
-                  className={`text-[10px] uppercase tracking-widest px-2 py-1 border ${
-                    ROLE_COLORS[char.role] || ROLE_COLORS.minor
-                  }`}
-                >
-                  {char.role}
-                </span>
+          {sortedCharacters.map((char) => {
+            const isEditing = editingCharId === char.id;
+            return (
+              <div
+                key={char.id}
+                className={`border p-5 transition-colors ${isEditing ? "border-amber-800/50 bg-amber-950/10" : "border-neutral-800 hover:border-neutral-700"}`}
+              >
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <h3 className="text-lg text-neutral-100">{char.name}</h3>
+                    {char.voice_only && (
+                      <span className="text-[9px] uppercase tracking-widest text-purple-400 border border-purple-800/50 bg-purple-950/20 px-2 py-0.5">
+                        Voice Only
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {isEditing ? (
+                      <>
+                        <button
+                          onClick={() => saveCharacter(char.id)}
+                          disabled={saving}
+                          className="text-[10px] uppercase tracking-widest text-green-400 border border-green-800/50 px-3 py-1 hover:bg-green-950/30 transition-colors disabled:opacity-40"
+                        >
+                          {saving ? "Saving…" : "Save"}
+                        </button>
+                        <button
+                          onClick={() => setEditingCharId(null)}
+                          className="text-[10px] uppercase tracking-widest text-neutral-500 border border-neutral-700 px-3 py-1 hover:bg-neutral-800/30 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => startEdit(char)}
+                        className="text-[10px] uppercase tracking-widest text-neutral-500 border border-neutral-700 px-3 py-1 hover:text-amber-400 hover:border-amber-800/50 transition-colors"
+                      >
+                        Edit
+                      </button>
+                    )}
+                    <span
+                      className={`text-[10px] uppercase tracking-widest px-2 py-1 border ${
+                        ROLE_COLORS[char.role] || ROLE_COLORS.minor
+                      }`}
+                    >
+                      {char.role}
+                    </span>
+                  </div>
+                </div>
+
+                {isEditing ? (
+                  <div className="space-y-4">
+                    {/* Role selector */}
+                    <div>
+                      <p className="text-[10px] uppercase tracking-widest text-neutral-600 mb-1.5">Role</p>
+                      <div className="flex gap-1.5 flex-wrap">
+                        {["lead", "supporting", "minor", "extra", "mentioned"].map((r) => (
+                          <button
+                            key={r}
+                            onClick={() => setEditState((s) => ({ ...s, role: r }))}
+                            className={`text-[10px] uppercase tracking-widest px-2.5 py-1 border transition-colors ${
+                              editState.role === r
+                                ? ROLE_COLORS[r] || "border-amber-700 text-amber-400"
+                                : "border-neutral-700 text-neutral-500 hover:border-neutral-600"
+                            }`}
+                          >
+                            {r}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    {/* Voice Only toggle */}
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => setEditState((s) => ({ ...s, voice_only: !s.voice_only }))}
+                        className={`w-8 h-4 rounded-full transition-colors relative ${editState.voice_only ? "bg-purple-600" : "bg-neutral-700"}`}
+                      >
+                        <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${editState.voice_only ? "translate-x-4" : "translate-x-0.5"}`} />
+                      </button>
+                      <span className="text-xs text-neutral-400">Voice Only (V.O. / O.S. — never physically on screen)</span>
+                    </div>
+                    {/* Description */}
+                    <div>
+                      <p className="text-[10px] uppercase tracking-widest text-neutral-600 mb-1.5">Physical Description</p>
+                      <textarea
+                        value={editState.description}
+                        onChange={(e) => setEditState((s) => ({ ...s, description: e.target.value }))}
+                        rows={4}
+                        className="w-full bg-neutral-900 border border-neutral-700 text-xs text-neutral-300 p-3 focus:outline-none focus:border-amber-700 resize-none leading-relaxed"
+                        placeholder="Age, build, hair color, ethnicity, distinguishing features…"
+                      />
+                    </div>
+                    {/* Personality */}
+                    <div>
+                      <p className="text-[10px] uppercase tracking-widest text-neutral-600 mb-1.5">Personality</p>
+                      <textarea
+                        value={editState.personality}
+                        onChange={(e) => setEditState((s) => ({ ...s, personality: e.target.value }))}
+                        rows={3}
+                        className="w-full bg-neutral-900 border border-neutral-700 text-xs text-neutral-300 p-3 focus:outline-none focus:border-amber-700 resize-none leading-relaxed"
+                        placeholder="Personality traits, demeanor, emotional arc…"
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {char.description && (
+                      <div className="mb-3">
+                        <p className="text-[10px] uppercase tracking-widest text-neutral-600 mb-1">
+                          Physical Description
+                        </p>
+                        <p className={`text-xs leading-relaxed ${char.description.startsWith("No physical description") ? "text-neutral-600 italic" : "text-neutral-400"}`}>
+                          {char.description}
+                        </p>
+                      </div>
+                    )}
+                    {char.personality && (
+                      <div>
+                        <p className="text-[10px] uppercase tracking-widest text-neutral-600 mb-1">
+                          Personality
+                        </p>
+                        <p className="text-xs text-neutral-400 leading-relaxed">
+                          {char.personality}
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
-              {char.description && (
-                <div className="mb-3">
-                  <p className="text-[10px] uppercase tracking-widest text-neutral-600 mb-1">
-                    Physical Description
-                  </p>
-                  <p className="text-xs text-neutral-400 leading-relaxed">
-                    {char.description}
-                  </p>
-                </div>
-              )}
-              {char.personality && (
-                <div>
-                  <p className="text-[10px] uppercase tracking-widest text-neutral-600 mb-1">
-                    Personality
-                  </p>
-                  <p className="text-xs text-neutral-400 leading-relaxed">
-                    {char.personality}
-                  </p>
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -346,7 +484,12 @@ export default function FilmBible() {
                     {scene.location}
                   </span>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap justify-end">
+                  {scene.scene_type && scene.scene_type !== "real" && (
+                    <span className="text-[10px] uppercase tracking-widest text-purple-400 border border-purple-800/40 bg-purple-950/20 px-2 py-0.5">
+                      {scene.scene_type}
+                    </span>
+                  )}
                   {scene.time_of_day && (
                     <span className="text-[10px] uppercase tracking-widest text-neutral-500 border border-neutral-700 px-2 py-0.5">
                       {scene.time_of_day}
@@ -458,5 +601,6 @@ export default function FilmBible() {
         )}
       </div>
     </div>
+    </>
   );
 }

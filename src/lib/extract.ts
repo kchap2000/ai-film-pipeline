@@ -1,35 +1,47 @@
 import Anthropic from "@anthropic-ai/sdk";
 
-const EXTRACTION_SYSTEM_PROMPT = `You are a professional script analyst and film production assistant. Your job is to read scripts, treatments, director notes, or any film production documents and extract structured data from them.
+const EXTRACTION_SYSTEM_PROMPT = `You are a professional script analyst and film production assistant. Your job is to read scripts, treatments, director notes, or any film production documents and extract structured production data.
 
 You MUST respond with valid JSON only — no markdown, no commentary, no code fences. Your entire response must be parseable by JSON.parse().
 
-Extract the following from the provided document(s):
+---
 
-1. **characters** — an array of every character mentioned. For each:
-   - "name": string — the character's name
-   - "description": string — physical appearance, distinguishing features, age range, ethnicity if stated
-   - "role": string — one of "lead", "supporting", "minor", "extra", "mentioned"
-   - "personality": string — personality traits, demeanor, arc notes
+SCENE GROUPING RULES (critical):
+Scripts come in two formats. Detect which format you have and handle accordingly:
 
-2. **scenes** — an array of every scene or distinct location-moment. For each:
-   - "scene_number": number — sequential order (starting at 1)
-   - "location": string — where the scene takes place
-   - "time_of_day": string — e.g. "day", "night", "dawn", "dusk", "morning", "afternoon"
-   - "action_summary": string — 1-3 sentence summary of what happens
-   - "mood": string — emotional tone of the scene (e.g. "tense", "romantic", "chaotic")
-   - "props": string[] — notable props or objects in the scene
-   - "wardrobe": object[] — array of { "character": string, "description": string } for any wardrobe mentions
-   - "characters_present": string[] — names of characters in this scene
+A) TRADITIONAL FORMAT (INT./EXT. scene headings): Each heading = one scene.
+B) NUMBERED-SHOT FORMAT (numbered shots like "1.", "2.", "3."): Group consecutive shots that share the same location and time-of-day into ONE scene. Do NOT create a separate scene per shot — group them. A scene break happens when the location OR time-of-day changes significantly, or when there is a major narrative shift (e.g. reality → dream, or a clear CUT TO:). Aim for 4–8 scenes per typical short script, not one per shot.
 
-3. **structure** — episode/act breakdown:
-   - "acts": array of { "act_number": number, "title": string (if any), "description": string, "scene_range": [start, end] }
+---
+
+Extract the following:
+
+1. **characters** — every speaking or physically present character. For each:
+   - "name": string — the character's name as written
+   - "description": string — ALL physical details mentioned: age, approximate age range, ethnicity, hair, build, distinguishing features. If the script provides NO physical details, write exactly: "No physical description provided in script — awaiting production notes."
+   - "role": one of "lead", "supporting", "minor", "extra", "mentioned"
+   - "personality": string — personality traits, demeanor, emotional arc
+   - "voice_only": boolean — true if this character ONLY appears as a voice (V.O., O.S., phone recording, narration) and is never physically present on screen; false otherwise
+
+2. **scenes** — grouped scenes (apply scene grouping rules above). For each:
+   - "scene_number": number — sequential (1, 2, 3...)
+   - "location": string — where the scene takes place (clean name, e.g. "Donna's Bedroom")
+   - "time_of_day": one of "day", "night", "dawn", "dusk", "morning", "afternoon", "golden hour"
+   - "scene_type": one of "real", "dream", "fantasy", "flashback", "montage" — use "dream" or "fantasy" if the script notes soft edges, dream-like quality, or explicitly labels it as imagined/fantasy
+   - "action_summary": string — 2-4 sentences covering the full scene's dramatic content
+   - "mood": string — emotional tone (e.g. "intimate", "tense", "comedic", "melancholy")
+   - "props": string[] — notable props
+   - "wardrobe": object[] — { "character": string, "description": string } for wardrobe mentions
+   - "characters_present": string[] — names of characters physically present (exclude V.O.-only characters)
+
+3. **structure**:
+   - "acts": array of { "act_number": number, "title": string|null, "description": string, "scene_range": [start, end] }
    - "episode_title": string | null
    - "genre": string
-   - "logline": string — one-sentence summary of the entire piece
-   - "themes": string[] — major themes
+   - "logline": string — one punchy sentence
+   - "themes": string[]
 
-If information is not present in the document, use null or empty arrays — never invent details.
+If information is absent, use null or [] — never invent. Apply scene grouping strictly.
 
 Output format:
 {
@@ -43,6 +55,7 @@ export interface ExtractedCharacter {
   description: string;
   role: "lead" | "supporting" | "minor" | "extra" | "mentioned";
   personality: string;
+  voice_only: boolean;
 }
 
 export interface SceneWardrobe {
@@ -54,6 +67,7 @@ export interface ExtractedScene {
   scene_number: number;
   location: string;
   time_of_day: string;
+  scene_type: "real" | "dream" | "fantasy" | "flashback" | "montage";
   action_summary: string;
   mood: string;
   props: string[];

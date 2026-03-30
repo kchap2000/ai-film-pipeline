@@ -217,3 +217,13 @@ create table storyboard_panels (
 
 create index idx_storyboard_panels_scene on storyboard_panels(scene_id);
 create index idx_storyboard_panels_project on storyboard_panels(project_id);
+
+-- ============================================================
+-- Migrations: voice_only + scene_type (2026-03-29)
+-- ============================================================
+
+-- Add voice_only flag to characters (true = never physically on screen)
+alter table characters add column if not exists voice_only boolean not null default false;
+
+-- Add scene_type to scenes (real, dream, fantasy, flashback, montage)
+alter table scenes add column if not exists scene_type text not null default 'real';

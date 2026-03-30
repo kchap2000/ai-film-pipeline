@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import ProjectNav from "@/components/ProjectNav";
 
 interface Panel {
   id: string;
@@ -103,6 +104,8 @@ export default function StoryboardPage() {
   );
 
   return (
+    <>
+    <ProjectNav projectId={id} />
     <div className="max-w-7xl mx-auto px-6 py-12">
       {/* Header */}
       <header className="border-b border-amber-900/25 pb-8 mb-8">
@@ -408,5 +411,6 @@ export default function StoryboardPage() {
         </div>
       )}
     </div>
+    </>
   );
 }

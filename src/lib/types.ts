@@ -58,6 +58,7 @@ export interface Character {
   description: string;
   role: CharacterRole;
   personality: string;
+  voice_only: boolean;
   approved_cast_id: string | null;
   locked: boolean;
   created_at: string;
@@ -84,6 +85,7 @@ export interface Scene {
   scene_number: number;
   location: string;
   time_of_day: string;
+  scene_type: "real" | "dream" | "fantasy" | "flashback" | "montage";
   action_summary: string;
   mood: string;
   props: string[];
