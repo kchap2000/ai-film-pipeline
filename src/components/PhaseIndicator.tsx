@@ -9,15 +9,14 @@ export default function PhaseIndicator({ status }: { status: PhaseStatus }) {
 
   return (
     <div className="w-full">
-      {/* Bar */}
-      <div className="h-1.5 rounded-full bg-neutral-800 overflow-hidden">
+      <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(44,79,115,0.5)" }}>
         <div
           className="h-full rounded-full transition-all duration-500"
           style={{
             width: `${pct}%`,
             background: isComplete
-              ? "linear-gradient(90deg, #d97706, #f59e0b, #fcd34d)"
-              : "linear-gradient(90deg, #92400e, #d97706, #f59e0b)",
+              ? "linear-gradient(90deg, #FF8A2A, #FFB25C, #FF8A2A)"
+              : "linear-gradient(90deg, #FF8A2A80, #FF8A2A, #FFB25C)",
           }}
         />
       </div>

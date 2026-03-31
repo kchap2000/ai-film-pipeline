@@ -116,7 +116,10 @@ export default function LocationBiblePage() {
 
   if (loading) {
     return (
-      <div className="max-w-6xl mx-auto px-6 py-12 text-neutral-500 text-sm animate-pulse">
+      <div
+        className="min-h-screen flex items-center justify-center text-sm animate-pulse"
+        style={{ background: "var(--brand-navy)", color: "var(--brand-gray)" }}
+      >
         Loading location data...
       </div>
     );
@@ -130,43 +133,39 @@ export default function LocationBiblePage() {
   return (
     <>
     <ProjectNav projectId={id} />
+    <div className="min-h-screen" style={{ background: "var(--brand-navy)" }}>
     <div className="max-w-6xl mx-auto px-6 py-12">
       {/* Header */}
-      <header className="border-b border-amber-900/25 pb-8 mb-8">
+      <header className="pb-8 mb-8" style={{ borderBottom: "1px solid var(--brand-steel)" }}>
         <Link
           href={`/projects/${id}`}
-          className="text-[10px] uppercase tracking-[0.25em] text-amber-600 hover:text-amber-400 transition-colors"
+          className="text-[10px] uppercase tracking-[0.25em] transition-colors"
+          style={{ color: "var(--brand-orange)" }}
         >
           &larr; Back to Project
         </Link>
         <div className="flex items-end justify-between mt-4">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-neutral-100">
+            <h1 className="text-3xl font-bold tracking-tight" style={{ color: "var(--brand-white)" }}>
               Location & Scene Bible
             </h1>
-            <p className="text-xs text-neutral-500 mt-2">
+            <p className="text-xs mt-2" style={{ color: "var(--brand-gray)" }}>
               {locations.length} locations &middot; 5 variations each
             </p>
           </div>
           <div className="flex gap-3">
-            {!hasVariations && locations.length === 0 && (
+            {(!hasVariations || locations.length === 0) && (
               <button
                 onClick={() => generateVariations()}
                 disabled={generating}
-                className="text-xs uppercase tracking-widest text-amber-500 border border-amber-800/50 px-5 py-2.5 hover:bg-amber-950/30 transition-colors disabled:opacity-40"
+                className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors disabled:opacity-40"
+                style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,138,42,0.08)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
               >
                 {generating
-                  ? "Extracting & Generating..."
-                  : "Extract Locations & Generate"}
-              </button>
-            )}
-            {locations.length > 0 && !hasVariations && (
-              <button
-                onClick={() => generateVariations()}
-                disabled={generating}
-                className="text-xs uppercase tracking-widest text-amber-500 border border-amber-800/50 px-5 py-2.5 hover:bg-amber-950/30 transition-colors disabled:opacity-40"
-              >
-                {generating ? "Generating..." : "Generate All Variations"}
+                  ? locations.length === 0 ? "Extracting & Generating..." : "Generating..."
+                  : locations.length === 0 ? "Extract Locations & Generate" : "Generate All Variations"}
               </button>
             )}
             {allApproved && !allLocked && (
@@ -184,7 +183,10 @@ export default function LocationBiblePage() {
 
       {/* Error banner */}
       {genError && (
-        <div className="border border-red-900/50 bg-red-950/20 p-4 mb-6 flex items-center justify-between">
+        <div
+          className="p-4 mb-6 rounded-xl flex items-center justify-between"
+          style={{ border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.05)" }}
+        >
           <p className="text-red-400 text-xs">{genError}</p>
           <button
             onClick={() => setGenError(null)}
@@ -197,80 +199,70 @@ export default function LocationBiblePage() {
 
       {/* Generating skeleton when locations.length === 0 */}
       {generating && locations.length === 0 ? (
-        <div className="border border-amber-900/30 bg-amber-950/10 p-10 text-center">
+        <div
+          className="rounded-xl p-10 text-center"
+          style={{ border: "1px solid rgba(255,138,42,0.25)", background: "rgba(255,138,42,0.05)" }}
+        >
           <div className="flex items-center justify-center gap-3 mb-3">
-            <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-            <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-            <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+            <div className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "var(--brand-orange)", animationDelay: "0ms" }} />
+            <div className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "var(--brand-orange)", animationDelay: "150ms" }} />
+            <div className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "var(--brand-orange)", animationDelay: "300ms" }} />
           </div>
-          <p className="text-amber-400 text-xs uppercase tracking-widest mb-1">Extracting locations & generating images</p>
-          <p className="text-neutral-600 text-xs">This takes 60–90 seconds. Images will appear when complete.</p>
+          <p className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--brand-orange)" }}>Extracting locations & generating images</p>
+          <p className="text-xs" style={{ color: "var(--brand-gray)" }}>This takes 60–90 seconds. Images will appear when complete.</p>
         </div>
       ) : locations.length === 0 ? (
-        <div className="border border-neutral-800 p-12 text-center">
-          <p className="text-neutral-500 text-sm mb-2">
-            No locations extracted yet
-          </p>
-          <p className="text-neutral-600 text-xs">
-            Click &quot;Extract Locations & Generate&quot; to pull unique
-            locations from your scenes
+        <div
+          className="rounded-xl p-12 text-center"
+          style={{ border: "1px solid var(--brand-steel)", background: "var(--brand-mid)" }}
+        >
+          <p className="text-sm mb-2" style={{ color: "var(--brand-gray)" }}>No locations extracted yet</p>
+          <p className="text-xs" style={{ color: "var(--brand-gray)", opacity: 0.6 }}>
+            Click &quot;Extract Locations & Generate&quot; to pull unique locations from your scenes
           </p>
         </div>
       ) : (
         <div className="flex gap-8">
           {/* Location Sidebar */}
-          <nav className="w-56 flex-shrink-0 space-y-px">
-            <p className="text-[10px] uppercase tracking-widest text-neutral-600 mb-3">
+          <nav className="w-56 flex-shrink-0 space-y-1">
+            <p className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
               Locations
             </p>
-            {locations.map((loc) => (
-              <button
-                key={loc.id}
-                onClick={() => setSelectedLoc(loc.id)}
-                className={`w-full text-left px-4 py-3 border transition-colors ${
-                  selectedLoc === loc.id
-                    ? "border-amber-700 bg-amber-950/20"
-                    : "border-neutral-800 hover:border-neutral-700"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <span
-                    className={`text-sm truncate ${
-                      selectedLoc === loc.id
-                        ? "text-amber-400"
-                        : "text-neutral-300"
-                    }`}
-                  >
-                    {loc.name}
-                  </span>
-                  {loc.locked ? (
-                    <span className="text-green-500 text-[10px] ml-2 flex-shrink-0">
-                      LOCKED
+            {locations.map((loc) => {
+              const isSelected = selectedLoc === loc.id;
+              return (
+                <button
+                  key={loc.id}
+                  onClick={() => setSelectedLoc(loc.id)}
+                  className="w-full text-left px-4 py-3 rounded-lg transition-colors"
+                  style={{
+                    border: isSelected ? "1px solid var(--brand-orange)" : "1px solid var(--brand-steel)",
+                    background: isSelected ? "rgba(255,138,42,0.08)" : "var(--brand-mid)",
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm truncate" style={{ color: isSelected ? "var(--brand-orange)" : "var(--brand-white)" }}>
+                      {loc.name}
                     </span>
-                  ) : loc.approved_image_url ? (
-                    <span className="text-amber-600 text-[10px] ml-2 flex-shrink-0">
-                      APPROVED
-                    </span>
-                  ) : loc.variations.length > 0 ? (
-                    <span className="text-neutral-500 text-[10px] ml-2 flex-shrink-0">
-                      REVIEW
-                    </span>
-                  ) : null}
-                </div>
-                <div className="flex gap-2 mt-1">
-                  {loc.time_of_day && (
-                    <span className="text-[9px] text-neutral-600">
-                      {loc.time_of_day}
-                    </span>
-                  )}
-                  {loc.mood && (
-                    <span className="text-[9px] text-neutral-600">
-                      &middot; {loc.mood}
-                    </span>
-                  )}
-                </div>
-              </button>
-            ))}
+                    {loc.locked ? (
+                      <span className="text-green-500 text-[10px] ml-2 flex-shrink-0">LOCKED</span>
+                    ) : loc.approved_image_url ? (
+                      <span className="text-[10px] ml-2 flex-shrink-0" style={{ color: "var(--brand-orange)" }}>APPROVED</span>
+                    ) : loc.variations.length > 0 ? (
+                      <span className="text-[10px] ml-2 flex-shrink-0" style={{ color: "var(--brand-gray)" }}>REVIEW</span>
+                    ) : null}
+                  </div>
+                  <div className="flex gap-2 mt-1">
+                    {loc.time_of_day && (
+                      <span className="text-[9px]" style={{ color: "var(--brand-gray)", opacity: 0.6 }}>{loc.time_of_day}</span>
+                    )}
+                    {loc.mood && (
+                      <span className="text-[9px]" style={{ color: "var(--brand-gray)", opacity: 0.6 }}>&middot; {loc.mood}</span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
           </nav>
 
           {/* Main Content */}
@@ -279,17 +271,21 @@ export default function LocationBiblePage() {
               <>
                 <div className="flex items-start justify-between mb-6">
                   <div>
-                    <h2 className="text-xl text-neutral-100">
-                      {activeLoc.name}
-                    </h2>
+                    <h2 className="text-xl" style={{ color: "var(--brand-white)" }}>{activeLoc.name}</h2>
                     <div className="flex gap-3 mt-1">
                       {activeLoc.time_of_day && (
-                        <span className="text-[10px] uppercase tracking-widest text-neutral-500 border border-neutral-700 px-2 py-0.5">
+                        <span
+                          className="text-[10px] uppercase tracking-widest px-2 py-0.5"
+                          style={{ color: "var(--brand-gray)", border: "1px solid var(--brand-steel)" }}
+                        >
                           {activeLoc.time_of_day}
                         </span>
                       )}
                       {activeLoc.mood && (
-                        <span className="text-[10px] uppercase tracking-widest text-amber-600/70 border border-amber-900/30 px-2 py-0.5">
+                        <span
+                          className="text-[10px] uppercase tracking-widest px-2 py-0.5"
+                          style={{ color: "var(--brand-orange)", opacity: 0.7, border: "1px solid rgba(255,138,42,0.25)" }}
+                        >
                           {activeLoc.mood}
                         </span>
                       )}
@@ -299,7 +295,10 @@ export default function LocationBiblePage() {
                     <button
                       onClick={() => generateVariations(activeLoc.id)}
                       disabled={generating}
-                      className="text-xs uppercase tracking-widest text-amber-500 border border-amber-800/50 px-4 py-2 hover:bg-amber-950/30 transition-colors disabled:opacity-40"
+                      className="text-xs uppercase tracking-widest px-4 py-2 transition-colors disabled:opacity-40"
+                      style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,138,42,0.08)")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                     >
                       {generating ? "Generating..." : "Generate"}
                     </button>
@@ -312,15 +311,18 @@ export default function LocationBiblePage() {
                     {activeLoc.variations.map((v) => (
                       <div
                         key={v.id}
-                        className={`border transition-colors ${
-                          v.status === "approved"
-                            ? "border-green-700 bg-green-950/10"
+                        className="rounded-lg overflow-hidden transition-colors"
+                        style={{
+                          border: v.status === "approved"
+                            ? "1px solid rgba(34,197,94,0.5)"
                             : v.status === "rejected"
-                            ? "border-red-900/50 opacity-40"
-                            : "border-neutral-800 hover:border-neutral-600"
-                        }`}
+                            ? "1px solid rgba(239,68,68,0.2)"
+                            : "1px solid var(--brand-steel)",
+                          background: v.status === "approved" ? "rgba(34,197,94,0.05)" : "var(--brand-mid)",
+                          opacity: v.status === "rejected" ? 0.4 : 1,
+                        }}
                       >
-                        <div className="aspect-[4/3] bg-neutral-900 relative">
+                        <div className="aspect-[4/3] relative" style={{ background: "var(--brand-navy)" }}>
                           <img
                             src={v.image_url}
                             alt={`${activeLoc.name} variation ${v.variation_number}`}
@@ -337,19 +339,14 @@ export default function LocationBiblePage() {
                         </div>
 
                         {v.status === "pending" && (
-                          <div className="flex divide-x divide-neutral-800">
+                          <div className="flex" style={{ borderTop: "1px solid var(--brand-steel)" }}>
                             <button
-                              onClick={() =>
-                                updateVariation(
-                                  v.id,
-                                  activeLoc.id,
-                                  "approved"
-                                )
-                              }
+                              onClick={() => updateVariation(v.id, activeLoc.id, "approved")}
                               className="flex-1 py-2 text-[10px] uppercase tracking-widest text-green-500 hover:bg-green-950/20 transition-colors"
                             >
                               Approve
                             </button>
+                            <div style={{ width: "1px", background: "var(--brand-steel)" }} />
                             <button
                               onClick={() => setRejectingId(v.id)}
                               className="flex-1 py-2 text-[10px] uppercase tracking-widest text-red-500 hover:bg-red-950/20 transition-colors"
@@ -360,34 +357,30 @@ export default function LocationBiblePage() {
                         )}
 
                         {rejectingId === v.id && (
-                          <div className="p-2 border-t border-neutral-800">
+                          <div className="p-2" style={{ borderTop: "1px solid var(--brand-steel)" }}>
                             <input
                               type="text"
                               value={rejectNote}
                               onChange={(e) => setRejectNote(e.target.value)}
                               placeholder="Note (optional)"
-                              className="w-full bg-transparent border border-neutral-700 px-2 py-1 text-xs text-neutral-300 placeholder:text-neutral-600 focus:outline-none focus:border-red-800 mb-2"
+                              className="w-full px-2 py-1 text-xs focus:outline-none mb-2"
+                              style={{
+                                background: "transparent",
+                                border: "1px solid var(--brand-steel)",
+                                color: "var(--brand-white)",
+                              }}
                             />
                             <div className="flex gap-1">
                               <button
-                                onClick={() =>
-                                  updateVariation(
-                                    v.id,
-                                    activeLoc.id,
-                                    "rejected",
-                                    rejectNote
-                                  )
-                                }
+                                onClick={() => updateVariation(v.id, activeLoc.id, "rejected", rejectNote)}
                                 className="flex-1 py-1 text-[10px] uppercase text-red-500 border border-red-900/50 hover:bg-red-950/20"
                               >
                                 Reject
                               </button>
                               <button
-                                onClick={() => {
-                                  setRejectingId(null);
-                                  setRejectNote("");
-                                }}
-                                className="flex-1 py-1 text-[10px] uppercase text-neutral-500 border border-neutral-700 hover:bg-neutral-800"
+                                onClick={() => { setRejectingId(null); setRejectNote(""); }}
+                                className="flex-1 py-1 text-[10px] uppercase transition-colors"
+                                style={{ color: "var(--brand-gray)", border: "1px solid var(--brand-steel)" }}
                               >
                                 Cancel
                               </button>
@@ -398,51 +391,52 @@ export default function LocationBiblePage() {
                     ))}
                   </div>
                 ) : generating ? (
-                  <div className="border border-amber-900/30 bg-amber-950/10 p-10 text-center mb-8">
+                  <div
+                    className="rounded-xl p-10 text-center mb-8"
+                    style={{ border: "1px solid rgba(255,138,42,0.25)", background: "rgba(255,138,42,0.05)" }}
+                  >
                     <div className="flex items-center justify-center gap-3 mb-3">
-                      <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                      <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                      <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                      <div className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "var(--brand-orange)", animationDelay: "0ms" }} />
+                      <div className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "var(--brand-orange)", animationDelay: "150ms" }} />
+                      <div className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "var(--brand-orange)", animationDelay: "300ms" }} />
                     </div>
-                    <p className="text-amber-400 text-xs uppercase tracking-widest mb-1">Generating location images</p>
-                    <p className="text-neutral-600 text-xs">This takes 60–90 seconds. Images will appear when complete.</p>
+                    <p className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--brand-orange)" }}>Generating location images</p>
+                    <p className="text-xs" style={{ color: "var(--brand-gray)" }}>This takes 60–90 seconds. Images will appear when complete.</p>
                   </div>
                 ) : (
-                  <div className="border-2 border-dashed border-neutral-700 p-12 text-center mb-8">
-                    <p className="text-neutral-500 text-sm">
-                      No variations generated yet
-                    </p>
+                  <div
+                    className="rounded-xl p-12 text-center mb-8"
+                    style={{ border: "2px dashed var(--brand-steel)" }}
+                  >
+                    <p className="text-sm" style={{ color: "var(--brand-gray)" }}>No variations generated yet</p>
                   </div>
                 )}
 
                 {/* Scenes at this location */}
                 {activeLoc.scenes.length > 0 && (
                   <div>
-                    <h3 className="text-[10px] uppercase tracking-widest text-neutral-500 mb-3">
+                    <h3 className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
                       Scenes at this Location ({activeLoc.scenes.length})
                     </h3>
-                    <div className="space-y-px">
+                    <div className="space-y-1">
                       {activeLoc.scenes.map((scene) => (
                         <div
                           key={scene.id}
-                          className="border border-neutral-800 p-4"
+                          className="rounded-lg p-4"
+                          style={{ border: "1px solid var(--brand-steel)", background: "var(--brand-mid)" }}
                         >
                           <div className="flex items-baseline gap-3 mb-1">
-                            <span className="text-amber-600 text-xs font-bold">
+                            <span className="text-xs font-bold" style={{ color: "var(--brand-orange)" }}>
                               Scene {scene.scene_number}
                             </span>
                             {scene.time_of_day && (
-                              <span className="text-[10px] text-neutral-500">
-                                {scene.time_of_day}
-                              </span>
+                              <span className="text-[10px]" style={{ color: "var(--brand-gray)" }}>{scene.time_of_day}</span>
                             )}
                             {scene.mood && (
-                              <span className="text-[10px] text-amber-700">
-                                {scene.mood}
-                              </span>
+                              <span className="text-[10px]" style={{ color: "var(--brand-orange)", opacity: 0.6 }}>{scene.mood}</span>
                             )}
                           </div>
-                          <p className="text-xs text-neutral-400">
+                          <p className="text-xs" style={{ color: "var(--brand-gray)" }}>
                             {scene.action_summary}
                           </p>
                           {scene.characters_present?.length > 0 && (
@@ -450,7 +444,8 @@ export default function LocationBiblePage() {
                               {scene.characters_present.map((name, i) => (
                                 <span
                                   key={i}
-                                  className="text-[9px] text-neutral-500 border border-neutral-700 px-1.5 py-0.5"
+                                  className="text-[9px] px-1.5 py-0.5"
+                                  style={{ color: "var(--brand-gray)", border: "1px solid var(--brand-steel)" }}
                                 >
                                   {name}
                                 </span>
@@ -464,7 +459,7 @@ export default function LocationBiblePage() {
                 )}
               </>
             ) : (
-              <p className="text-neutral-500 text-sm">
+              <p className="text-sm" style={{ color: "var(--brand-gray)" }}>
                 Select a location to view variations and scenes
               </p>
             )}
@@ -474,23 +469,25 @@ export default function LocationBiblePage() {
 
       {/* Phase complete */}
       {allLocked && locations.length > 0 && (
-        <div className="mt-10 border-t border-amber-900/25 pt-8 flex items-center justify-between">
+        <div className="mt-10 pt-8 flex items-center justify-between" style={{ borderTop: "1px solid var(--brand-steel)" }}>
           <div>
-            <p className="text-green-400 text-sm">
-              All locations locked into Scene Bible
-            </p>
-            <p className="text-xs text-neutral-600 mt-1">
+            <p className="text-sm text-green-400">All locations locked into Scene Bible</p>
+            <p className="text-xs mt-1" style={{ color: "var(--brand-gray)" }}>
               Location references are now canonical for storyboard generation.
             </p>
           </div>
           <Link
             href={`/projects/${id}`}
-            className="text-xs uppercase tracking-widest text-amber-500 border border-amber-800/50 px-5 py-2.5 hover:bg-amber-950/30 transition-colors"
+            className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors"
+            style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "rgba(255,138,42,0.08)")}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
           >
             Continue &rarr;
           </Link>
         </div>
       )}
+    </div>
     </div>
     </>
   );

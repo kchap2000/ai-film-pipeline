@@ -55,7 +55,6 @@ export default function ProjectDetail() {
         characters: data.characters,
         scenes: data.scenes,
       });
-      // Refresh project to get updated phase_status
       await fetchProject();
     } catch (err) {
       setExtractError(
@@ -68,7 +67,10 @@ export default function ProjectDetail() {
 
   if (loading) {
     return (
-      <div className="max-w-4xl mx-auto px-6 py-12 text-neutral-500 text-sm animate-pulse">
+      <div
+        className="min-h-screen flex items-center justify-center text-sm animate-pulse"
+        style={{ background: "var(--brand-navy)", color: "var(--brand-gray)" }}
+      >
         Loading project...
       </div>
     );
@@ -76,11 +78,13 @@ export default function ProjectDetail() {
 
   if (!project) {
     return (
-      <div className="max-w-4xl mx-auto px-6 py-12">
-        <p className="text-neutral-500">Project not found</p>
-        <Link href="/" className="text-amber-500 text-xs mt-4 inline-block">
-          &larr; Back to Dashboard
-        </Link>
+      <div className="min-h-screen" style={{ background: "var(--brand-navy)" }}>
+        <div className="max-w-4xl mx-auto px-6 py-12">
+          <p style={{ color: "var(--brand-gray)" }}>Project not found</p>
+          <Link href="/" className="text-xs mt-4 inline-block" style={{ color: "var(--brand-orange)" }}>
+            &larr; Back to Dashboard
+          </Link>
+        </div>
       </div>
     );
   }
@@ -100,282 +104,226 @@ export default function ProjectDetail() {
 
   const phaseIndex = PHASE_ORDER.indexOf(project.phase_status);
   const canExtract = files.length > 0;
-  const hasExtracted = phaseIndex >= 1; // past ingestion
-  const canViewBible = phaseIndex >= 2; // at bible or later
+  const hasExtracted = phaseIndex >= 1;
+  const isClient = project.type === "client";
 
   return (
-    <div className="max-w-4xl mx-auto px-6 py-12">
-      {/* Header */}
-      <header className="border-b border-amber-900/25 pb-8 mb-10">
-        <Link
-          href="/"
-          className="text-[10px] uppercase tracking-[0.25em] text-amber-600 hover:text-amber-400 transition-colors"
-        >
-          &larr; Dashboard
-        </Link>
-        <div className="flex items-start justify-between mt-4">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight text-neutral-100">
-              {project.title}
-            </h1>
-            <p className="text-xs text-neutral-500 mt-2">
-              {project.type === "client" && project.client_name
-                ? `Client: ${project.client_name}`
-                : "Personal Project"}
-              {" · "}
-              {new Date(project.created_at).toLocaleDateString("en-US", {
-                month: "long",
-                day: "numeric",
-                year: "numeric",
-              })}
-            </p>
-          </div>
-          <span
-            className={`text-[10px] uppercase tracking-widest px-2 py-1 border ${
-              project.type === "client"
-                ? "border-blue-800/50 text-blue-400 bg-blue-950/30"
-                : "border-amber-800/50 text-amber-400 bg-amber-950/30"
-            }`}
+    <div className="min-h-screen" style={{ background: "var(--brand-navy)" }}>
+      <div className="max-w-4xl mx-auto px-6 py-12">
+        {/* Header */}
+        <header className="pb-8 mb-10" style={{ borderBottom: "1px solid var(--brand-steel)" }}>
+          <Link
+            href="/"
+            className="text-[10px] uppercase tracking-[0.25em] transition-colors"
+            style={{ color: "var(--brand-orange)" }}
           >
-            {project.type}
-          </span>
-        </div>
-      </header>
-
-      {/* Phase Status */}
-      <section className="mb-10">
-        <h2 className="text-[10px] uppercase tracking-widest text-neutral-500 mb-3">
-          Pipeline Status
-        </h2>
-        <div className="border border-neutral-800 p-6">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-sm text-amber-400">
-              {PHASE_LABELS[project.phase_status]}
-            </span>
-            <span className="text-[10px] text-neutral-600 uppercase tracking-widest">
-              Phase{" "}
-              {PHASE_ORDER.indexOf(project.phase_status) + 1} of 7
+            &larr; Dashboard
+          </Link>
+          <div className="flex items-start justify-between mt-4">
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight" style={{ color: "var(--brand-white)" }}>
+                {project.title}
+              </h1>
+              <p className="text-xs mt-2" style={{ color: "var(--brand-gray)" }}>
+                {project.type === "client" && project.client_name
+                  ? `Client: ${project.client_name}`
+                  : "Personal Project"}
+                {" · "}
+                {new Date(project.created_at).toLocaleDateString("en-US", {
+                  month: "long",
+                  day: "numeric",
+                  year: "numeric",
+                })}
+              </p>
+            </div>
+            <span
+              className="text-[10px] uppercase tracking-widest px-2.5 py-1 rounded-full"
+              style={{
+                background: isClient ? "rgba(76,201,240,0.1)" : "rgba(255,138,42,0.1)",
+                color: isClient ? "var(--brand-cyan)" : "var(--brand-orange)",
+                border: isClient ? "1px solid rgba(76,201,240,0.2)" : "1px solid rgba(255,138,42,0.2)",
+              }}
+            >
+              {project.type}
             </span>
           </div>
-          <PhaseIndicator status={project.phase_status} />
-        </div>
-      </section>
+        </header>
 
-      {/* File Upload */}
-      <section className="mb-10">
-        <h2 className="text-[10px] uppercase tracking-widest text-neutral-500 mb-3">
-          Project Documents
-        </h2>
+        {/* Phase Status */}
+        <section className="mb-10">
+          <h2 className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
+            Pipeline Status
+          </h2>
+          <div
+            className="rounded-xl p-6"
+            style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-sm font-medium" style={{ color: "var(--brand-orange)" }}>
+                {PHASE_LABELS[project.phase_status]}
+              </span>
+              <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                Phase {PHASE_ORDER.indexOf(project.phase_status) + 1} of 7
+              </span>
+            </div>
+            <PhaseIndicator status={project.phase_status} />
+          </div>
+        </section>
 
-        {files.length > 0 && (
-          <div className="border border-neutral-800 divide-y divide-neutral-800 mb-4">
-            {files.map((file) => (
-              <div
-                key={file.id}
-                className="flex items-center justify-between px-4 py-3"
-              >
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] uppercase tracking-widest text-neutral-600 border border-neutral-700 px-2 py-0.5">
-                    {fileTypeLabel(file.file_type)}
-                  </span>
-                  <span className="text-sm text-neutral-300">
-                    {file.file_name}
+        {/* File Upload */}
+        <section className="mb-10">
+          <h2 className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
+            Project Documents
+          </h2>
+
+          {files.length > 0 && (
+            <div
+              className="mb-4 rounded-xl overflow-hidden"
+              style={{ border: "1px solid var(--brand-steel)" }}
+            >
+              {files.map((file, i) => (
+                <div
+                  key={file.id}
+                  className="flex items-center justify-between px-4 py-3"
+                  style={{
+                    borderTop: i > 0 ? "1px solid var(--brand-steel)" : "none",
+                    background: "var(--brand-mid)",
+                  }}
+                >
+                  <div className="flex items-center gap-3">
+                    <span
+                      className="text-[10px] uppercase tracking-widest px-2 py-0.5 rounded"
+                      style={{
+                        color: "var(--brand-gray)",
+                        border: "1px solid var(--brand-steel)",
+                      }}
+                    >
+                      {fileTypeLabel(file.file_type)}
+                    </span>
+                    <span className="text-sm" style={{ color: "var(--brand-white)" }}>
+                      {file.file_name}
+                    </span>
+                  </div>
+                  <span className="text-xs" style={{ color: "var(--brand-gray)" }}>
+                    {formatSize(file.file_size)}
                   </span>
                 </div>
-                <span className="text-xs text-neutral-600">
-                  {formatSize(file.file_size)}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <FileUpload projectId={project.id} onUploadComplete={fetchProject} />
-      </section>
-
-      {/* Extraction */}
-      <section className="mb-10">
-        <h2 className="text-[10px] uppercase tracking-widest text-neutral-500 mb-3">
-          LLM Extraction
-        </h2>
-        <div className="border border-neutral-800 p-6">
-          {extracting ? (
-            <div className="text-center">
-              <div className="text-amber-500 text-sm animate-pulse mb-2">
-                Running extraction via Claude...
-              </div>
-              <p className="text-neutral-600 text-xs">
-                Analyzing documents for characters, scenes, and structure. This
-                may take 30-60 seconds.
-              </p>
+              ))}
             </div>
-          ) : extractResult ? (
-            <div className="text-center">
-              <p className="text-green-400 text-sm mb-2">
-                Extraction complete
-              </p>
-              <p className="text-neutral-400 text-xs">
-                Found {extractResult.characters} characters and{" "}
-                {extractResult.scenes} scenes
-              </p>
-            </div>
-          ) : (
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-neutral-300">
-                  {hasExtracted
-                    ? "Extraction has been run. You can re-extract to update."
-                    : "Extract characters, scenes, and structure from uploaded documents."}
+          )}
+
+          <FileUpload projectId={project.id} onUploadComplete={fetchProject} />
+        </section>
+
+        {/* Extraction */}
+        <section className="mb-10">
+          <h2 className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
+            LLM Extraction
+          </h2>
+          <div
+            className="rounded-xl p-6"
+            style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}
+          >
+            {extracting ? (
+              <div className="text-center">
+                <div className="text-sm animate-pulse mb-2" style={{ color: "var(--brand-orange)" }}>
+                  Running extraction via Claude...
+                </div>
+                <p className="text-xs" style={{ color: "var(--brand-gray)" }}>
+                  Analyzing documents for characters, scenes, and structure. This may take 30-60 seconds.
                 </p>
-                {!canExtract && (
-                  <p className="text-xs text-neutral-600 mt-1">
-                    Upload at least one document first.
+              </div>
+            ) : extractResult ? (
+              <div className="text-center">
+                <p className="text-green-400 text-sm mb-2">Extraction complete</p>
+                <p className="text-xs" style={{ color: "var(--brand-gray)" }}>
+                  Found {extractResult.characters} characters and {extractResult.scenes} scenes
+                </p>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm" style={{ color: "var(--brand-white)" }}>
+                    {hasExtracted
+                      ? "Extraction has been run. You can re-extract to update."
+                      : "Extract characters, scenes, and structure from uploaded documents."}
                   </p>
-                )}
+                  {!canExtract && (
+                    <p className="text-xs mt-1" style={{ color: "var(--brand-gray)" }}>
+                      Upload at least one document first.
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={runExtraction}
+                  disabled={!canExtract}
+                  className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed whitespace-nowrap"
+                  style={{
+                    color: "var(--brand-orange)",
+                    border: "1px solid rgba(255,138,42,0.4)",
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,138,42,0.08)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                >
+                  {hasExtracted ? "Re-Extract" : "Run Extraction"}
+                </button>
               </div>
-              <button
-                onClick={runExtraction}
-                disabled={!canExtract}
-                className="text-xs uppercase tracking-widest text-amber-500 border border-amber-800/50 px-5 py-2.5 hover:bg-amber-950/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed whitespace-nowrap"
-              >
-                {hasExtracted ? "Re-Extract" : "Run Extraction"}
-              </button>
-            </div>
-          )}
+            )}
 
-          {extractError && (
-            <p className="text-red-400 text-xs border border-red-900/50 bg-red-950/20 px-4 py-3 mt-4">
-              {extractError}
-            </p>
-          )}
-        </div>
-      </section>
-
-      {/* Film Bible Link */}
-      {hasExtracted && (
-        <section className="mb-10">
-          <h2 className="text-[10px] uppercase tracking-widest text-neutral-500 mb-3">
-            Film Bible
-          </h2>
-          <Link
-            href={`/projects/${project.id}/bible`}
-            className="block border border-neutral-800 p-6 hover:border-amber-800 transition-colors group"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-neutral-300 group-hover:text-amber-400 transition-colors">
-                  View Film Bible
-                </p>
-                <p className="text-xs text-neutral-600 mt-1">
-                  Characters, scenes, structure, and metadata extracted from your
-                  documents
-                </p>
-              </div>
-              <span className="text-amber-600 text-lg">&rarr;</span>
-            </div>
-          </Link>
+            {extractError && (
+              <p className="text-red-400 text-xs px-4 py-3 mt-4" style={{ border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.05)" }}>
+                {extractError}
+              </p>
+            )}
+          </div>
         </section>
-      )}
 
-      {/* AI Casting Link */}
-      {hasExtracted && (
-        <section className="mb-10">
-          <h2 className="text-[10px] uppercase tracking-widest text-neutral-500 mb-3">
-            AI Casting
-          </h2>
-          <Link
-            href={`/projects/${project.id}/cast`}
-            className="block border border-neutral-800 p-6 hover:border-amber-800 transition-colors group"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-neutral-300 group-hover:text-amber-400 transition-colors">
-                  Cast Characters
-                </p>
-                <p className="text-xs text-neutral-600 mt-1">
-                  Generate 10 visual variations per character, then approve your cast
-                </p>
-              </div>
-              <span className="text-amber-600 text-lg">&rarr;</span>
-            </div>
-          </Link>
-        </section>
-      )}
-
-      {/* Character Lock Link */}
-      {phaseIndex >= 3 && (
-        <section className="mb-10">
-          <h2 className="text-[10px] uppercase tracking-widest text-neutral-500 mb-3">
-            Character Lock & Reference Poses
-          </h2>
-          <Link
-            href={`/projects/${project.id}/lock`}
-            className="block border border-neutral-800 p-6 hover:border-amber-800 transition-colors group"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-neutral-300 group-hover:text-amber-400 transition-colors">
-                  Lock Characters & Generate Poses
-                </p>
-                <p className="text-xs text-neutral-600 mt-1">
-                  Generate front, 3/4, and profile reference poses for each cast character
-                </p>
-              </div>
-              <span className="text-amber-600 text-lg">&rarr;</span>
-            </div>
-          </Link>
-        </section>
-      )}
-
-      {/* Location & Scene Bible Link */}
-      {phaseIndex >= 4 && (
-        <section className="mb-10">
-          <h2 className="text-[10px] uppercase tracking-widest text-neutral-500 mb-3">
-            Location & Scene Bible
-          </h2>
-          <Link
-            href={`/projects/${project.id}/locations`}
-            className="block border border-neutral-800 p-6 hover:border-amber-800 transition-colors group"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-neutral-300 group-hover:text-amber-400 transition-colors">
-                  Location Bible
-                </p>
-                <p className="text-xs text-neutral-600 mt-1">
-                  Generate visual references for each location, approve and lock into Scene Bible
-                </p>
-              </div>
-              <span className="text-amber-600 text-lg">&rarr;</span>
-            </div>
-          </Link>
-        </section>
-      )}
-
-      {/* Storyboard Link */}
-      {phaseIndex >= 5 && (
-        <section className="mb-10">
-          <h2 className="text-[10px] uppercase tracking-widest text-neutral-500 mb-3">
-            Storyboard
-          </h2>
-          <Link
-            href={`/projects/${project.id}/storyboard`}
-            className="block border border-neutral-800 p-6 hover:border-amber-800 transition-colors group"
-          >
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-neutral-300 group-hover:text-amber-400 transition-colors">
-                  Storyboard Generation
-                </p>
-                <p className="text-xs text-neutral-600 mt-1">
-                  Shot-by-shot panel generation using locked characters and locations
-                </p>
-              </div>
-              <span className="text-amber-600 text-lg">&rarr;</span>
-            </div>
-          </Link>
-        </section>
-      )}
+        {/* Phase Links */}
+        {[
+          { show: hasExtracted, href: `/projects/${project.id}/bible`, label: "Film Bible", sub: "Characters, scenes, structure, and metadata extracted from your documents", section: "Film Bible" },
+          { show: hasExtracted, href: `/projects/${project.id}/cast`, label: "Cast Characters", sub: "Generate 10 visual variations per character, then approve your cast", section: "AI Casting" },
+          { show: phaseIndex >= 3, href: `/projects/${project.id}/lock`, label: "Lock Characters & Generate Poses", sub: "Generate front, 3/4, and profile reference poses for each cast character", section: "Character Lock & Reference Poses" },
+          { show: phaseIndex >= 4, href: `/projects/${project.id}/locations`, label: "Location Bible", sub: "Generate visual references for each location, approve and lock into Scene Bible", section: "Location & Scene Bible" },
+          { show: phaseIndex >= 5, href: `/projects/${project.id}/storyboard`, label: "Storyboard Generation", sub: "Shot-by-shot panel generation using locked characters and locations", section: "Storyboard" },
+        ].map(({ show, href, label, sub, section }) =>
+          show ? (
+            <section key={section} className="mb-6">
+              <h2 className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
+                {section}
+              </h2>
+              <Link href={href}>
+                <div
+                  className="rounded-xl p-6 transition-all duration-200 cursor-pointer"
+                  style={{
+                    background: "var(--brand-mid)",
+                    border: "1px solid var(--brand-steel)",
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.borderColor = "var(--brand-orange)";
+                    (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 20px rgba(255,138,42,0.1)";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.borderColor = "var(--brand-steel)";
+                    (e.currentTarget as HTMLElement).style.boxShadow = "none";
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium" style={{ color: "var(--brand-white)" }}>
+                        {label}
+                      </p>
+                      <p className="text-xs mt-1" style={{ color: "var(--brand-gray)" }}>
+                        {sub}
+                      </p>
+                    </div>
+                    <span className="text-lg ml-4" style={{ color: "var(--brand-orange)" }}>&rarr;</span>
+                  </div>
+                </div>
+              </Link>
+            </section>
+          ) : null
+        )}
+      </div>
     </div>
   );
 }

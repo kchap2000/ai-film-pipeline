@@ -90,7 +90,10 @@ export default function StoryboardPage() {
 
   if (loading) {
     return (
-      <div className="max-w-7xl mx-auto px-6 py-12 text-neutral-500 text-sm animate-pulse">
+      <div
+        className="min-h-screen flex items-center justify-center text-sm animate-pulse"
+        style={{ background: "var(--brand-navy)", color: "var(--brand-gray)" }}
+      >
         Loading storyboard data...
       </div>
     );
@@ -106,21 +109,23 @@ export default function StoryboardPage() {
   return (
     <>
     <ProjectNav projectId={id} />
+    <div className="min-h-screen" style={{ background: "var(--brand-navy)" }}>
     <div className="max-w-7xl mx-auto px-6 py-12">
       {/* Header */}
-      <header className="border-b border-amber-900/25 pb-8 mb-8">
+      <header className="pb-8 mb-8" style={{ borderBottom: "1px solid var(--brand-steel)" }}>
         <Link
           href={`/projects/${id}`}
-          className="text-[10px] uppercase tracking-[0.25em] text-amber-600 hover:text-amber-400 transition-colors"
+          className="text-[10px] uppercase tracking-[0.25em] transition-colors"
+          style={{ color: "var(--brand-orange)" }}
         >
           &larr; Back to Project
         </Link>
         <div className="flex items-end justify-between mt-4">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-neutral-100">
+            <h1 className="text-3xl font-bold tracking-tight" style={{ color: "var(--brand-white)" }}>
               Storyboard
             </h1>
-            <p className="text-xs text-neutral-500 mt-2">
+            <p className="text-xs mt-2" style={{ color: "var(--brand-gray)" }}>
               {scenes.length} scenes &middot; {totalPanels} panels &middot;{" "}
               {Math.round(totalDuration)}s estimated runtime
             </p>
@@ -130,7 +135,10 @@ export default function StoryboardPage() {
               <button
                 onClick={() => generatePanels()}
                 disabled={generating}
-                className="text-xs uppercase tracking-widest text-amber-500 border border-amber-800/50 px-5 py-2.5 hover:bg-amber-950/30 transition-colors disabled:opacity-40"
+                className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors disabled:opacity-40"
+                style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,138,42,0.08)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
               >
                 {generating && !genScene
                   ? "Generating All..."
@@ -143,7 +151,10 @@ export default function StoryboardPage() {
 
       {/* Error banner */}
       {genError && (
-        <div className="border border-red-900/50 bg-red-950/20 p-4 mb-6 flex items-center justify-between">
+        <div
+          className="p-4 mb-6 rounded-xl flex items-center justify-between"
+          style={{ border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.05)" }}
+        >
           <p className="text-red-400 text-xs">{genError}</p>
           <button
             onClick={() => setGenError(null)}
@@ -157,13 +168,16 @@ export default function StoryboardPage() {
       {/* Character cast strip */}
       {characters.length > 0 && (
         <div className="mb-8">
-          <p className="text-[10px] uppercase tracking-widest text-neutral-600 mb-3">
+          <p className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
             Cast Reference
           </p>
           <div className="flex gap-3 overflow-x-auto pb-2">
             {characters.map((c) => (
               <div key={c.id} className="flex-shrink-0 text-center">
-                <div className="w-12 h-12 rounded-full overflow-hidden border border-neutral-700 bg-neutral-900">
+                <div
+                  className="w-12 h-12 rounded-full overflow-hidden"
+                  style={{ border: "1px solid var(--brand-steel)", background: "var(--brand-mid)" }}
+                >
                   {c.approved_variation_url ? (
                     <img
                       src={c.approved_variation_url}
@@ -171,12 +185,12 @@ export default function StoryboardPage() {
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-[10px] text-neutral-600">
+                    <div className="w-full h-full flex items-center justify-center text-[10px]" style={{ color: "var(--brand-gray)" }}>
                       {c.name[0]}
                     </div>
                   )}
                 </div>
-                <p className="text-[9px] text-neutral-500 mt-1 max-w-[60px] truncate">
+                <p className="text-[9px] mt-1 max-w-[60px] truncate" style={{ color: "var(--brand-gray)" }}>
                   {c.name}
                 </p>
               </div>
@@ -186,11 +200,12 @@ export default function StoryboardPage() {
       )}
 
       {scenes.length === 0 ? (
-        <div className="border border-neutral-800 p-12 text-center">
-          <p className="text-neutral-500 text-sm mb-2">
-            No scenes found
-          </p>
-          <p className="text-neutral-600 text-xs">
+        <div
+          className="rounded-xl p-12 text-center"
+          style={{ border: "1px solid var(--brand-steel)", background: "var(--brand-mid)" }}
+        >
+          <p className="text-sm mb-2" style={{ color: "var(--brand-gray)" }}>No scenes found</p>
+          <p className="text-xs" style={{ color: "var(--brand-gray)", opacity: 0.6 }}>
             Run extraction first to generate scene data
           </p>
         </div>
@@ -207,45 +222,47 @@ export default function StoryboardPage() {
             return (
               <div
                 key={scene.id}
-                className="border border-neutral-800 overflow-hidden"
+                className="rounded-xl overflow-hidden"
+                style={{ border: "1px solid var(--brand-steel)", background: "var(--brand-mid)" }}
               >
-                {/* Scene header (always visible) */}
+                {/* Scene header */}
                 <button
-                  onClick={() =>
-                    setExpandedScene(isExpanded ? null : scene.id)
-                  }
-                  className="w-full text-left px-5 py-4 flex items-center justify-between hover:bg-neutral-900/50 transition-colors"
+                  onClick={() => setExpandedScene(isExpanded ? null : scene.id)}
+                  className="w-full text-left px-5 py-4 flex items-center justify-between transition-colors"
+                  style={{ background: isExpanded ? "rgba(255,138,42,0.04)" : "transparent" }}
+                  onMouseEnter={(e) => { if (!isExpanded) (e.currentTarget as HTMLElement).style.background = "rgba(255,138,42,0.03)"; }}
+                  onMouseLeave={(e) => { if (!isExpanded) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                 >
                   <div className="flex items-baseline gap-3">
-                    <span className="text-amber-600 font-bold text-sm">
+                    <span className="text-sm font-bold" style={{ color: "var(--brand-orange)" }}>
                       Scene {scene.scene_number}
                     </span>
-                    <span className="text-neutral-400 text-xs truncate max-w-[300px]">
+                    <span className="text-xs truncate max-w-[300px]" style={{ color: "var(--brand-gray)" }}>
                       {scene.location}
                     </span>
                     {scene.time_of_day && (
-                      <span className="text-neutral-600 text-[10px]">
+                      <span className="text-[10px]" style={{ color: "var(--brand-gray)", opacity: 0.6 }}>
                         {scene.time_of_day}
                       </span>
                     )}
                   </div>
                   <div className="flex items-center gap-3">
                     {hasPanels && (
-                      <span className="text-[10px] text-neutral-500">
-                        {scene.panels.length} shots &middot;{" "}
-                        {Math.round(sceneDuration)}s
+                      <span className="text-[10px]" style={{ color: "var(--brand-gray)" }}>
+                        {scene.panels.length} shots &middot; {Math.round(sceneDuration)}s
                       </span>
                     )}
                     <span
-                      className={`text-[10px] uppercase tracking-widest px-2 py-0.5 border ${
-                        hasPanels
-                          ? "text-green-500 border-green-800/50"
-                          : "text-neutral-500 border-neutral-700"
-                      }`}
+                      className={`text-[10px] uppercase tracking-widest px-2 py-0.5 rounded`}
+                      style={{
+                        color: hasPanels ? "rgba(34,197,94,0.9)" : "var(--brand-gray)",
+                        border: hasPanels ? "1px solid rgba(34,197,94,0.3)" : "1px solid var(--brand-steel)",
+                        background: hasPanels ? "rgba(34,197,94,0.06)" : "transparent",
+                      }}
                     >
                       {hasPanels ? "BOARDED" : "PENDING"}
                     </span>
-                    <span className="text-neutral-600 text-xs">
+                    <span className="text-xs" style={{ color: "var(--brand-gray)" }}>
                       {isExpanded ? "−" : "+"}
                     </span>
                   </div>
@@ -253,24 +270,28 @@ export default function StoryboardPage() {
 
                 {/* Expanded content */}
                 {isExpanded && (
-                  <div className="border-t border-neutral-800 px-5 py-5">
+                  <div className="px-5 py-5" style={{ borderTop: "1px solid var(--brand-steel)" }}>
                     {/* Scene summary */}
                     <div className="mb-4 flex items-start justify-between">
                       <div>
-                        <p className="text-xs text-neutral-400 mb-1">
+                        <p className="text-xs mb-1" style={{ color: "var(--brand-gray)" }}>
                           {scene.action_summary}
                         </p>
                         <div className="flex flex-wrap gap-1">
                           {(scene.characters_present || []).map((name, i) => (
                             <span
                               key={i}
-                              className="text-[9px] text-amber-600/70 border border-amber-900/30 px-1.5 py-0.5"
+                              className="text-[9px] px-1.5 py-0.5"
+                              style={{ color: "var(--brand-orange)", opacity: 0.7, border: "1px solid rgba(255,138,42,0.25)" }}
                             >
                               {name}
                             </span>
                           ))}
                           {scene.mood && (
-                            <span className="text-[9px] text-neutral-500 border border-neutral-700 px-1.5 py-0.5">
+                            <span
+                              className="text-[9px] px-1.5 py-0.5"
+                              style={{ color: "var(--brand-gray)", border: "1px solid var(--brand-steel)" }}
+                            >
                               {scene.mood}
                             </span>
                           )}
@@ -280,7 +301,10 @@ export default function StoryboardPage() {
                         <button
                           onClick={() => generatePanels(scene.id)}
                           disabled={generating}
-                          className="text-[10px] uppercase tracking-widest text-amber-500 border border-amber-800/50 px-4 py-2 hover:bg-amber-950/30 transition-colors disabled:opacity-40 flex-shrink-0"
+                          className="text-[10px] uppercase tracking-widest px-4 py-2 transition-colors disabled:opacity-40 flex-shrink-0"
+                          style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+                          onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,138,42,0.08)")}
+                          onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                         >
                           {generating && genScene === scene.id
                             ? "Generating..."
@@ -291,14 +315,17 @@ export default function StoryboardPage() {
 
                     {/* Generating indicator */}
                     {!hasPanels && generating && genScene === scene.id && (
-                      <div className="border border-amber-900/30 bg-amber-950/10 p-8 text-center mt-4">
+                      <div
+                        className="rounded-xl p-8 text-center mt-4"
+                        style={{ border: "1px solid rgba(255,138,42,0.25)", background: "rgba(255,138,42,0.05)" }}
+                      >
                         <div className="flex items-center justify-center gap-3 mb-3">
-                          <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                          <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                          <div className="w-1.5 h-1.5 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                          <div className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "var(--brand-orange)", animationDelay: "0ms" }} />
+                          <div className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "var(--brand-orange)", animationDelay: "150ms" }} />
+                          <div className="w-1.5 h-1.5 rounded-full animate-bounce" style={{ background: "var(--brand-orange)", animationDelay: "300ms" }} />
                         </div>
-                        <p className="text-amber-400 text-xs uppercase tracking-widest mb-1">Breaking scene into shots & generating panels</p>
-                        <p className="text-neutral-600 text-xs">This may take 30–60 seconds per scene.</p>
+                        <p className="text-xs uppercase tracking-widest mb-1" style={{ color: "var(--brand-orange)" }}>Breaking scene into shots & generating panels</p>
+                        <p className="text-xs" style={{ color: "var(--brand-gray)" }}>This may take 30–60 seconds per scene.</p>
                       </div>
                     )}
 
@@ -308,10 +335,11 @@ export default function StoryboardPage() {
                         {scene.panels.map((panel) => (
                           <div
                             key={panel.id}
-                            className="border border-neutral-800 group"
+                            className="group rounded-lg overflow-hidden"
+                            style={{ border: "1px solid var(--brand-steel)" }}
                           >
                             {/* Panel image */}
-                            <div className="aspect-video bg-neutral-900 relative overflow-hidden">
+                            <div className="aspect-video relative overflow-hidden" style={{ background: "var(--brand-navy)" }}>
                               {panel.image_url ? (
                                 <img
                                   src={panel.image_url}
@@ -319,7 +347,7 @@ export default function StoryboardPage() {
                                   className="w-full h-full object-cover"
                                 />
                               ) : (
-                                <div className="w-full h-full flex items-center justify-center text-neutral-700 text-xs">
+                                <div className="w-full h-full flex items-center justify-center text-xs" style={{ color: "var(--brand-steel)" }}>
                                   No image
                                 </div>
                               )}
@@ -330,50 +358,40 @@ export default function StoryboardPage() {
                                   <span className="text-[8px] bg-amber-900/60 text-amber-300 px-1 py-0.5 uppercase">
                                     {panel.shot_type}
                                   </span>
-                                  <span className="text-[8px] bg-neutral-800/80 text-neutral-300 px-1 py-0.5">
+                                  <span className="text-[8px] bg-black/60 text-neutral-300 px-1 py-0.5">
                                     {panel.camera_angle}
                                   </span>
-                                  {panel.camera_movement &&
-                                    panel.camera_movement !== "static" && (
-                                      <span className="text-[8px] bg-blue-900/60 text-blue-300 px-1 py-0.5">
-                                        {panel.camera_movement}
-                                      </span>
-                                    )}
+                                  {panel.camera_movement && panel.camera_movement !== "static" && (
+                                    <span className="text-[8px] bg-blue-900/60 text-blue-300 px-1 py-0.5">
+                                      {panel.camera_movement}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
 
-                              {/* Panel number */}
                               <span className="absolute top-1 left-1 text-[9px] bg-black/60 text-neutral-400 px-1.5 py-0.5">
                                 {panel.panel_number}
                               </span>
-
-                              {/* Duration */}
                               <span className="absolute top-1 right-1 text-[9px] bg-black/60 text-neutral-400 px-1.5 py-0.5">
                                 {panel.duration_seconds}s
                               </span>
                             </div>
 
                             {/* Panel details */}
-                            <div className="p-2">
-                              <p className="text-[10px] text-neutral-400 line-clamp-2 leading-relaxed">
+                            <div className="p-2" style={{ background: "var(--brand-mid)" }}>
+                              <p className="text-[10px] line-clamp-2 leading-relaxed" style={{ color: "var(--brand-gray)" }}>
                                 {panel.action_description}
                               </p>
                               {panel.dialogue && (
-                                <p className="text-[10px] text-amber-500/70 mt-1 italic line-clamp-1">
+                                <p className="text-[10px] mt-1 italic line-clamp-1" style={{ color: "var(--brand-orange)", opacity: 0.7 }}>
                                   &ldquo;{panel.dialogue}&rdquo;
                                 </p>
                               )}
                               {panel.characters_in_shot?.length > 0 && (
                                 <div className="flex gap-0.5 mt-1 flex-wrap">
                                   {panel.characters_in_shot.map((name, i) => (
-                                    <span
-                                      key={i}
-                                      className="text-[8px] text-neutral-600"
-                                    >
-                                      {name}
-                                      {i < panel.characters_in_shot.length - 1
-                                        ? ","
-                                        : ""}
+                                    <span key={i} className="text-[8px]" style={{ color: "var(--brand-gray)", opacity: 0.6 }}>
+                                      {name}{i < panel.characters_in_shot.length - 1 ? "," : ""}
                                     </span>
                                   ))}
                                 </div>
@@ -393,23 +411,24 @@ export default function StoryboardPage() {
 
       {/* Pipeline complete */}
       {scenesWithPanels.length === scenes.length && scenes.length > 0 && (
-        <div className="mt-10 border-t border-amber-900/25 pt-8 text-center">
-          <p className="text-green-400 text-lg mb-2">
-            Storyboard Complete
-          </p>
-          <p className="text-xs text-neutral-500 max-w-md mx-auto">
-            All {scenes.length} scenes have been broken into{" "}
-            {totalPanels} shot panels with an estimated runtime of{" "}
+        <div className="mt-10 pt-8 text-center" style={{ borderTop: "1px solid var(--brand-steel)" }}>
+          <p className="text-green-400 text-lg mb-2">Storyboard Complete</p>
+          <p className="text-xs max-w-md mx-auto" style={{ color: "var(--brand-gray)" }}>
+            All {scenes.length} scenes have been broken into {totalPanels} shot panels with an estimated runtime of{" "}
             {Math.round(totalDuration)} seconds.
           </p>
           <Link
             href={`/projects/${id}`}
-            className="inline-block mt-6 text-xs uppercase tracking-widest text-amber-500 border border-amber-800/50 px-6 py-3 hover:bg-amber-950/30 transition-colors"
+            className="inline-block mt-6 text-xs uppercase tracking-widest px-6 py-3 transition-colors"
+            style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "rgba(255,138,42,0.08)")}
+            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
           >
             Back to Project Overview
           </Link>
         </div>
       )}
+    </div>
     </div>
     </>
   );

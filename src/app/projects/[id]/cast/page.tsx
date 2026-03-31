@@ -25,12 +25,12 @@ interface CastCharacter {
   variations: CastVariation[];
 }
 
-const ROLE_COLORS: Record<string, string> = {
-  lead: "border-amber-700 text-amber-400 bg-amber-950/30",
-  supporting: "border-blue-800/50 text-blue-400 bg-blue-950/30",
-  minor: "border-neutral-700 text-neutral-400",
-  extra: "border-neutral-800 text-neutral-500",
-  mentioned: "border-neutral-800 text-neutral-600",
+const ROLE_COLORS: Record<string, { color: string; background: string; border: string }> = {
+  lead:       { color: "var(--brand-orange)", background: "rgba(255,138,42,0.08)", border: "rgba(255,138,42,0.35)" },
+  supporting: { color: "var(--brand-cyan)",   background: "rgba(76,201,240,0.08)",  border: "rgba(76,201,240,0.3)" },
+  minor:      { color: "var(--brand-gray)",   background: "transparent",            border: "var(--brand-steel)" },
+  extra:      { color: "var(--brand-gray)",   background: "transparent",            border: "var(--brand-steel)" },
+  mentioned:  { color: "var(--brand-gray)",   background: "transparent",            border: "var(--brand-steel)" },
 };
 
 const TOTAL_VARIATIONS = 10;
@@ -62,14 +62,11 @@ export default function CastingPage() {
     fetchCast();
   }, [fetchCast]);
 
-  // Generate all missing variations for a character, one image at a time.
-  // Each POST call generates exactly 1 image — Vercel Hobby compatible (≤60s/call).
   const generateVariations = async (characterId?: string) => {
     setGenerating(true);
     setGenErrors([]);
     const errors: string[] = [];
 
-    // Get latest character data to know how many variations already exist
     const res = await fetch(`/api/projects/${id}/cast`);
     const data = await res.json();
     const chars: CastCharacter[] = data.characters || [];
@@ -112,7 +109,6 @@ export default function CastingPage() {
           errors.push(`${char.name} #${variationNum}: ${err instanceof Error ? err.message : "Network error"}`);
         }
 
-        // Refresh the grid after each image so it appears immediately
         await fetchCast();
       }
     }
@@ -145,46 +141,55 @@ export default function CastingPage() {
 
   if (loading) {
     return (
-      <div className="max-w-6xl mx-auto px-6 py-12 text-neutral-500 text-sm animate-pulse">
+      <div
+        className="min-h-screen flex items-center justify-center text-sm animate-pulse"
+        style={{ background: "var(--brand-navy)", color: "var(--brand-gray)" }}
+      >
         Loading casting data...
       </div>
     );
   }
 
   const activeChar = characters.find((c) => c.id === selectedChar);
-  // Exclude voice-only from counts and generation (they're never on screen)
   const castableChars = characters.filter((c) => !c.voice_only);
   const hasVariations = castableChars.some((c) => c.variations.length > 0);
   const allCast = castableChars.length > 0 && castableChars.every((c) => c.approved_cast_id !== null && c.variations.length > 0);
 
   if (characters.length === 0) {
     return (
-      <div className="max-w-6xl mx-auto px-6 py-12">
-        <Link
-          href={`/projects/${id}`}
-          className="text-[10px] uppercase tracking-[0.25em] text-amber-600 hover:text-amber-400 transition-colors"
-        >
-          &larr; Back to Project
-        </Link>
-        <div className="border border-neutral-800 p-10 mt-8 text-center">
-          <p className="text-neutral-400 text-sm mb-2">No characters found</p>
-          <p className="text-neutral-600 text-xs mb-6">
-            Characters are populated by running LLM Extraction on your uploaded script.
-            Extract first, then come back to cast.
-          </p>
-          <div className="flex justify-center gap-4">
-            <Link
-              href={`/projects/${id}`}
-              className="text-xs uppercase tracking-widest text-amber-500 border border-amber-800/50 px-5 py-2.5 hover:bg-amber-950/30 transition-colors"
-            >
-              Go to Project &rarr; Run Extraction
-            </Link>
-            <Link
-              href={`/projects/${id}/bible`}
-              className="text-xs uppercase tracking-widest text-neutral-400 border border-neutral-700 px-5 py-2.5 hover:bg-neutral-800/30 transition-colors"
-            >
-              View Film Bible
-            </Link>
+      <div className="min-h-screen" style={{ background: "var(--brand-navy)" }}>
+        <div className="max-w-6xl mx-auto px-6 py-12">
+          <Link
+            href={`/projects/${id}`}
+            className="text-[10px] uppercase tracking-[0.25em] transition-colors"
+            style={{ color: "var(--brand-orange)" }}
+          >
+            &larr; Back to Project
+          </Link>
+          <div
+            className="rounded-xl p-10 mt-8 text-center"
+            style={{ border: "1px solid var(--brand-steel)", background: "var(--brand-mid)" }}
+          >
+            <p className="text-sm mb-2" style={{ color: "var(--brand-gray)" }}>No characters found</p>
+            <p className="text-xs mb-6" style={{ color: "var(--brand-gray)", opacity: 0.6 }}>
+              Characters are populated by running LLM Extraction on your uploaded script.
+            </p>
+            <div className="flex justify-center gap-4">
+              <Link
+                href={`/projects/${id}`}
+                className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors"
+                style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+              >
+                Go to Project &rarr; Run Extraction
+              </Link>
+              <Link
+                href={`/projects/${id}/bible`}
+                className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors"
+                style={{ color: "var(--brand-gray)", border: "1px solid var(--brand-steel)" }}
+              >
+                View Film Bible
+              </Link>
+            </div>
           </div>
         </div>
       </div>
@@ -194,24 +199,26 @@ export default function CastingPage() {
   return (
     <>
     <ProjectNav projectId={id} />
+    <div className="min-h-screen" style={{ background: "var(--brand-navy)" }}>
     <div className="max-w-6xl mx-auto px-6 py-12">
       {/* Header */}
-      <header className="border-b border-amber-900/25 pb-8 mb-8">
+      <header className="pb-8 mb-8" style={{ borderBottom: "1px solid var(--brand-steel)" }}>
         <Link
           href={`/projects/${id}`}
-          className="text-[10px] uppercase tracking-[0.25em] text-amber-600 hover:text-amber-400 transition-colors"
+          className="text-[10px] uppercase tracking-[0.25em] transition-colors"
+          style={{ color: "var(--brand-orange)" }}
         >
           &larr; Back to Project
         </Link>
         <div className="flex items-end justify-between mt-4">
           <div>
-            <h1 className="text-3xl font-bold tracking-tight text-neutral-100">
+            <h1 className="text-3xl font-bold tracking-tight" style={{ color: "var(--brand-white)" }}>
               AI Casting
             </h1>
-            <p className="text-xs text-neutral-500 mt-2">
+            <p className="text-xs mt-2" style={{ color: "var(--brand-gray)" }}>
               {castableChars.length} castable characters &middot; {TOTAL_VARIATIONS} variations each
               {characters.length > castableChars.length && (
-                <span className="text-neutral-600">
+                <span style={{ opacity: 0.6 }}>
                   {" "}&middot; {characters.length - castableChars.length} voice-only
                 </span>
               )}
@@ -221,7 +228,10 @@ export default function CastingPage() {
             <button
               onClick={() => generateVariations()}
               disabled={generating}
-              className="text-xs uppercase tracking-widest text-amber-500 border border-amber-800/50 px-5 py-2.5 hover:bg-amber-950/30 transition-colors disabled:opacity-40"
+              className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors disabled:opacity-40"
+              style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,138,42,0.08)")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
             >
               {generating ? "Generating..." : "Generate All Variations"}
             </button>
@@ -231,17 +241,23 @@ export default function CastingPage() {
 
       {/* Generation progress bar */}
       {genProgress && (
-        <div className="border border-amber-900/40 bg-amber-950/10 p-4 mb-6">
+        <div
+          className="p-4 mb-6 rounded-xl"
+          style={{ border: "1px solid rgba(255,138,42,0.3)", background: "rgba(255,138,42,0.06)" }}
+        >
           <div className="flex items-center justify-between mb-2">
-            <p className="text-amber-400 text-xs uppercase tracking-widest">
+            <p className="text-xs uppercase tracking-widest" style={{ color: "var(--brand-orange)" }}>
               Generating {genProgress.charName} — {genProgress.current} / {genProgress.total}
             </p>
-            <p className="text-neutral-600 text-xs">Images appear as they complete</p>
+            <p className="text-xs" style={{ color: "var(--brand-gray)" }}>Images appear as they complete</p>
           </div>
-          <div className="w-full bg-neutral-800 h-1">
+          <div className="w-full h-1 rounded-full" style={{ background: "var(--brand-steel)" }}>
             <div
-              className="bg-amber-600 h-1 transition-all duration-300"
-              style={{ width: `${(genProgress.current / genProgress.total) * 100}%` }}
+              className="h-1 rounded-full transition-all duration-300"
+              style={{
+                width: `${(genProgress.current / genProgress.total) * 100}%`,
+                background: "var(--brand-orange)",
+              }}
             />
           </div>
         </div>
@@ -249,48 +265,46 @@ export default function CastingPage() {
 
       {/* Generation errors */}
       {genErrors.length > 0 && (
-        <div className="border border-red-900/50 bg-red-950/20 p-4 mb-6">
-          <p className="text-red-400 text-xs font-bold mb-2 uppercase tracking-widest">
-            Generation Errors
-          </p>
+        <div className="p-4 mb-6 rounded-xl" style={{ border: "1px solid rgba(239,68,68,0.3)", background: "rgba(239,68,68,0.05)" }}>
+          <p className="text-red-400 text-xs font-bold mb-2 uppercase tracking-widest">Generation Errors</p>
           {genErrors.slice(0, 5).map((err, i) => (
             <p key={i} className="text-red-400/80 text-xs">{err}</p>
           ))}
           {genErrors.length > 5 && (
-            <p className="text-red-400/60 text-xs mt-1">
-              ...and {genErrors.length - 5} more
-            </p>
+            <p className="text-red-400/60 text-xs mt-1">...and {genErrors.length - 5} more</p>
           )}
         </div>
       )}
 
       <div className="flex gap-8">
         {/* Character Sidebar */}
-        <nav className="w-56 flex-shrink-0 space-y-px">
-          <p className="text-[10px] uppercase tracking-widest text-neutral-600 mb-3">
+        <nav className="w-56 flex-shrink-0 space-y-1">
+          <p className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
             Characters
           </p>
           {characters.map((char) => {
             const charHasVariations = char.variations.length > 0;
             const approved = char.approved_cast_id !== null && charHasVariations;
             const hasPending = charHasVariations && char.variations.some((v) => v.status === "pending");
+            const isSelected = selectedChar === char.id;
+            const rc = ROLE_COLORS[char.role] || ROLE_COLORS.minor;
             return (
               <button
                 key={char.id}
                 onClick={() => setSelectedChar(char.id)}
-                className={`w-full text-left px-4 py-3 border transition-colors ${
-                  selectedChar === char.id
-                    ? "border-amber-700 bg-amber-950/20"
-                    : char.voice_only
-                    ? "border-neutral-800/50 opacity-60 hover:opacity-80"
-                    : "border-neutral-800 hover:border-neutral-700"
-                }`}
+                className="w-full text-left px-4 py-3 rounded-lg transition-colors"
+                style={{
+                  border: isSelected
+                    ? "1px solid var(--brand-orange)"
+                    : "1px solid var(--brand-steel)",
+                  background: isSelected ? "rgba(255,138,42,0.08)" : "var(--brand-mid)",
+                  opacity: char.voice_only ? 0.6 : 1,
+                }}
               >
                 <div className="flex items-center justify-between">
                   <span
-                    className={`text-sm ${
-                      selectedChar === char.id ? "text-amber-400" : "text-neutral-300"
-                    }`}
+                    className="text-sm"
+                    style={{ color: isSelected ? "var(--brand-orange)" : "var(--brand-white)" }}
                   >
                     {char.name}
                   </span>
@@ -299,14 +313,12 @@ export default function CastingPage() {
                   ) : approved ? (
                     <span className="text-green-500 text-[10px]">CAST</span>
                   ) : hasPending ? (
-                    <span className="text-amber-600 text-[10px]">REVIEW</span>
+                    <span className="text-[10px]" style={{ color: "var(--brand-orange)" }}>REVIEW</span>
                   ) : null}
                 </div>
                 <span
-                  className={`text-[10px] uppercase tracking-widest ${
-                    ROLE_COLORS[char.role]?.split(" ").find((c) => c.startsWith("text-")) ||
-                    "text-neutral-500"
-                  }`}
+                  className="text-[10px] uppercase tracking-widest"
+                  style={{ color: rc.color }}
                 >
                   {char.role}
                 </span>
@@ -315,14 +327,11 @@ export default function CastingPage() {
           })}
 
           {allCast && characters.length > 0 && (
-            <div className="mt-6 pt-4 border-t border-neutral-800">
+            <div className="mt-6 pt-4" style={{ borderTop: "1px solid var(--brand-steel)" }}>
               <p className="text-green-500 text-[10px] uppercase tracking-widest mb-2">
                 All characters cast
               </p>
-              <Link
-                href={`/projects/${id}`}
-                className="text-xs text-amber-500 hover:text-amber-400"
-              >
+              <Link href={`/projects/${id}`} className="text-xs" style={{ color: "var(--brand-orange)" }}>
                 &rarr; Continue to next phase
               </Link>
             </div>
@@ -336,14 +345,14 @@ export default function CastingPage() {
               <div className="flex items-start justify-between mb-6">
                 <div>
                   <div className="flex items-center gap-3">
-                    <h2 className="text-xl text-neutral-100">{activeChar.name}</h2>
+                    <h2 className="text-xl" style={{ color: "var(--brand-white)" }}>{activeChar.name}</h2>
                     {activeChar.voice_only && (
                       <span className="text-[10px] uppercase tracking-widest text-purple-400 border border-purple-800/50 bg-purple-950/20 px-2 py-0.5">
                         Voice Only
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-neutral-500 mt-1 max-w-lg">
+                  <p className="text-xs mt-1 max-w-lg" style={{ color: "var(--brand-gray)" }}>
                     {activeChar.description}
                   </p>
                 </div>
@@ -351,7 +360,10 @@ export default function CastingPage() {
                   <button
                     onClick={() => generateVariations(activeChar.id)}
                     disabled={generating}
-                    className="text-xs uppercase tracking-widest text-amber-500 border border-amber-800/50 px-4 py-2 hover:bg-amber-950/30 transition-colors disabled:opacity-40"
+                    className="text-xs uppercase tracking-widest px-4 py-2 transition-colors disabled:opacity-40"
+                    style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,138,42,0.08)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                   >
                     {generating && genProgress?.charName === activeChar.name
                       ? `${genProgress.current}/${genProgress.total}...`
@@ -363,21 +375,24 @@ export default function CastingPage() {
               </div>
 
               {activeChar.voice_only ? (
-                <div className="border border-purple-900/30 bg-purple-950/10 p-10 text-center">
+                <div className="rounded-xl p-10 text-center" style={{ border: "1px solid rgba(147,51,234,0.3)", background: "rgba(147,51,234,0.06)" }}>
                   <p className="text-purple-400 text-sm mb-2">Voice Only Character</p>
-                  <p className="text-neutral-500 text-xs max-w-sm mx-auto">
+                  <p className="text-xs max-w-sm mx-auto" style={{ color: "var(--brand-gray)" }}>
                     This character is never physically present on screen — they appear only via voiceover, phone recording, or narration. No casting images are generated.
                   </p>
                   {activeChar.description && !activeChar.description.startsWith("No physical") && (
-                    <p className="text-neutral-400 text-xs mt-4 italic max-w-sm mx-auto">
+                    <p className="text-xs mt-4 italic max-w-sm mx-auto" style={{ color: "var(--brand-gray)" }}>
                       {activeChar.description}
                     </p>
                   )}
                 </div>
               ) : activeChar.variations.length === 0 ? (
-                <div className="border-2 border-dashed border-neutral-700 p-12 text-center">
-                  <p className="text-neutral-500 text-sm">No variations generated yet</p>
-                  <p className="text-neutral-600 text-xs mt-1">
+                <div
+                  className="rounded-xl p-12 text-center"
+                  style={{ border: "2px dashed var(--brand-steel)" }}
+                >
+                  <p className="text-sm" style={{ color: "var(--brand-gray)" }}>No variations generated yet</p>
+                  <p className="text-xs mt-1" style={{ color: "var(--brand-gray)", opacity: 0.6 }}>
                     Click &quot;Generate&quot; to create {TOTAL_VARIATIONS} casting variations
                   </p>
                 </div>
@@ -386,16 +401,20 @@ export default function CastingPage() {
                   {activeChar.variations.map((v) => (
                     <div
                       key={v.id}
-                      className={`border transition-colors ${
-                        v.status === "approved"
-                          ? "border-green-700 bg-green-950/10"
+                      className="rounded-lg overflow-hidden transition-colors"
+                      style={{
+                        border: v.status === "approved"
+                          ? "1px solid rgba(34,197,94,0.5)"
                           : v.status === "rejected"
-                          ? "border-red-900/50 opacity-40"
-                          : "border-neutral-800 hover:border-neutral-600"
-                      }`}
+                          ? "1px solid rgba(239,68,68,0.2)"
+                          : "1px solid var(--brand-steel)",
+                        background: v.status === "approved"
+                          ? "rgba(34,197,94,0.05)"
+                          : "var(--brand-mid)",
+                        opacity: v.status === "rejected" ? 0.4 : 1,
+                      }}
                     >
-                      {/* Image */}
-                      <div className="aspect-square bg-neutral-900 relative">
+                      <div className="aspect-square relative" style={{ background: "var(--brand-navy)" }}>
                         <img
                           src={v.image_url}
                           alt={`${activeChar.name} variation ${v.variation_number}`}
@@ -411,15 +430,15 @@ export default function CastingPage() {
                         )}
                       </div>
 
-                      {/* Actions */}
                       {v.status === "pending" && (
-                        <div className="flex divide-x divide-neutral-800">
+                        <div className="flex" style={{ borderTop: "1px solid var(--brand-steel)" }}>
                           <button
                             onClick={() => updateVariation(v.id, activeChar.id, "approved")}
                             className="flex-1 py-2 text-[10px] uppercase tracking-widest text-green-500 hover:bg-green-950/20 transition-colors"
                           >
                             Approve
                           </button>
+                          <div style={{ width: "1px", background: "var(--brand-steel)" }} />
                           <button
                             onClick={() => setRejectingId(v.id)}
                             className="flex-1 py-2 text-[10px] uppercase tracking-widest text-red-500 hover:bg-red-950/20 transition-colors"
@@ -435,31 +454,33 @@ export default function CastingPage() {
                         </p>
                       )}
 
-                      {/* Reject with note */}
                       {rejectingId === v.id && (
-                        <div className="p-2 border-t border-neutral-800">
+                        <div className="p-2" style={{ borderTop: "1px solid var(--brand-steel)" }}>
                           <input
                             type="text"
                             value={rejectNote}
                             onChange={(e) => setRejectNote(e.target.value)}
                             placeholder="Note (optional)"
-                            className="w-full bg-transparent border border-neutral-700 px-2 py-1 text-xs text-neutral-300 placeholder:text-neutral-600 focus:outline-none focus:border-red-800 mb-2"
+                            className="w-full px-2 py-1 text-xs focus:outline-none mb-2"
+                            style={{
+                              background: "transparent",
+                              border: "1px solid var(--brand-steel)",
+                              color: "var(--brand-white)",
+                            }}
+                            onFocus={(e) => (e.currentTarget.style.borderColor = "rgba(239,68,68,0.5)")}
+                            onBlur={(e) => (e.currentTarget.style.borderColor = "var(--brand-steel)")}
                           />
                           <div className="flex gap-1">
                             <button
-                              onClick={() =>
-                                updateVariation(v.id, activeChar.id, "rejected", rejectNote)
-                              }
+                              onClick={() => updateVariation(v.id, activeChar.id, "rejected", rejectNote)}
                               className="flex-1 py-1 text-[10px] uppercase text-red-500 border border-red-900/50 hover:bg-red-950/20"
                             >
                               Reject
                             </button>
                             <button
-                              onClick={() => {
-                                setRejectingId(null);
-                                setRejectNote("");
-                              }}
-                              className="flex-1 py-1 text-[10px] uppercase text-neutral-500 border border-neutral-700 hover:bg-neutral-800"
+                              onClick={() => { setRejectingId(null); setRejectNote(""); }}
+                              className="flex-1 py-1 text-[10px] uppercase transition-colors"
+                              style={{ color: "var(--brand-gray)", border: "1px solid var(--brand-steel)" }}
                             >
                               Cancel
                             </button>
@@ -469,7 +490,6 @@ export default function CastingPage() {
                     </div>
                   ))}
 
-                  {/* Skeleton placeholders for in-progress images */}
                   {generating &&
                     genProgress?.charName === activeChar.name &&
                     Array.from({
@@ -477,23 +497,26 @@ export default function CastingPage() {
                     }).map((_, i) => (
                       <div
                         key={`skeleton-${i}`}
-                        className={`border border-neutral-800 ${
-                          i === 0 ? "opacity-60" : "opacity-20"
-                        }`}
+                        className="rounded-lg overflow-hidden"
+                        style={{
+                          border: "1px solid var(--brand-steel)",
+                          opacity: i === 0 ? 0.6 : 0.2,
+                        }}
                       >
-                        <div className="aspect-square bg-neutral-800 animate-pulse" />
+                        <div className="aspect-square animate-pulse" style={{ background: "var(--brand-steel)" }} />
                       </div>
                     ))}
                 </div>
               )}
             </>
           ) : (
-            <p className="text-neutral-500 text-sm">
+            <p className="text-sm" style={{ color: "var(--brand-gray)" }}>
               Select a character to view casting variations
             </p>
           )}
         </div>
       </div>
+    </div>
     </div>
     </>
   );
