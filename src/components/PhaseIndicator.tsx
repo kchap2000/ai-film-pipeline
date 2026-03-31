@@ -1,38 +1,26 @@
 "use client";
 
-import { PhaseStatus, PHASE_ORDER, PHASE_LABELS } from "@/lib/types";
+import { PhaseStatus, PHASE_ORDER } from "@/lib/types";
 
 export default function PhaseIndicator({ status }: { status: PhaseStatus }) {
   const currentIndex = PHASE_ORDER.indexOf(status);
+  const pct = Math.round(((currentIndex + 1) / PHASE_ORDER.length) * 100);
+  const isComplete = status === "storyboard";
 
   return (
-    <div className="flex items-center gap-1">
-      {PHASE_ORDER.map((phase, i) => {
-        const isActive = i === currentIndex;
-        const isCompleted = i < currentIndex;
-
-        return (
-          <div key={phase} className="flex items-center gap-1">
-            <div
-              className={`h-2 w-2 rounded-full transition-colors ${
-                isActive
-                  ? "bg-amber-500"
-                  : isCompleted
-                  ? "bg-amber-700"
-                  : "bg-neutral-700"
-              }`}
-              title={PHASE_LABELS[phase]}
-            />
-            {i < PHASE_ORDER.length - 1 && (
-              <div
-                className={`h-px w-3 ${
-                  isCompleted ? "bg-amber-700" : "bg-neutral-800"
-                }`}
-              />
-            )}
-          </div>
-        );
-      })}
+    <div className="w-full">
+      {/* Bar */}
+      <div className="h-1.5 rounded-full bg-neutral-800 overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{
+            width: `${pct}%`,
+            background: isComplete
+              ? "linear-gradient(90deg, #d97706, #f59e0b, #fcd34d)"
+              : "linear-gradient(90deg, #92400e, #d97706, #f59e0b)",
+          }}
+        />
+      </div>
     </div>
   );
 }
