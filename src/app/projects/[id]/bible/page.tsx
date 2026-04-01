@@ -97,7 +97,14 @@ export default function FilmBible() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ project_id: id }),
       });
-      const data = await res.json();
+      let data: { error?: string } = {};
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(
+          res.status >= 500 ? `Server error (${res.status}). Please try again.` : "Extraction failed"
+        );
+      }
       if (!res.ok) throw new Error(data.error || "Extraction failed");
       const bibleRes = await fetch(`/api/projects/${id}/bible`);
       if (bibleRes.ok) {

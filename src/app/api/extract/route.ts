@@ -5,10 +5,14 @@ import { NextRequest, NextResponse } from "next/server";
 // that causes failures in Vercel serverless environments
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const pdfParse = require("pdf-parse/lib/pdf-parse.js");
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const mammoth = require("mammoth");
 
 export const maxDuration = 60; // Allow up to 60s for Claude extraction
 
 export async function POST(req: NextRequest) {
+  // Top-level try-catch ensures we ALWAYS return JSON, never Vercel's HTML error page
+  try {
   const body = await req.json();
   const { project_id } = body;
 
@@ -178,6 +182,13 @@ export async function POST(req: NextRequest) {
     scenes: extraction.scenes.length,
     structure: extraction.structure,
   });
+
+  } catch (err) {
+    // Safety net — always return JSON so the client never gets an HTML error page
+    const message = err instanceof Error ? err.message : "Unexpected server error during extraction";
+    console.error("Extraction route crash:", message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
 /**
@@ -195,51 +206,15 @@ async function extractTextFromPDF(buffer: Buffer): Promise<string> {
 }
 
 /**
- * Basic DOCX text extraction — DOCX is a ZIP containing XML.
- * Extracts text from word/document.xml.
+ * DOCX text extraction using mammoth.
+ * Properly handles ZIP-compressed DOCX files.
  */
 async function extractTextFromDOCX(buffer: Buffer): Promise<string> {
-  // DOCX files are ZIP archives. We need to find and read word/document.xml
-  // Using a minimal approach without external zip libraries.
   try {
-    // Look for the PK zip signature
-    if (buffer[0] !== 0x50 || buffer[1] !== 0x4b) {
-      return "";
-    }
-
-    // Find the XML content between <w:t> tags in the raw buffer
-    const content = buffer.toString("utf8");
-    const textParts: string[] = [];
-    const wtRegex = /<w:t[^>]*>([^<]*)<\/w:t>/g;
-    let wtMatch;
-
-    while ((wtMatch = wtRegex.exec(content)) !== null) {
-      textParts.push(wtMatch[1]);
-    }
-
-    // Add paragraph breaks at </w:p> boundaries
-    const fullXml = content;
-    const paragraphs: string[] = [];
-    const paraRegex = /<w:p\b[^>]*>([\s\S]*?)<\/w:p>/g;
-    let paraMatch;
-
-    while ((paraMatch = paraRegex.exec(fullXml)) !== null) {
-      const paraContent = paraMatch[1];
-      const paraTexts: string[] = [];
-      const innerWt = /<w:t[^>]*>([^<]*)<\/w:t>/g;
-      let innerMatch;
-      while ((innerMatch = innerWt.exec(paraContent)) !== null) {
-        paraTexts.push(innerMatch[1]);
-      }
-      if (paraTexts.length > 0) {
-        paragraphs.push(paraTexts.join(""));
-      }
-    }
-
-    return paragraphs.length > 0
-      ? paragraphs.join("\n")
-      : textParts.join(" ");
-  } catch {
+    const result = await mammoth.extractRawText({ buffer });
+    return result.value || "";
+  } catch (err) {
+    console.error("DOCX parse failed:", err);
     return "";
   }
 }

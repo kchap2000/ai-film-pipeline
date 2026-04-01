@@ -45,7 +45,17 @@ export default function ProjectDetail() {
         body: JSON.stringify({ project_id: id }),
       });
 
-      const data = await res.json();
+      // Guard against Vercel returning HTML on timeout/crash instead of JSON
+      let data: { error?: string; characters?: number; scenes?: number } = {};
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(
+          res.status === 504 || res.status === 502
+            ? "Extraction timed out — your document may be very large. Try a shorter script or split it into sections."
+            : `Server error (${res.status}). Please try again.`
+        );
+      }
 
       if (!res.ok) {
         throw new Error(data.error || "Extraction failed");
