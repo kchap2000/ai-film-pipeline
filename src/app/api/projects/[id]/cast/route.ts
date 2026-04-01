@@ -55,6 +55,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  // Top-level catch — always return JSON, never Vercel's HTML error page
+  try {
   const { id } = params;
   const body = await req.json().catch(() => ({}));
   const { character_id, variation_number } = body as {
@@ -153,6 +155,12 @@ export async function POST(
     success: true,
     variation,
   });
+
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unexpected server error during image generation";
+    console.error("Cast route crash:", message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
 
 // PATCH /api/projects/:id/cast — update variation status (approve/reject)

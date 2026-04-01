@@ -91,6 +91,7 @@ export default function CastingPage() {
           charName: char.name,
         });
 
+        let fetchAfter = true;
         try {
           const postRes = await fetch(`/api/projects/${id}/cast`, {
             method: "POST",
@@ -100,16 +101,31 @@ export default function CastingPage() {
               variation_number: variationNum,
             }),
           });
-          const postData = await postRes.json();
 
-          if (!postRes.ok) {
-            errors.push(`${char.name} #${variationNum}: ${postData.error || `Error ${postRes.status}`}`);
+          // Guard against Vercel returning HTML on timeout instead of JSON
+          let postData: { error?: string } = {};
+          try {
+            postData = await postRes.json();
+          } catch {
+            errors.push(
+              `${char.name} #${variationNum}: ${
+                postRes.status === 504 || postRes.status === 502
+                  ? "Timed out — server took too long. Try generating individually."
+                  : `Server error (${postRes.status}), please retry.`
+              }`
+            );
+            fetchAfter = false; // don't trigger a re-render blink on hard failures
+          }
+
+          if (!postRes.ok && postData.error) {
+            errors.push(`${char.name} #${variationNum}: ${postData.error}`);
           }
         } catch (err) {
           errors.push(`${char.name} #${variationNum}: ${err instanceof Error ? err.message : "Network error"}`);
+          fetchAfter = false;
         }
 
-        await fetchCast();
+        if (fetchAfter) await fetchCast();
       }
     }
 
