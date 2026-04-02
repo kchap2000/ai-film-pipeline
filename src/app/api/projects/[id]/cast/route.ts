@@ -168,6 +168,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  try {
   const body = await req.json();
   const { variation_id, status, rejection_note, character_id } = body;
 
@@ -208,4 +209,126 @@ export async function PATCH(
   }
 
   return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unexpected server error";
+    console.error("Cast PATCH crash:", message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+// PUT /api/projects/:id/cast — upload an existing headshot for a character
+// Body: FormData with character_id (string) + file (File)
+// Creates an auto-approved cast_variation from the uploaded image.
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const { id } = params;
+    const formData = await req.formData();
+    const characterId = formData.get("character_id") as string;
+    const file = formData.get("file") as File | null;
+
+    if (!characterId || !file) {
+      return NextResponse.json(
+        { error: "character_id and file are required" },
+        { status: 400 }
+      );
+    }
+
+    const supabase = getSupabase();
+
+    // Verify character belongs to this project
+    const { data: char, error: charError } = await supabase
+      .from("characters")
+      .select("*")
+      .eq("id", characterId)
+      .eq("project_id", id)
+      .single();
+
+    if (charError || !char) {
+      return NextResponse.json({ error: "Character not found" }, { status: 404 });
+    }
+
+    // Upload image to Supabase storage
+    const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+    const storagePath = `cast-headshots/${id}/${characterId}/headshot-${Date.now()}.${ext}`;
+    const arrayBuffer = await file.arrayBuffer();
+
+    const { error: uploadError } = await supabase.storage
+      .from("project-uploads")
+      .upload(storagePath, arrayBuffer, {
+        contentType: file.type || "image/jpeg",
+        upsert: true,
+      });
+
+    if (uploadError) {
+      return NextResponse.json(
+        { error: `Upload failed: ${uploadError.message}` },
+        { status: 500 }
+      );
+    }
+
+    // Get public URL
+    const { data: { publicUrl } } = supabase.storage
+      .from("project-uploads")
+      .getPublicUrl(storagePath);
+
+    // Determine next variation number
+    const { count } = await supabase
+      .from("cast_variations")
+      .select("*", { count: "exact", head: true })
+      .eq("character_id", characterId);
+
+    const variationNumber = (count || 0) + 1;
+
+    // Insert as an approved variation
+    const { data: variation, error: insertError } = await supabase
+      .from("cast_variations")
+      .insert({
+        character_id: characterId,
+        project_id: id,
+        image_url: publicUrl,
+        prompt_used: "uploaded-headshot",
+        variation_number: variationNumber,
+        status: "approved",
+      })
+      .select()
+      .single();
+
+    if (insertError) {
+      return NextResponse.json(
+        { error: `DB insert failed: ${insertError.message}` },
+        { status: 500 }
+      );
+    }
+
+    // Reject any other pending variations for this character
+    await supabase
+      .from("cast_variations")
+      .update({ status: "rejected" })
+      .eq("character_id", characterId)
+      .neq("id", variation.id)
+      .eq("status", "pending");
+
+    // Set this as the character's approved cast
+    await supabase
+      .from("characters")
+      .update({ approved_cast_id: variation.id })
+      .eq("id", characterId);
+
+    // Advance phase to casting if needed
+    await supabase
+      .from("projects")
+      .update({ phase_status: "casting" })
+      .eq("id", id)
+      .in("phase_status", ["ingestion", "extraction", "bible"]);
+
+    return NextResponse.json({ success: true, variation });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Headshot upload failed";
+    console.error("Cast PUT crash:", message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
