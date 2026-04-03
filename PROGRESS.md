@@ -301,6 +301,12 @@
 
 ---
 
+### Build Log — 2026-04-03
+- Cinematic Film Bible redesign: single-scroll layout, Bebas Neue + Barlow Condensed display fonts, large bold character names, headshot photos displayed inline for lead/supporting, section dividers with gold accent, stats bar, themes band, compact secondary character rows
+- Bible API updated: now returns `headshot_url` per character (approved cast_variation image pulled via extra query + map)
+- globals.css: added Bebas Neue + Barlow Condensed from Google Fonts
+- Files staged for commit: bible/page.tsx, bible/route.ts, globals.css
+
 ### 🔄 Next Up: Deploy Aggressive Improvements Pass
 
 **Requires Claude Code push + Supabase migration:**

@@ -9,7 +9,7 @@ export async function GET(
   const { id } = params;
   const supabase = getSupabase();
 
-  const [projectRes, charsRes, scenesRes, extractionRes] = await Promise.all([
+  const [projectRes, charsRes, scenesRes, extractionRes, castsRes] = await Promise.all([
     supabase.from("projects").select("*").eq("id", id).single(),
     supabase
       .from("characters")
@@ -29,6 +29,11 @@ export async function GET(
       .order("created_at", { ascending: false })
       .limit(1)
       .single(),
+    supabase
+      .from("cast_variations")
+      .select("id, character_id, image_url")
+      .eq("project_id", id)
+      .eq("status", "approved"),
   ]);
 
   if (projectRes.error) {
@@ -38,9 +43,20 @@ export async function GET(
     );
   }
 
+  // Build a map of character_id → approved headshot URL
+  const headshotByCharId: Record<string, string> = {};
+  for (const cv of castsRes.data || []) {
+    headshotByCharId[cv.character_id] = cv.image_url;
+  }
+
+  const characters = (charsRes.data || []).map((char) => ({
+    ...char,
+    headshot_url: headshotByCharId[char.id] || null,
+  }));
+
   return NextResponse.json({
     project: projectRes.data,
-    characters: charsRes.data || [],
+    characters,
     scenes: scenesRes.data || [],
     extraction: extractionRes.data || null,
   });
