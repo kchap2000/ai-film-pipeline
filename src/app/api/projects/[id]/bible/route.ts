@@ -13,7 +13,7 @@ export async function GET(
     supabase.from("projects").select("*").eq("id", id).single(),
     supabase
       .from("characters")
-      .select("*")
+      .select("*, pose_sheet_url")
       .eq("project_id", id)
       .order("role", { ascending: true })
       .order("name", { ascending: true }),

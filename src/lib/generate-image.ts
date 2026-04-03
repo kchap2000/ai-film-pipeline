@@ -247,6 +247,85 @@ function buildStoryboardPrompt(opts: {
 }
 
 /**
+ * Generate a character pose sheet using an approved headshot as a visual reference.
+ * Passes the reference image + the pose sheet prompt to Gemini multimodal.
+ */
+export async function generatePoseSheet(
+  characterName: string,
+  description: string,
+  referenceImageDataUrl: string,   // the approved headshot as a data URL
+  customPrompt: string             // the user-defined pose sheet prompt
+): Promise<GeneratedImage> {
+  const apiKey = process.env.GOOGLE_AI_API_KEY;
+
+  const fullPrompt = [
+    customPrompt,
+    `Character name: ${characterName}.`,
+    description ? `Physical description for reference: ${description}.` : "",
+  ].filter(Boolean).join("\n");
+
+  if (!apiKey || apiKey === "your-key-here") {
+    return generatePlaceholder(characterName, fullPrompt, 99);
+  }
+
+  // Extract base64 data and mime type from the data URL
+  const match = referenceImageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) {
+    console.error("generatePoseSheet: invalid reference image data URL");
+    return generatePlaceholder(characterName, fullPrompt, 99);
+  }
+  const [, mimeType, base64Data] = match;
+
+  const ai = new GoogleGenAI({ apiKey });
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-flash-image-preview",
+      contents: [
+        {
+          role: "user",
+          parts: [
+            // Reference image first
+            { inlineData: { mimeType, data: base64Data } },
+            // Then the pose sheet prompt
+            { text: fullPrompt },
+          ],
+        },
+      ],
+      config: {
+        responseModalities: [Modality.IMAGE, Modality.TEXT],
+      },
+    });
+
+    if (response.candidates && response.candidates.length > 0) {
+      const parts = response.candidates[0].content?.parts || [];
+      for (const part of parts) {
+        if (part.inlineData && part.inlineData.data) {
+          const outMime = part.inlineData.mimeType || "image/png";
+          return {
+            url: `data:${outMime};base64,${part.inlineData.data}`,
+            prompt: fullPrompt,
+          };
+        }
+      }
+    }
+
+    console.error("generatePoseSheet: Gemini returned no image, falling back");
+    return generatePlaceholder(characterName, fullPrompt, 99);
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error("generatePoseSheet failed:", errMsg);
+    if (errMsg.includes("429") || errMsg.includes("quota")) {
+      throw new Error("Gemini API quota exceeded. Please check your Google AI billing.");
+    }
+    if (errMsg.includes("403") || errMsg.includes("401")) {
+      throw new Error("Gemini API authentication failed. Check your GOOGLE_AI_API_KEY.");
+    }
+    return generatePlaceholder(characterName, fullPrompt, 99);
+  }
+}
+
+/**
  * Generate an image using Gemini 2.5 Flash with native image output.
  */
 async function generateWithGemini(

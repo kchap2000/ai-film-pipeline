@@ -23,6 +23,7 @@ interface ExtractionData {
 
 interface CharacterWithHeadshot extends Character {
   headshot_url?: string | null;
+  pose_sheet_url?: string | null;
 }
 
 const ROLE_ORDER = ["lead", "supporting", "minor", "extra", "mentioned"];
@@ -84,6 +85,8 @@ export default function FilmBible() {
   const [editingCharId, setEditingCharId] = useState<string | null>(null);
   const [editState, setEditState] = useState<EditState>({ description: "", personality: "", role: "", voice_only: false });
   const [saving, setSaving] = useState(false);
+  const [generatingPoseSheet, setGeneratingPoseSheet] = useState<Set<string>>(new Set());
+  const [poseSheetError, setPoseSheetError] = useState<Record<string, string>>({});
 
   useEffect(() => {
     fetch(`/api/projects/${id}/bible`)
@@ -154,13 +157,50 @@ export default function FilmBible() {
       });
       if (res.ok) {
         const data = await res.json();
-        setCharacters((prev) => prev.map((c) => (c.id === charId ? { ...data.character, headshot_url: c.headshot_url } : c)));
+        setCharacters((prev) => prev.map((c) => (c.id === charId ? { ...data.character, headshot_url: c.headshot_url, pose_sheet_url: c.pose_sheet_url } : c)));
         setEditingCharId(null);
       }
     } finally {
       setSaving(false);
     }
   };
+
+  const generatePoseSheetForChar = async (charId: string) => {
+    setGeneratingPoseSheet((prev) => new Set(prev).add(charId));
+    setPoseSheetError((prev) => { const n = { ...prev }; delete n[charId]; return n; });
+    try {
+      const res = await fetch(`/api/projects/${id}/posesheet`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ character_id: charId }),
+      });
+      let data: { pose_sheet_url?: string; error?: string } = {};
+      try { data = await res.json(); } catch { /* ignore */ }
+      if (!res.ok) throw new Error(data.error || "Pose sheet generation failed");
+      if (data.pose_sheet_url) {
+        setCharacters((prev) =>
+          prev.map((c) => c.id === charId ? { ...c, pose_sheet_url: data.pose_sheet_url! } : c)
+        );
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed";
+      setPoseSheetError((prev) => ({ ...prev, [charId]: msg }));
+    } finally {
+      setGeneratingPoseSheet((prev) => { const n = new Set(prev); n.delete(charId); return n; });
+    }
+  };
+
+  // Auto-trigger pose sheet generation for any cast-locked character that doesn't have one yet
+  useEffect(() => {
+    if (characters.length === 0) return;
+    const needsPoseSheet = characters.filter(
+      (c) => c.headshot_url && !c.pose_sheet_url && !generatingPoseSheet.has(c.id)
+    );
+    for (const char of needsPoseSheet) {
+      generatePoseSheetForChar(char.id);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [characters.map(c => c.id + (c.headshot_url ? "1" : "0") + (c.pose_sheet_url ? "1" : "0")).join()]);
 
   if (loading) {
     return (
@@ -213,8 +253,9 @@ export default function FilmBible() {
   const sortedCharacters = [...characters].sort(
     (a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role)
   );
-  const featuredCharacters = sortedCharacters.filter((c) => FEATURED_ROLES.includes(c.role));
-  const secondaryCharacters = sortedCharacters.filter((c) => !FEATURED_ROLES.includes(c.role));
+  // Any character with a headshot gets the full card — not just lead/supporting
+  const featuredCharacters = sortedCharacters.filter((c) => FEATURED_ROLES.includes(c.role) || !!c.headshot_url);
+  const secondaryCharacters = sortedCharacters.filter((c) => !FEATURED_ROLES.includes(c.role) && !c.headshot_url);
   const uniqueLocations = new Set(scenes.map((s) => s.location)).size;
 
   return (
@@ -364,8 +405,8 @@ export default function FilmBible() {
               {/* Featured (Lead + Supporting) */}
               <div className="space-y-6 mb-12">
                 {featuredCharacters.map((char) => (
+                  <div key={char.id}>
                   <FeaturedCharacterCard
-                    key={char.id}
                     char={char}
                     isEditing={editingCharId === char.id}
                     editState={editState}
@@ -375,6 +416,74 @@ export default function FilmBible() {
                     onSave={() => saveCharacter(char.id)}
                     onEditChange={(field, val) => setEditState((s) => ({ ...s, [field]: val }))}
                   />
+                  {/* Pose sheet strip */}
+                  {char.headshot_url && (
+                    <div
+                      style={{
+                        marginTop: "1px",
+                        border: "1px solid var(--brand-steel)",
+                        borderTop: "1px solid rgba(255,138,42,0.15)",
+                        background: "rgba(11,28,45,0.6)",
+                      }}
+                    >
+                      {generatingPoseSheet.has(char.id) ? (
+                        <div className="flex items-center gap-3 px-7 py-5">
+                          <div
+                            className="w-4 h-4 rounded-full border-2 animate-spin"
+                            style={{ borderColor: "var(--brand-orange)", borderTopColor: "transparent" }}
+                          />
+                          <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                            Generating character reference sheet...
+                          </span>
+                        </div>
+                      ) : poseSheetError[char.id] ? (
+                        <div className="flex items-center justify-between px-7 py-4">
+                          <span className="text-[10px]" style={{ color: "rgba(239,68,68,0.8)" }}>
+                            {poseSheetError[char.id]}
+                          </span>
+                          <button
+                            onClick={() => generatePoseSheetForChar(char.id)}
+                            className="text-[9px] uppercase tracking-widest px-3 py-1 transition-colors"
+                            style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      ) : char.pose_sheet_url ? (
+                        <div>
+                          <div className="flex items-center justify-between px-7 py-3">
+                            <span
+                              style={{
+                                fontFamily: "'Barlow Condensed', 'Bebas Neue', sans-serif",
+                                fontWeight: 700,
+                                fontSize: "0.75rem",
+                                letterSpacing: "0.2em",
+                                color: "var(--brand-orange)",
+                              }}
+                            >
+                              CHARACTER REFERENCE SHEET
+                            </span>
+                            <button
+                              onClick={() => generatePoseSheetForChar(char.id)}
+                              className="text-[9px] uppercase tracking-widest px-2 py-0.5 transition-colors"
+                              style={{ color: "var(--brand-gray)", border: "1px solid var(--brand-steel)" }}
+                              onMouseEnter={(e) => { e.currentTarget.style.color = "var(--brand-orange)"; e.currentTarget.style.borderColor = "rgba(255,138,42,0.4)"; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.color = "var(--brand-gray)"; e.currentTarget.style.borderColor = "var(--brand-steel)"; }}
+                            >
+                              Regenerate
+                            </button>
+                          </div>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={char.pose_sheet_url}
+                            alt={`${char.name} character reference sheet`}
+                            style={{ width: "100%", display: "block", maxHeight: "480px", objectFit: "contain", background: "#0a0f18" }}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
                 ))}
               </div>
 
