@@ -7,18 +7,18 @@ import { PhaseStatus, PHASE_ORDER } from "@/lib/types";
 
 // Each nav step: a phase enum value OR a custom step that slots between phases
 const NAV_STEPS: Array<
-  | { type: "phase"; phase: PhaseStatus; label: string; path: string | null }
+  | { type: "phase"; phase: PhaseStatus; label: string; path: string | null; unlocksAt: number }
   | { type: "custom"; key: string; label: string; path: string; unlockedAfter: number }
 > = [
-  { type: "phase", phase: "ingestion",   label: "Project",         path: null },
-  { type: "phase", phase: "extraction",  label: "Extraction",      path: null },
-  { type: "phase", phase: "bible",       label: "Film Bible",      path: "bible" },
-  { type: "phase", phase: "casting",     label: "AI Casting",      path: "cast" },
-  { type: "phase", phase: "lock",        label: "Character Lock",  path: "lock" },
-  { type: "phase", phase: "scene_bible", label: "Locations",       path: "locations" },
+  { type: "phase", phase: "ingestion",   label: "Project",         path: null,          unlocksAt: 0 },
+  { type: "phase", phase: "extraction",  label: "Extraction",      path: null,          unlocksAt: 0 },
+  { type: "phase", phase: "bible",       label: "Film Bible",      path: "bible",       unlocksAt: 1 }, // unlocks after extraction
+  { type: "phase", phase: "casting",     label: "AI Casting",      path: "cast",        unlocksAt: 1 }, // unlocks after extraction
+  { type: "phase", phase: "lock",        label: "Character Lock",  path: "lock",        unlocksAt: 3 }, // unlocks after casting
+  { type: "phase", phase: "scene_bible", label: "Locations",       path: "locations",   unlocksAt: 4 }, // unlocks after lock
   // Scene Scouting: custom step, unlocks after index 4 (lock phase)
   { type: "custom", key: "scenes", label: "Scene Scout", path: "scenes", unlockedAfter: 4 },
-  { type: "phase", phase: "storyboard",  label: "Storyboard",      path: "storyboard" },
+  { type: "phase", phase: "storyboard",  label: "Storyboard",      path: "storyboard",  unlocksAt: 5 }, // unlocks after scene_bible
 ];
 
 interface ProjectNavProps {
@@ -67,7 +67,7 @@ export default function ProjectNav({ projectId, currentPhase: phaseProp }: Proje
 
             if (step.type === "phase") {
               const stepIndex = PHASE_ORDER.indexOf(step.phase);
-              isUnlocked = stepIndex <= currentPhaseIndex;
+              isUnlocked = currentPhaseIndex >= step.unlocksAt;
               isComplete = stepIndex < currentPhaseIndex;
             } else {
               // Custom step: unlocked after the specified phase index
