@@ -366,6 +366,27 @@ CREATE INDEX IF NOT EXISTS idx_scene_variations_project ON scene_variations(proj
 
 ---
 
+### Build Log — 2026-04-04
+- Pose sheet prompt replaced: new 9-image cinematic reference format (full body front/profile/back, mid shot emotional, face close-up, feature detail, head profile, low angle, expression variation)
+- Pipeline flow transparency: all "Continue" buttons now link directly to next step (Lock→Locations, Locations→Scenes, Cast sidebar→Lock)
+- Lock API: individual character lock now also checks all-locked condition and advances phase_status to 'lock'
+- Scenes lock_all PATCH now advances phase_status to 'storyboard'
+- Project overview: "Next Up" badge with orange highlight on current actionable phase card
+- Scene Scouting: "Scout Remaining (N)" button stays visible for partially-scouted projects
+- Location Scouting: "Generate Remaining (N)" button stays visible for partially-generated projects
+
+### ✅ COMPLETE: 2026-04-04 — Pipeline Flow Transparency + Pose Sheet Prompt
+
+**Push required from your terminal:**
+```bash
+cd "/Users/khalilchapman/Desktop/ai-film-pipeline"
+git add -A
+git commit -m "Pipeline flow transparency + new pose sheet prompt"
+git push
+```
+
+---
+
 ### 🔄 Next Up: Deploy Aggressive Improvements Pass
 
 **Requires Claude Code push + Supabase migration:**

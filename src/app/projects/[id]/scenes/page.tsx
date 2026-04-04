@@ -131,6 +131,7 @@ export default function SceneScoutingPage() {
   }
 
   const activeScene = scenes.find((s) => s.id === selectedScene);
+  const unscouted = scenes.filter((s) => s.variations.length === 0);
   const hasVariations = scenes.some((s) => s.variations.length > 0);
   const allApproved = scenes.length > 0 && scenes.every((s) => s.approved_scout_image_url !== null);
   const allLocked = scenes.length > 0 && scenes.every((s) => s.locked);
@@ -160,7 +161,7 @@ export default function SceneScoutingPage() {
                 </p>
               </div>
               <div className="flex gap-3">
-                {!hasVariations && scenes.length > 0 && (
+                {unscouted.length > 0 && (
                   <button
                     onClick={() => generateVariations()}
                     disabled={generating}
@@ -169,7 +170,11 @@ export default function SceneScoutingPage() {
                     onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,138,42,0.08)")}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
                   >
-                    {generating ? "Generating..." : `Scout All Scenes (${scenes.length})`}
+                    {generating
+                      ? "Generating..."
+                      : hasVariations
+                      ? `Scout Remaining (${unscouted.length})`
+                      : `Scout All Scenes (${scenes.length})`}
                   </button>
                 )}
                 {allApproved && !allLocked && (

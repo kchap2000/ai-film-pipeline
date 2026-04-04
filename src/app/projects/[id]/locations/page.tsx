@@ -127,8 +127,9 @@ export default function LocationBiblePage() {
 
   const activeLoc = locations.find((l) => l.id === selectedLoc);
   const hasVariations = locations.some((l) => l.variations.length > 0);
-  const allApproved = locations.every((l) => l.approved_image_url !== null);
-  const allLocked = locations.every((l) => l.locked);
+  const ungenerated = locations.filter((l) => l.variations.length === 0);
+  const allApproved = locations.length > 0 && locations.every((l) => l.approved_image_url !== null);
+  const allLocked = locations.length > 0 && locations.every((l) => l.locked);
 
   return (
     <>
@@ -154,7 +155,7 @@ export default function LocationBiblePage() {
             </p>
           </div>
           <div className="flex gap-3">
-            {(!hasVariations || locations.length === 0) && (
+            {(ungenerated.length > 0 || locations.length === 0) && (
               <button
                 onClick={() => generateVariations()}
                 disabled={generating}
@@ -165,7 +166,11 @@ export default function LocationBiblePage() {
               >
                 {generating
                   ? locations.length === 0 ? "Extracting & Generating..." : "Generating..."
-                  : locations.length === 0 ? "Extract Locations & Generate" : "Generate All Variations"}
+                  : locations.length === 0
+                  ? "Extract Locations & Generate"
+                  : hasVariations
+                  ? `Generate Remaining (${ungenerated.length})`
+                  : "Generate All Variations"}
               </button>
             )}
             {allApproved && !allLocked && (
