@@ -16,12 +16,12 @@ export async function GET(
   const [scenesRes, panelsRes, charsRes, locsRes, castsRes] = await Promise.all([
     supabase
       .from("scenes")
-      .select("*")
+      .select("id, scene_number, location, time_of_day, mood, action_summary, characters_present, props, wardrobe, locked")
       .eq("project_id", id)
       .order("scene_number", { ascending: true }),
     supabase
       .from("storyboard_panels")
-      .select("*")
+      .select("id, scene_id, panel_number, shot_type, camera_angle, camera_movement, action_description, dialogue, characters_in_shot, duration_seconds, prompt_used")
       .eq("project_id", id)
       .order("panel_number", { ascending: true }),
     supabase

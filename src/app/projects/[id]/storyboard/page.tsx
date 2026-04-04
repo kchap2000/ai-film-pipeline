@@ -15,9 +15,7 @@ interface Panel {
   action_description: string;
   dialogue: string;
   characters_in_shot: string[];
-  image_url: string | null;
   duration_seconds: number;
-  notes: string;
 }
 
 interface Scene {
@@ -46,7 +44,10 @@ export default function StoryboardPage() {
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [genScene, setGenScene] = useState<string | null>(null);
+  const [genProgress, setGenProgress] = useState<string | null>(null);
   const [expandedScene, setExpandedScene] = useState<string | null>(null);
+  const [panelImages, setPanelImages] = useState<Record<string, string>>({});
+  const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
 
   const fetchData = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/storyboard`);
@@ -66,15 +67,74 @@ export default function StoryboardPage() {
     fetchData();
   }, [fetchData]);
 
-  const generatePanels = async (sceneId?: string) => {
+  // Lazy-load panel images when a scene is expanded
+  const fetchPanelImage = useCallback(async (panelId: string) => {
+    if (panelImages[panelId] || loadingImages.has(panelId)) return;
+    setLoadingImages((prev) => new Set(prev).add(panelId));
+    try {
+      const res = await fetch(`/api/projects/${id}/storyboard/panel-image?panel_id=${panelId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.image_url) {
+          setPanelImages((prev) => ({ ...prev, [panelId]: data.image_url }));
+        }
+      }
+    } catch {
+      // silently fail — panel just won't have an image
+    } finally {
+      setLoadingImages((prev) => { const n = new Set(prev); n.delete(panelId); return n; });
+    }
+  }, [id, panelImages, loadingImages]);
+
+  // When a scene is expanded, fetch images for its panels
+  useEffect(() => {
+    if (!expandedScene) return;
+    const scene = scenes.find((s) => s.id === expandedScene);
+    if (!scene) return;
+    for (const panel of scene.panels) {
+      fetchPanelImage(panel.id);
+    }
+  }, [expandedScene, scenes, fetchPanelImage]);
+
+  // Generate All: sequential per-scene, skip scenes with panels
+  const generateAll = async () => {
     setGenerating(true);
     setGenError(null);
-    if (sceneId) setGenScene(sceneId);
+    const pending = scenes.filter((s) => s.panels.length === 0);
+    for (let i = 0; i < pending.length; i++) {
+      const scene = pending[i];
+      setGenScene(scene.id);
+      setGenProgress(`Generating scene ${i + 1} of ${pending.length} (Scene ${scene.scene_number})…`);
+      try {
+        const res = await fetch(`/api/projects/${id}/storyboard`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ scene_id: scene.id }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setGenError(data.error || `Scene ${scene.scene_number} failed (${res.status}).`);
+        }
+      } catch {
+        setGenError(`Network error on scene ${scene.scene_number}.`);
+      }
+    }
+    await fetchData();
+    setGenerating(false);
+    setGenScene(null);
+    setGenProgress(null);
+  };
+
+  // Generate single scene (for individual buttons)
+  const generatePanels = async (sceneId: string) => {
+    setGenerating(true);
+    setGenError(null);
+    setGenScene(sceneId);
     try {
       const res = await fetch(`/api/projects/${id}/storyboard`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(sceneId ? { scene_id: sceneId } : {}),
+        body: JSON.stringify({ scene_id: sceneId }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -133,15 +193,15 @@ export default function StoryboardPage() {
           <div className="flex gap-3">
             {scenesWithoutPanels.length > 0 && (
               <button
-                onClick={() => generatePanels()}
+                onClick={generateAll}
                 disabled={generating}
                 className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors disabled:opacity-40"
                 style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
                 onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,138,42,0.08)")}
                 onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
               >
-                {generating && !genScene
-                  ? "Generating All..."
+                {generating && genProgress
+                  ? genProgress
                   : `Generate All (${scenesWithoutPanels.length} scenes)`}
               </button>
             )}
@@ -340,12 +400,14 @@ export default function StoryboardPage() {
                           >
                             {/* Panel image */}
                             <div className="aspect-video relative overflow-hidden" style={{ background: "var(--brand-navy)" }}>
-                              {panel.image_url ? (
+                              {panelImages[panel.id] ? (
                                 <img
-                                  src={panel.image_url}
+                                  src={panelImages[panel.id]}
                                   alt={`Scene ${scene.scene_number} Panel ${panel.panel_number}`}
                                   className="w-full h-full object-cover"
                                 />
+                              ) : loadingImages.has(panel.id) ? (
+                                <div className="w-full h-full animate-pulse" style={{ background: "linear-gradient(90deg, var(--brand-navy) 25%, var(--brand-steel) 50%, var(--brand-navy) 75%)", backgroundSize: "200% 100%" }} />
                               ) : (
                                 <div className="w-full h-full flex items-center justify-center text-xs" style={{ color: "var(--brand-steel)" }}>
                                   No image

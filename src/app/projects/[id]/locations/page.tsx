@@ -62,9 +62,14 @@ export default function LocationBiblePage() {
     fetchData();
   }, [fetchData]);
 
+  const [genStatus, setGenStatus] = useState<string | null>(null);
+
   const generateVariations = async (locationId?: string) => {
     setGenerating(true);
     setGenError(null);
+    setGenStatus(null);
+
+    // First attempt
     try {
       const res = await fetch(`/api/projects/${id}/locations`, {
         method: "POST",
@@ -78,8 +83,38 @@ export default function LocationBiblePage() {
     } catch {
       setGenError("Network error. Please check your connection and try again.");
     }
+
+    // Refresh to check current state
     await fetchData();
+
+    // Auto-retry: check if any locations still have < 5 variations
+    const checkRes = await fetch(`/api/projects/${id}/locations`);
+    if (checkRes.ok) {
+      const checkData = await checkRes.json();
+      const incomplete = (checkData.locations || []).filter(
+        (l: { variations: unknown[] }) => l.variations.length > 0 && l.variations.length < 5
+      );
+      if (incomplete.length > 0) {
+        setGenStatus("Generating remaining variations…");
+        try {
+          const res2 = await fetch(`/api/projects/${id}/locations`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(locationId ? { location_id: locationId } : {}),
+          });
+          if (!res2.ok) {
+            const data = await res2.json().catch(() => ({}));
+            setGenError(data.error || `Retry failed (${res2.status}).`);
+          }
+        } catch {
+          setGenError("Network error on retry.");
+        }
+        await fetchData();
+      }
+    }
+
     setGenerating(false);
+    setGenStatus(null);
   };
 
   const updateVariation = async (
@@ -165,7 +200,7 @@ export default function LocationBiblePage() {
                 onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
               >
                 {generating
-                  ? locations.length === 0 ? "Extracting & Generating..." : "Generating..."
+                  ? genStatus || (locations.length === 0 ? "Extracting & Generating..." : "Generating...")
                   : locations.length === 0
                   ? "Extract Locations & Generate"
                   : hasVariations

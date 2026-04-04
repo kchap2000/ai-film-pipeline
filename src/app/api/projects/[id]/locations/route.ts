@@ -90,19 +90,74 @@ export async function POST(
       );
     }
 
-    // Deduplicate by location name (case-insensitive)
-    const seen = new Set<string>();
-    const uniqueLocations: { name: string; time_of_day: string; mood: string }[] = [];
-
+    // Build scene metadata lookup for best-match time_of_day/mood
+    const scenesByLoc: Record<string, { time_of_day: string; mood: string }> = {};
     for (const scene of scenes) {
       const key = (scene.location || "").toLowerCase().trim();
-      if (key && !seen.has(key)) {
+      if (key && !scenesByLoc[key]) {
+        scenesByLoc[key] = { time_of_day: scene.time_of_day || "", mood: scene.mood || "" };
+      }
+    }
+
+    // Collect raw location strings
+    const rawLocations = Array.from(new Set(scenes.map((s) => s.location || "").filter(Boolean)));
+
+    // Try Claude Haiku to normalize compound location names
+    let cleanNames: string[] = [];
+    try {
+      const Anthropic = (await import("@anthropic-ai/sdk")).default;
+      const anthropic = new Anthropic();
+      const msg = await anthropic.messages.create({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 500,
+        system: `You split compound film location strings into clean, individual location names. Remove duplicates (case-insensitive). Return ONLY valid JSON: { "locations": ["Name 1", "Name 2"] }`,
+        messages: [{
+          role: "user",
+          content: `Split these scene location strings into individual location names:\n${rawLocations.map((l) => `- "${l}"`).join("\n")}`,
+        }],
+      });
+      const text = msg.content.filter((b) => b.type === "text").map((b) => b.type === "text" ? b.text : "").join("");
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        if (Array.isArray(parsed.locations) && parsed.locations.length > 0) {
+          cleanNames = parsed.locations;
+        }
+      }
+    } catch (err) {
+      console.error("Location normalization via Claude failed, using fallback:", err);
+    }
+
+    let uniqueLocations: { name: string; time_of_day: string; mood: string }[];
+
+    if (cleanNames.length > 0) {
+      // Deduplicate case-insensitively
+      const seen = new Set<string>();
+      uniqueLocations = [];
+      for (const name of cleanNames) {
+        const key = name.toLowerCase().trim();
+        if (!key || seen.has(key)) continue;
         seen.add(key);
-        uniqueLocations.push({
-          name: scene.location,
-          time_of_day: scene.time_of_day || "",
-          mood: scene.mood || "",
-        });
+        // Find best matching scene for metadata
+        const directMatch = scenesByLoc[key];
+        const partialMatch = Object.entries(scenesByLoc).find(([k]) => k.includes(key) || key.includes(k));
+        const meta = directMatch || (partialMatch ? partialMatch[1] : { time_of_day: "", mood: "" });
+        uniqueLocations.push({ name: name.trim(), time_of_day: meta.time_of_day, mood: meta.mood });
+      }
+    } else {
+      // Fallback: original deduplication logic
+      const seen = new Set<string>();
+      uniqueLocations = [];
+      for (const scene of scenes) {
+        const key = (scene.location || "").toLowerCase().trim();
+        if (key && !seen.has(key)) {
+          seen.add(key);
+          uniqueLocations.push({
+            name: scene.location,
+            time_of_day: scene.time_of_day || "",
+            mood: scene.mood || "",
+          });
+        }
       }
     }
 
