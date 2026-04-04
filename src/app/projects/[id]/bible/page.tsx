@@ -85,6 +85,9 @@ export default function FilmBible() {
   const [editingCharId, setEditingCharId] = useState<string | null>(null);
   const [editState, setEditState] = useState<EditState>({ description: "", personality: "", role: "", voice_only: false });
   const [saving, setSaving] = useState(false);
+  const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
+  const [sceneEditState, setSceneEditState] = useState<{ location: string; time_of_day: string; mood: string; action_summary: string; scene_type: string }>({ location: "", time_of_day: "", mood: "", action_summary: "", scene_type: "real" });
+  const [savingScene, setSavingScene] = useState(false);
   const [generatingPoseSheet, setGeneratingPoseSheet] = useState<Set<string>>(new Set());
   const [poseSheetError, setPoseSheetError] = useState<Record<string, string>>({});
 
@@ -162,6 +165,35 @@ export default function FilmBible() {
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const startSceneEdit = (scene: Scene) => {
+    setEditingSceneId(scene.id);
+    setSceneEditState({
+      location: scene.location || "",
+      time_of_day: scene.time_of_day || "",
+      mood: scene.mood || "",
+      action_summary: scene.action_summary || "",
+      scene_type: (scene as unknown as { scene_type?: string }).scene_type || "real",
+    });
+  };
+
+  const saveScene = async (sceneId: string) => {
+    setSavingScene(true);
+    try {
+      const res = await fetch(`/api/projects/${id}/bible`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scene_id: sceneId, ...sceneEditState }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setScenes((prev) => prev.map((s) => (s.id === sceneId ? { ...s, ...data.scene } : s)));
+        setEditingSceneId(null);
+      }
+    } finally {
+      setSavingScene(false);
     }
   };
 
@@ -649,9 +681,9 @@ export default function FilmBible() {
                         SC. {String(scene.scene_number).padStart(2, "0")}
                       </span>
                       <span className="text-sm font-medium flex-1" style={{ color: "var(--brand-white)" }}>
-                        {scene.location}
+                        {editingSceneId === scene.id ? sceneEditState.location || scene.location : scene.location}
                       </span>
-                      <div className="flex gap-2 flex-wrap justify-end">
+                      <div className="flex gap-2 flex-wrap justify-end items-center">
                         {scene.scene_type && scene.scene_type !== "real" && (
                           <span className="text-[9px] uppercase tracking-widest text-purple-400 border border-purple-800/40 px-2 py-0.5">
                             {scene.scene_type}
@@ -667,12 +699,98 @@ export default function FilmBible() {
                             {scene.mood}
                           </span>
                         )}
+                        <button
+                          onClick={() => editingSceneId === scene.id ? setEditingSceneId(null) : startSceneEdit(scene)}
+                          className="text-[9px] uppercase tracking-widest px-2.5 py-1 transition-colors"
+                          style={{ color: "var(--brand-gray)", border: "1px solid var(--brand-steel)" }}
+                          onMouseEnter={(e) => { e.currentTarget.style.color = "var(--brand-orange)"; e.currentTarget.style.borderColor = "rgba(255,138,42,0.4)"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.color = "var(--brand-gray)"; e.currentTarget.style.borderColor = "var(--brand-steel)"; }}
+                        >
+                          {editingSceneId === scene.id ? "Close" : "Edit"}
+                        </button>
                       </div>
                     </div>
 
+                    {/* Inline scene edit panel */}
+                    {editingSceneId === scene.id && (
+                      <div className="px-5 py-5 space-y-4" style={{ borderBottom: "1px solid var(--brand-steel)", background: "rgba(255,138,42,0.03)" }}>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <label className="text-[10px] uppercase tracking-widest block mb-1" style={{ color: "var(--brand-gray)" }}>Location</label>
+                            <input
+                              type="text"
+                              value={sceneEditState.location}
+                              onChange={(e) => setSceneEditState((s) => ({ ...s, location: e.target.value }))}
+                              className="w-full px-3 py-2 text-xs focus:outline-none"
+                              style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)", color: "var(--brand-white)" }}
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] uppercase tracking-widest block mb-1" style={{ color: "var(--brand-gray)" }}>Time of Day</label>
+                            <input
+                              type="text"
+                              value={sceneEditState.time_of_day}
+                              onChange={(e) => setSceneEditState((s) => ({ ...s, time_of_day: e.target.value }))}
+                              className="w-full px-3 py-2 text-xs focus:outline-none"
+                              style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)", color: "var(--brand-white)" }}
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] uppercase tracking-widest block mb-1" style={{ color: "var(--brand-gray)" }}>Mood / Atmosphere</label>
+                            <input
+                              type="text"
+                              value={sceneEditState.mood}
+                              onChange={(e) => setSceneEditState((s) => ({ ...s, mood: e.target.value }))}
+                              className="w-full px-3 py-2 text-xs focus:outline-none"
+                              style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)", color: "var(--brand-white)" }}
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] uppercase tracking-widest block mb-1" style={{ color: "var(--brand-gray)" }}>Scene Type</label>
+                            <select
+                              value={sceneEditState.scene_type}
+                              onChange={(e) => setSceneEditState((s) => ({ ...s, scene_type: e.target.value }))}
+                              className="w-full px-3 py-2 text-xs focus:outline-none"
+                              style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)", color: "var(--brand-white)" }}
+                            >
+                              {["real", "dream", "fantasy", "flashback", "montage"].map((t) => (
+                                <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] uppercase tracking-widest block mb-1" style={{ color: "var(--brand-gray)" }}>Action Summary</label>
+                          <textarea
+                            value={sceneEditState.action_summary}
+                            onChange={(e) => setSceneEditState((s) => ({ ...s, action_summary: e.target.value }))}
+                            rows={3}
+                            className="w-full px-3 py-2 text-xs focus:outline-none resize-none"
+                            style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)", color: "var(--brand-white)" }}
+                          />
+                        </div>
+                        <div className="flex gap-3">
+                          <button
+                            onClick={() => saveScene(scene.id)}
+                            disabled={savingScene}
+                            className="text-[10px] uppercase tracking-widest text-green-400 border border-green-800/50 px-4 py-2 hover:bg-green-950/20 transition-colors disabled:opacity-40"
+                          >
+                            {savingScene ? "Saving..." : "Save Scene"}
+                          </button>
+                          <button
+                            onClick={() => setEditingSceneId(null)}
+                            className="text-[10px] uppercase tracking-widest px-4 py-2 transition-colors"
+                            style={{ color: "var(--brand-gray)", border: "1px solid var(--brand-steel)" }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Scene body */}
                     <div className="px-5 py-4">
-                      {scene.action_summary && (
+                      {scene.action_summary && editingSceneId !== scene.id && (
                         <p className="text-xs leading-relaxed mb-4" style={{ color: "var(--brand-gray)" }}>
                           {scene.action_summary}
                         </p>

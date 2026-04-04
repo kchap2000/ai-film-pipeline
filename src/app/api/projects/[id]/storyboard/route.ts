@@ -2,6 +2,9 @@ import { getSupabase } from "@/lib/supabase";
 import { generateStoryboardPanel } from "@/lib/generate-image";
 import { NextRequest, NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
+
 // GET /api/projects/:id/storyboard — get all panels grouped by scene
 export async function GET(
   _req: NextRequest,
@@ -10,7 +13,7 @@ export async function GET(
   const { id } = params;
   const supabase = getSupabase();
 
-  const [scenesRes, panelsRes, charsRes, locsRes] = await Promise.all([
+  const [scenesRes, panelsRes, charsRes, locsRes, castsRes] = await Promise.all([
     supabase
       .from("scenes")
       .select("*")
@@ -23,13 +26,24 @@ export async function GET(
       .order("panel_number", { ascending: true }),
     supabase
       .from("characters")
-      .select("id, name, description, approved_variation_url")
+      .select("id, name, description")
       .eq("project_id", id),
     supabase
       .from("locations")
       .select("id, name, description, time_of_day, mood, approved_image_url")
       .eq("project_id", id),
+    supabase
+      .from("cast_variations")
+      .select("character_id, image_url")
+      .eq("project_id", id)
+      .eq("status", "approved"),
   ]);
+
+  // Map approved headshots to characters
+  const headshotByCharId: Record<string, string> = {};
+  for (const cv of castsRes.data || []) {
+    headshotByCharId[cv.character_id] = cv.image_url;
+  }
 
   // Group panels by scene
   const panelsByScene: Record<string, typeof panelsRes.data> = {};
@@ -45,9 +59,14 @@ export async function GET(
     panels: panelsByScene[scene.id] || [],
   }));
 
+  const characters = (charsRes.data || []).map((c) => ({
+    ...c,
+    approved_variation_url: headshotByCharId[c.id] || null,
+  }));
+
   return NextResponse.json({
     scenes,
-    characters: charsRes.data || [],
+    characters,
     locations: locsRes.data || [],
     totalPanels: (panelsRes.data || []).length,
   });
@@ -200,6 +219,7 @@ Wardrobe: ${(scene.wardrobe || []).join(", ") || "None"}`,
           timeOfDay: locInfo.time_of_day,
           mood: locInfo.mood,
           panelNumber,
+          sceneReferenceImageUrl: scene.approved_scout_image_url || null,
         });
 
         await supabase.from("storyboard_panels").insert({

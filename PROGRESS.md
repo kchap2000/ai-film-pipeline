@@ -305,7 +305,66 @@
 - Cinematic Film Bible redesign: single-scroll layout, Bebas Neue + Barlow Condensed display fonts, large bold character names, headshot photos displayed inline for lead/supporting, section dividers with gold accent, stats bar, themes band, compact secondary character rows
 - Bible API updated: now returns `headshot_url` per character (approved cast_variation image pulled via extra query + map)
 - globals.css: added Bebas Neue + Barlow Condensed from Google Fonts
-- Files staged for commit: bible/page.tsx, bible/route.ts, globals.css
+- Scene Scouting phase added: 3 atmospheric AI images per scene, approve/reject, scout images used as Gemini reference in storyboard
+- Bible inline scene editing: Edit button per scene, inline form for location/time/mood/action/scene_type
+- Character Lock redesign: replaced pose grid with headshot + reference sheet layout
+- ProjectNav updated with Scene Scout step (8 steps total)
+- Project detail phase links corrected with accurate descriptions
+- Storyboard character headshots fixed (join from cast_variations), scout image reference used in panel generation
+- All generation routes: force-dynamic + maxDuration = 300 added
+- TypeScript clean — 0 errors
+
+### ✅ COMPLETE: 2026-04-03 — Scene Scouting, Bible Scene Editing, Pipeline Polish
+
+**New Feature: Scene Scouting (Phase 6.5)**
+- [x] `scene_variations` table in schema.sql + `approved_scout_image_url` on scenes table
+- [x] `generateSceneScoutImage()` in `generate-image.ts` — atmospheric/mood images per scene
+- [x] `POST /api/projects/:id/scenes` — generates 3 images per scene using character descriptions, location, mood, action summary
+- [x] `PATCH /api/projects/:id/scenes` — approve/reject variation, lock all scenes
+- [x] `GET /api/projects/:id/scenes` — returns scenes with their scout variations
+- [x] `/projects/:id/scenes` — full scouting UI: scene sidebar, 3-column variation grid, approve/reject, generate all/per-scene, phase complete footer
+
+**Film Bible Improvements**
+- [x] Inline scene editing: location, time_of_day, mood, action_summary, scene_type (select) — Edit/Cancel/Save per scene
+- [x] `PATCH /api/projects/:id/bible` now handles both `character_id` (existing) and `scene_id` (new) updates
+
+**Storyboard Improvements**
+- [x] `GET /api/storyboard` — fixed character headshots (now joins cast_variations, returns approved_variation_url)
+- [x] `POST /api/storyboard` — uses `approved_scout_image_url` as Gemini multimodal reference image for panel generation (consistent atmosphere/color grading)
+- [x] `generateStoryboardPanel()` — accepts optional `sceneReferenceImageUrl`, uses multimodal generation when present
+
+**Character Lock**
+- [x] Replaced Front/3-Quarter/Profile individual pose grid with character reference sheet display
+- [x] Lock no longer requires 3 poses — any character with approved_cast_id can be locked
+- [x] Auto-generates pose sheet via `/api/posesheet` if headshot exists but sheet doesn't
+
+**Project Detail & Navigation**
+- [x] All phase link labels and descriptions updated to reflect actual pipeline steps
+- [x] "Scene Scouting" link added between Location Scouting and Storyboard (shows at phaseIndex >= 5)
+- [x] ProjectNav overhauled: custom NAV_STEPS array with Scene Scout as a special unlocked step
+- [x] Fixed pre-existing TS error in project detail page (data.characters/scenes ?? 0)
+- [x] `force-dynamic` + `maxDuration = 300` added to locations, storyboard, and scenes routes
+
+**DB Migration required (run in Supabase SQL Editor):**
+```sql
+ALTER TABLE scenes ADD COLUMN IF NOT EXISTS approved_scout_image_url text;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS pose_sheet_url text;
+CREATE TABLE IF NOT EXISTS scene_variations (
+  id uuid primary key default uuid_generate_v4(),
+  scene_id uuid not null references scenes(id) on delete cascade,
+  project_id uuid not null references projects(id) on delete cascade,
+  image_url text not null,
+  prompt_used text not null default '',
+  status text not null default 'pending',
+  rejection_note text,
+  variation_number integer not null default 1,
+  created_at timestamp with time zone default now()
+);
+CREATE INDEX IF NOT EXISTS idx_scene_variations_scene ON scene_variations(scene_id);
+CREATE INDEX IF NOT EXISTS idx_scene_variations_project ON scene_variations(project_id);
+```
+
+---
 
 ### 🔄 Next Up: Deploy Aggressive Improvements Pass
 

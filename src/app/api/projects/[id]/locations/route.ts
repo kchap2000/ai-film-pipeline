@@ -2,6 +2,9 @@ import { getSupabase } from "@/lib/supabase";
 import { generateLocationImage } from "@/lib/generate-image";
 import { NextRequest, NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+export const maxDuration = 300;
+
 const VARIATIONS_PER_LOCATION = 5;
 
 // GET /api/projects/:id/locations — get locations with variations + linked scenes

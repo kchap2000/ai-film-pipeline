@@ -106,6 +106,75 @@ function buildLocationPrompt(
 }
 
 /**
+ * Generate an atmospheric scene scouting image.
+ * Shows the mood/atmosphere of a scene — characters in context, not just empty location.
+ */
+export async function generateSceneScoutImage(opts: {
+  sceneNumber: number;
+  actionSummary: string;
+  location: string;
+  timeOfDay: string;
+  mood: string;
+  sceneType: string;
+  charactersPresent: string[];
+  characterDescriptions: Record<string, string>;
+  variationNumber: number;
+}): Promise<GeneratedImage> {
+  const apiKey = process.env.GOOGLE_AI_API_KEY;
+  const prompt = buildSceneScoutPrompt(opts);
+  const label = `Scene ${opts.sceneNumber}`;
+
+  if (!apiKey || apiKey === "your-key-here") {
+    return generatePlaceholder(label, prompt, opts.variationNumber);
+  }
+
+  return await generateWithGemini(apiKey, prompt, label, opts.variationNumber);
+}
+
+function buildSceneScoutPrompt(opts: {
+  sceneNumber: number;
+  actionSummary: string;
+  location: string;
+  timeOfDay: string;
+  mood: string;
+  sceneType: string;
+  charactersPresent: string[];
+  characterDescriptions: Record<string, string>;
+  variationNumber: number;
+}): string {
+  const charDetails = opts.charactersPresent
+    .map((name) => {
+      const desc = opts.characterDescriptions[name];
+      return desc ? `${name} (${desc})` : name;
+    })
+    .join(", ");
+
+  const visualStyles = [
+    "wide cinematic establishing shot showing characters in environment",
+    "intimate medium shot capturing the emotional core of the scene",
+    "atmospheric detail shot — focus on mood and environment texture",
+  ];
+  const style = visualStyles[(opts.variationNumber - 1) % visualStyles.length];
+
+  const sceneTypeNote = opts.sceneType && opts.sceneType !== "real"
+    ? `Scene type: ${opts.sceneType} — adjust visuals accordingly (surreal, stylized, or heightened reality).`
+    : "";
+
+  return [
+    `Generate a high-quality cinematic scene reference image for film pre-production.`,
+    `Scene ${opts.sceneNumber}: ${opts.actionSummary}`,
+    `Location: ${opts.location}.`,
+    opts.timeOfDay ? `Time of day: ${opts.timeOfDay}.` : "",
+    opts.mood ? `Mood / atmosphere: ${opts.mood}.` : "",
+    sceneTypeNote,
+    charDetails ? `Characters present: ${charDetails}.` : "",
+    `Composition style: ${style}.`,
+    `Style: Cinematic film production reference, photorealistic, professional color grading,`,
+    `evocative and mood-driven. This is a scouting/mood board image — not a storyboard panel.`,
+  ].filter(Boolean).join(" ");
+}
+
+/**
  * Generate a reference pose image for a locked character.
  * pose_type: "front" | "three_quarter" | "profile"
  */
@@ -184,6 +253,8 @@ function buildCastingPrompt(
 
 /**
  * Generate a storyboard panel image for a specific shot.
+ * If sceneReferenceImageUrl is provided (an approved scene scout image), it's passed
+ * to Gemini as a visual reference for consistent atmosphere and color grading.
  */
 export async function generateStoryboardPanel(opts: {
   actionDescription: string;
@@ -197,6 +268,7 @@ export async function generateStoryboardPanel(opts: {
   timeOfDay: string;
   mood: string;
   panelNumber: number;
+  sceneReferenceImageUrl?: string | null; // optional approved scout image
 }): Promise<GeneratedImage> {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   const prompt = buildStoryboardPrompt(opts);
@@ -204,6 +276,39 @@ export async function generateStoryboardPanel(opts: {
 
   if (!apiKey || apiKey === "your-key-here") {
     return generatePlaceholder(label, prompt, opts.panelNumber);
+  }
+
+  // If we have an approved scene scout reference image, use multimodal generation
+  if (opts.sceneReferenceImageUrl) {
+    const match = opts.sceneReferenceImageUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (match) {
+      const [, mimeType, base64Data] = match;
+      const ai = new GoogleGenAI({ apiKey });
+      try {
+        const response = await ai.models.generateContent({
+          model: "gemini-3.1-flash-image-preview",
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { inlineData: { mimeType, data: base64Data } },
+                { text: `Use the above image as an atmospheric reference for color palette, lighting mood, and visual style.\n\n${prompt}` },
+              ],
+            },
+          ],
+          config: { responseModalities: [Modality.IMAGE, Modality.TEXT] },
+        });
+        const parts = response.candidates?.[0]?.content?.parts || [];
+        for (const part of parts) {
+          if (part.inlineData?.data) {
+            const outMime = part.inlineData.mimeType || "image/png";
+            return { url: `data:${outMime};base64,${part.inlineData.data}`, prompt };
+          }
+        }
+      } catch {
+        // Fall through to standard generation if multimodal fails
+      }
+    }
   }
 
   return await generateWithGemini(apiKey, prompt, label, opts.panelNumber);

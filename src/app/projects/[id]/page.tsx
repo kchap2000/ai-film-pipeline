@@ -62,8 +62,8 @@ export default function ProjectDetail() {
       }
 
       setExtractResult({
-        characters: data.characters,
-        scenes: data.scenes,
+        characters: data.characters ?? 0,
+        scenes: data.scenes ?? 0,
       });
       await fetchProject();
     } catch (err) {
@@ -290,11 +290,12 @@ export default function ProjectDetail() {
 
         {/* Phase Links */}
         {[
-          { show: hasExtracted, href: `/projects/${project.id}/bible`, label: "Film Bible", sub: "Characters, scenes, structure, and metadata extracted from your documents", section: "Film Bible" },
-          { show: hasExtracted, href: `/projects/${project.id}/cast`, label: "Cast Characters", sub: "Generate 10 visual variations per character, then approve your cast", section: "AI Casting" },
-          { show: phaseIndex >= 3, href: `/projects/${project.id}/lock`, label: "Lock Characters & Generate Poses", sub: "Generate front, 3/4, and profile reference poses for each cast character", section: "Character Lock & Reference Poses" },
-          { show: phaseIndex >= 4, href: `/projects/${project.id}/locations`, label: "Location Bible", sub: "Generate visual references for each location, approve and lock into Scene Bible", section: "Location & Scene Bible" },
-          { show: phaseIndex >= 5, href: `/projects/${project.id}/storyboard`, label: "Storyboard Generation", sub: "Shot-by-shot panel generation using locked characters and locations", section: "Storyboard" },
+          { show: hasExtracted, href: `/projects/${project.id}/bible`, label: "Film Bible", sub: "Review and edit characters, scenes, structure, and metadata extracted from your documents", section: "Film Bible" },
+          { show: hasExtracted, href: `/projects/${project.id}/cast`, label: "AI Casting", sub: "Generate visual variations per character, upload real headshots, and approve your cast", section: "AI Casting" },
+          { show: phaseIndex >= 3, href: `/projects/${project.id}/lock`, label: "Character Lock", sub: "Approve each character's headshot and auto-generate a multi-angle reference sheet", section: "Character Lock" },
+          { show: phaseIndex >= 4, href: `/projects/${project.id}/locations`, label: "Location Scouting", sub: "Generate visual references for each location, approve and lock into the scene bible", section: "Location Scouting" },
+          { show: phaseIndex >= 5, href: `/projects/${project.id}/scenes`, label: "Scene Scouting", sub: "Generate atmospheric mood images for each scene — approve the best visual reference per scene", section: "Scene Scouting" },
+          { show: phaseIndex >= 5, href: `/projects/${project.id}/storyboard`, label: "Storyboard", sub: "Shot-by-shot panel generation using locked characters, locations, and approved scene references", section: "Storyboard" },
         ].map(({ show, href, label, sub, section }) =>
           show ? (
             <section key={section} className="mb-6">
