@@ -183,6 +183,13 @@ export async function PATCH(
       .eq("project_id", id)
       .not("approved_scout_image_url", "is", null);
 
+    // Advance phase to storyboard
+    await supabase
+      .from("projects")
+      .update({ phase_status: "storyboard" })
+      .eq("id", id)
+      .in("phase_status", ["scene_bible", "lock", "casting"]);
+
     return NextResponse.json({ success: true });
   }
 

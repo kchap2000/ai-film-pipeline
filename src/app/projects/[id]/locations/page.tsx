@@ -477,13 +477,13 @@ export default function LocationBiblePage() {
             </p>
           </div>
           <Link
-            href={`/projects/${id}`}
+            href={`/projects/${id}/scenes`}
             className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors"
             style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
             onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "rgba(255,138,42,0.08)")}
             onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
           >
-            Continue &rarr;
+            Continue to Scene Scouting &rarr;
           </Link>
         </div>
       )}

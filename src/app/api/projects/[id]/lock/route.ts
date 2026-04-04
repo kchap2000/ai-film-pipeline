@@ -88,6 +88,21 @@ export async function PATCH(
       .eq("id", character_id)
       .eq("project_id", id);
 
+    // Check if all cast characters are now locked — if so, advance phase
+    const { data: unlocked } = await supabase
+      .from("characters")
+      .select("id")
+      .eq("project_id", id)
+      .not("approved_cast_id", "is", null)
+      .eq("locked", false);
+
+    if (!unlocked || unlocked.length === 0) {
+      await supabase
+        .from("projects")
+        .update({ phase_status: "lock" })
+        .eq("id", id);
+    }
+
     return NextResponse.json({ success: true });
   }
 

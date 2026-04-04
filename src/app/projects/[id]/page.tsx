@@ -289,51 +289,72 @@ export default function ProjectDetail() {
         </section>
 
         {/* Phase Links */}
-        {[
-          { show: hasExtracted, href: `/projects/${project.id}/bible`, label: "Film Bible", sub: "Review and edit characters, scenes, structure, and metadata extracted from your documents", section: "Film Bible" },
-          { show: hasExtracted, href: `/projects/${project.id}/cast`, label: "AI Casting", sub: "Generate visual variations per character, upload real headshots, and approve your cast", section: "AI Casting" },
-          { show: phaseIndex >= 3, href: `/projects/${project.id}/lock`, label: "Character Lock", sub: "Approve each character's headshot and auto-generate a multi-angle reference sheet", section: "Character Lock" },
-          { show: phaseIndex >= 4, href: `/projects/${project.id}/locations`, label: "Location Scouting", sub: "Generate visual references for each location, approve and lock into the scene bible", section: "Location Scouting" },
-          { show: phaseIndex >= 5, href: `/projects/${project.id}/scenes`, label: "Scene Scouting", sub: "Generate atmospheric mood images for each scene — approve the best visual reference per scene", section: "Scene Scouting" },
-          { show: phaseIndex >= 5, href: `/projects/${project.id}/storyboard`, label: "Storyboard", sub: "Shot-by-shot panel generation using locked characters, locations, and approved scene references", section: "Storyboard" },
-        ].map(({ show, href, label, sub, section }) =>
-          show ? (
-            <section key={section} className="mb-6">
-              <h2 className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
-                {section}
-              </h2>
-              <Link href={href}>
-                <div
-                  className="rounded-xl p-6 transition-all duration-200 cursor-pointer"
-                  style={{
-                    background: "var(--brand-mid)",
-                    border: "1px solid var(--brand-steel)",
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLElement).style.borderColor = "var(--brand-orange)";
-                    (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 20px rgba(255,138,42,0.1)";
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLElement).style.borderColor = "var(--brand-steel)";
-                    (e.currentTarget as HTMLElement).style.boxShadow = "none";
-                  }}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium" style={{ color: "var(--brand-white)" }}>
-                        {label}
-                      </p>
-                      <p className="text-xs mt-1" style={{ color: "var(--brand-gray)" }}>
-                        {sub}
-                      </p>
-                    </div>
-                    <span className="text-lg ml-4" style={{ color: "var(--brand-orange)" }}>&rarr;</span>
+        {(() => {
+          // Determine which step is "next up" based on current phase
+          const nextStep =
+            phaseIndex === 1 ? "Film Bible" :
+            phaseIndex === 2 ? "AI Casting" :
+            phaseIndex === 3 ? "Character Lock" :
+            phaseIndex === 4 ? "Location Scouting" :
+            phaseIndex === 5 ? "Scene Scouting" :
+            phaseIndex === 6 ? "Storyboard" : null;
+
+          return [
+            { show: hasExtracted,   href: `/projects/${project.id}/bible`,     label: "Film Bible",        sub: "Review and edit characters, scenes, structure, and metadata extracted from your documents" },
+            { show: hasExtracted,   href: `/projects/${project.id}/cast`,      label: "AI Casting",        sub: "Generate visual variations per character, upload real headshots, and approve your cast" },
+            { show: phaseIndex >= 3, href: `/projects/${project.id}/lock`,     label: "Character Lock",    sub: "Approve each character's headshot and auto-generate a multi-angle reference sheet" },
+            { show: phaseIndex >= 4, href: `/projects/${project.id}/locations`, label: "Location Scouting", sub: "Generate visual references for each location, approve and lock into the scene bible" },
+            { show: phaseIndex >= 5, href: `/projects/${project.id}/scenes`,   label: "Scene Scouting",    sub: "Generate atmospheric mood images for each scene — approve the best visual reference per scene" },
+            { show: phaseIndex >= 5, href: `/projects/${project.id}/storyboard`, label: "Storyboard",      sub: "Shot-by-shot panel generation using locked characters, locations, and approved scene references" },
+          ].map(({ show, href, label, sub }) => {
+            if (!show) return null;
+            const isNextUp = label === nextStep;
+            return (
+              <section key={label} className="mb-4">
+                {isNextUp && (
+                  <div className="flex items-center gap-2 mb-2">
+                    <span
+                      className="text-[9px] uppercase tracking-[0.2em] px-2 py-0.5 rounded-full font-bold"
+                      style={{ background: "rgba(255,138,42,0.15)", color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.35)" }}
+                    >
+                      Next Up
+                    </span>
                   </div>
-                </div>
-              </Link>
-            </section>
-          ) : null
-        )}
+                )}
+                <Link href={href}>
+                  <div
+                    className="rounded-xl p-6 transition-all duration-200 cursor-pointer"
+                    style={{
+                      background: isNextUp ? "rgba(255,138,42,0.06)" : "var(--brand-mid)",
+                      border: isNextUp ? "1px solid rgba(255,138,42,0.5)" : "1px solid var(--brand-steel)",
+                      boxShadow: isNextUp ? "0 4px 24px rgba(255,138,42,0.08)" : "none",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLElement).style.borderColor = "var(--brand-orange)";
+                      (e.currentTarget as HTMLElement).style.boxShadow = "0 4px 20px rgba(255,138,42,0.12)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.borderColor = isNextUp ? "rgba(255,138,42,0.5)" : "var(--brand-steel)";
+                      (e.currentTarget as HTMLElement).style.boxShadow = isNextUp ? "0 4px 24px rgba(255,138,42,0.08)" : "none";
+                    }}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium" style={{ color: isNextUp ? "var(--brand-orange)" : "var(--brand-white)" }}>
+                          {label}
+                        </p>
+                        <p className="text-xs mt-1" style={{ color: "var(--brand-gray)" }}>
+                          {sub}
+                        </p>
+                      </div>
+                      <span className="text-lg ml-4" style={{ color: "var(--brand-orange)" }}>&rarr;</span>
+                    </div>
+                  </div>
+                </Link>
+              </section>
+            );
+          });
+        })()}
       </div>
     </div>
   );

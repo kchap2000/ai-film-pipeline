@@ -458,8 +458,8 @@ export default function CastingPage() {
           {allCast && castableChars.length > 0 && (
             <div className="mt-6 pt-4" style={{ borderTop: "1px solid var(--brand-steel)" }}>
               <p className="text-green-500 text-[10px] uppercase tracking-widest mb-2">All characters cast</p>
-              <Link href={`/projects/${id}`} className="text-xs" style={{ color: "var(--brand-orange)" }}>
-                &rarr; Continue to next phase
+              <Link href={`/projects/${id}/lock`} className="text-xs" style={{ color: "var(--brand-orange)" }}>
+                &rarr; Continue to Character Lock
               </Link>
             </div>
           )}

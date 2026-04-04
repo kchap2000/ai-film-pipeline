@@ -371,7 +371,7 @@ export default function CharacterLockPage() {
                 </p>
               </div>
               <Link
-                href={`/projects/${id}`}
+                href={`/projects/${id}/locations`}
                 className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors"
                 style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
                 onMouseEnter={(e) =>
@@ -381,7 +381,7 @@ export default function CharacterLockPage() {
                   ((e.currentTarget as HTMLElement).style.background = "transparent")
                 }
               >
-                Continue &rarr;
+                Continue to Location Scouting &rarr;
               </Link>
             </div>
           )}
