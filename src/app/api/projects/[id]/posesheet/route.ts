@@ -5,14 +5,53 @@ import { NextRequest, NextResponse } from "next/server";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const POSE_SHEET_PROMPT = `Photorealistic character sheet based strictly and only on the provided reference image.
-The generated character must exactly match the individual shown in the reference image, including facial structure, bone structure, body proportions, age appearance, skin tone, hair color, hairstyle, hair length, facial hair if present, eye color, and all visible physical traits. Do not beautify, stylize, idealize, or alter the character in any way.
-Wardrobe must exactly match what is visible in the reference image, including clothing type, fit, fabric, color, wear, and construction details. Do not add, remove, or reinterpret clothing elements unless explicitly instructed. No additional accessories, jewelry, props, or styling beyond what is present in the reference image.
-The character is presented in a neutral, documentary style for identity locking and continuity purposes. Expression is natural and relaxed, not posed or performative. Body language is neutral and unexaggerated.
-Lighting is clean, realistic, and neutral, resembling soft natural daylight or balanced studio light depending on the reference. Skin texture must remain realistic with visible pores, natural imperfections, and accurate color. No beauty retouching, no smoothing, no cinematic grading, no stylization.
-The character sheet includes multiple angles appropriate for production reference, such as: front-facing view, three-quarter view, side profile, back view (if applicable), head-and-shoulders portrait.
-Camera framing is realistic and proportional, as if captured with a real camera. True-to-life scale, accurate perspective, and consistent anatomy across all views. No distortion, no exaggerated lens effects.
-This image is intended as a canonical character reference for visual continuity across scenes, shots, and tools. Accuracy and consistency take priority over aesthetics.`;
+const POSE_SHEET_PROMPT = `Create a 9-image storyboard (NOT a single collage).
+Each image is a separate cinematic frame.
+Use the provided reference image as the exact identity anchor for the character.
+The character must remain 100% consistent across all images:
+same face
+same hairstyle
+Outfit is black fit jeans and no shirt and no shoes and no jewelry
+same proportions
+same textures and details
+Photorealistic, cinematic quality.
+
+REFERENCE IMAGE
+Use the uploaded/reference image as the primary identity source.
+Do not reinterpret or redesign the character. Maintain exact likeness.
+
+Scene 1: Full Body – Front Neutral
+Straight-on full-body shot. Character standing upright, facing camera directly. Arms relaxed. Neutral expression. Clean, centered composition.
+
+Scene 2: Full Body – Left Profile
+Full-body side profile facing left. Natural posture. Emphasis on silhouette and clothing shape.
+
+Scene 3: Full Body – Back View
+Character facing away from camera. Full-body shot highlighting back of outfit, textures, and structure.
+
+Scene 4: Mid Shot – Emotional Variation
+Waist-up shot, slight angle (3/4 view). Expression shows personality (confident, haunted, calm, intense, etc.).
+
+Scene 5: Close-Up – Face (Neutral)
+Tight frontal close-up. Neutral expression. Focus on facial structure and skin detail.
+
+Scene 6: Close-Up – Feature Detail
+Extreme close-up of defining feature (eyes, mouth, scar, jewelry, texture, etc.). Sharp detail, shallow depth of field.
+
+Scene 7: Head Profile Close-Up
+Tight side profile of head and neck. Clean silhouette. Emphasis on bone structure and skin texture.
+
+Scene 8: Full Body – Low Angle
+Low-angle full-body shot looking up at character. Cinematic presence, slightly more dramatic framing.
+
+Scene 9: Close-Up – Expression Variation
+Tight close-up of face with a different emotional expression (eyes closed, distant stare, subtle tension, etc.).
+
+🎯 STYLE + CONSISTENCY BLOCK (KEEP EXACTLY AS IS)
+Lighting inspired by dramatic studio cinema portraiture: soft key light with subtle rim light, shallow depth of field, photorealistic skin detail, cinematic contrast.
+Background: simple neutral light gray studio cyclorama.
+IMPORTANT: Same person, same face, same hairstyle, same outfit in every image.
+Lens style: anamorphic cinematic feel, shallow DOF, realistic proportions.`;
 
 // POST /api/projects/:id/posesheet
 // Body: { character_id: string }
