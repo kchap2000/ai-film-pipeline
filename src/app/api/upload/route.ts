@@ -1,4 +1,4 @@
-import { getSupabase } from "@/lib/supabase";
+import { createRouteClient } from "@/lib/supabase-route";
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 
@@ -11,6 +11,12 @@ const ACCEPTED_TYPES = [
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 
 export async function POST(req: NextRequest) {
+  const { supabase, user } = await createRouteClient();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const formData = await req.formData();
   const projectId = formData.get("project_id") as string;
   const file = formData.get("file") as File;
@@ -20,6 +26,18 @@ export async function POST(req: NextRequest) {
       { error: "project_id and file are required" },
       { status: 400 }
     );
+  }
+
+  // Verify user owns this project
+  const { error: projectError } = await supabase
+    .from("projects")
+    .select("id")
+    .eq("id", projectId)
+    .eq("user_id", user.id)
+    .single();
+
+  if (projectError) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
   if (!ACCEPTED_TYPES.includes(file.type)) {
@@ -35,8 +53,6 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
-
-  const supabase = getSupabase();
 
   // Upload to Supabase Storage
   const fileExt = file.name.split(".").pop();

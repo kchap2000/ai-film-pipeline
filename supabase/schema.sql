@@ -21,6 +21,7 @@ create type phase_status as enum (
 -- Projects table
 create table projects (
   id uuid primary key default uuid_generate_v4(),
+  user_id uuid not null references auth.users(id) on delete cascade,
   title text not null,
   type project_type not null default 'personal',
   client_name text,
@@ -28,6 +29,28 @@ create table projects (
   created_at timestamp with time zone default now(),
   updated_at timestamp with time zone default now()
 );
+
+-- Index for fast user-scoped project lookups
+create index idx_projects_user_id on projects(user_id);
+
+-- Row Level Security: users can only see/modify their own projects
+alter table projects enable row level security;
+
+create policy "Users can view their own projects"
+  on projects for select
+  using (auth.uid() = user_id);
+
+create policy "Users can insert their own projects"
+  on projects for insert
+  with check (auth.uid() = user_id);
+
+create policy "Users can update their own projects"
+  on projects for update
+  using (auth.uid() = user_id);
+
+create policy "Users can delete their own projects"
+  on projects for delete
+  using (auth.uid() = user_id);
 
 -- Project files (uploaded scripts, treatments, notes)
 create table project_files (
@@ -257,3 +280,19 @@ create table if not exists scene_variations (
 
 create index if not exists idx_scene_variations_scene on scene_variations(scene_id);
 create index if not exists idx_scene_variations_project on scene_variations(project_id);
+
+-- ============================================================
+-- Migration: Add user_id to existing projects (2026-04-04)
+-- ============================================================
+-- Run this ONLY if you already have data in the projects table.
+-- Replace 'YOUR_USER_UUID' with your auth.users id after first Google login.
+--
+-- alter table projects add column if not exists user_id uuid references auth.users(id) on delete cascade;
+-- update projects set user_id = 'YOUR_USER_UUID' where user_id is null;
+-- alter table projects alter column user_id set not null;
+-- create index if not exists idx_projects_user_id on projects(user_id);
+-- alter table projects enable row level security;
+-- create policy "Users can view their own projects" on projects for select using (auth.uid() = user_id);
+-- create policy "Users can insert their own projects" on projects for insert with check (auth.uid() = user_id);
+-- create policy "Users can update their own projects" on projects for update using (auth.uid() = user_id);
+-- create policy "Users can delete their own projects" on projects for delete using (auth.uid() = user_id);

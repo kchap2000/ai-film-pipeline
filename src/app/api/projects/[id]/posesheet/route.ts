@@ -1,5 +1,5 @@
-import { getSupabase } from "@/lib/supabase";
-import { generatePoseSheet } from "@/lib/generate-image";
+import { createRouteClient } from "@/lib/supabase-route";
+import { generatePoseSheet, generateWithGemini } from "@/lib/generate-image";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +11,6 @@ Use the provided reference image as the exact identity anchor for the character.
 The character must remain 100% consistent across all images:
 same face
 same hairstyle
-Outfit is black fit jeans and no shirt and no shoes and no jewelry
 same proportions
 same textures and details
 Photorealistic, cinematic quality.
@@ -70,7 +69,8 @@ export async function POST(
       return NextResponse.json({ error: "character_id is required" }, { status: 400 });
     }
 
-    const supabase = getSupabase();
+    const { supabase, user } = await createRouteClient();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     // Get character + approved cast variation image
     const { data: char, error: charErr } = await supabase
@@ -101,12 +101,38 @@ export async function POST(
 
     // Generate the pose sheet using the headshot as reference
     const description = [char.description, char.personality].filter(Boolean).join(" ");
-    const result = await generatePoseSheet(
+    const fullPrompt = [
+      POSE_SHEET_PROMPT,
+      `Character name: ${char.name}.`,
+      description ? `Physical description for reference: ${description}.` : "",
+    ].filter(Boolean).join("\n");
+
+    let result = await generatePoseSheet(
       char.name,
       description,
       variation.image_url,
       POSE_SHEET_PROMPT
     );
+
+    let isPlaceholder = result.url.startsWith("data:image/svg+xml");
+
+    // If multimodal was blocked (content policy), retry text-only
+    if (isPlaceholder) {
+      console.log(`Pose sheet for ${char.name}: multimodal blocked, retrying text-only`);
+      const apiKey = process.env.GOOGLE_AI_API_KEY;
+      if (apiKey && apiKey !== "your-key-here") {
+        try {
+          const textOnlyResult = await generateWithGemini(apiKey, fullPrompt, char.name, 99);
+          if (!textOnlyResult.url.startsWith("data:image/svg+xml")) {
+            result = textOnlyResult;
+            isPlaceholder = false;
+          }
+        } catch {
+          // Text-only also failed — keep the SVG placeholder
+          console.log(`Pose sheet for ${char.name}: text-only also failed, keeping placeholder`);
+        }
+      }
+    }
 
     // Store pose sheet URL on the character
     const { error: updateErr } = await supabase
@@ -122,6 +148,7 @@ export async function POST(
       success: true,
       character_id,
       pose_sheet_url: result.url,
+      is_placeholder: isPlaceholder,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Pose sheet generation failed";
@@ -143,7 +170,8 @@ export async function GET(
     return NextResponse.json({ error: "character_id is required" }, { status: 400 });
   }
 
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { data, error } = await supabase
     .from("characters")
     .select("pose_sheet_url")

@@ -1,4 +1,4 @@
-import { getSupabase } from "@/lib/supabase";
+import { createRouteClient } from "@/lib/supabase-route";
 import { generateCastingImage } from "@/lib/generate-image";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -15,7 +15,8 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   const { id } = params;
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const [charsRes, variationsRes] = await Promise.all([
     supabase
@@ -79,7 +80,8 @@ export async function POST(
     );
   }
 
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // Look up the character
   const { data: char, error: charError } = await supabase
@@ -172,7 +174,8 @@ export async function PATCH(
   const body = await req.json();
   const { variation_id, status, rejection_note, character_id } = body;
 
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   if (variation_id && status) {
     // Update a single variation's status
@@ -237,7 +240,8 @@ export async function PUT(
       );
     }
 
-    const supabase = getSupabase();
+    const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     // Verify character belongs to this project
     const { data: char, error: charError } = await supabase

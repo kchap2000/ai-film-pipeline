@@ -23,12 +23,22 @@ export default function CharacterLockPage() {
   const [locking, setLocking] = useState<string | "all" | null>(null);
   const [generatingPoseSheet, setGeneratingPoseSheet] = useState<Set<string>>(new Set());
   const [poseSheetError, setPoseSheetError] = useState<Record<string, string>>({});
+  const [placeholders, setPlaceholders] = useState<Set<string>>(new Set());
 
   const fetchData = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/lock`);
     if (res.ok) {
       const data = await res.json();
-      setCharacters(data.characters || []);
+      const chars: LockCharacter[] = data.characters || [];
+      setCharacters(chars);
+      // Detect existing SVG placeholders
+      const svgIds = new Set<string>();
+      for (const c of chars) {
+        if (c.pose_sheet_url?.startsWith("data:image/svg+xml")) {
+          svgIds.add(c.id);
+        }
+      }
+      if (svgIds.size > 0) setPlaceholders(svgIds);
     }
     setLoading(false);
   }, [id]);
@@ -66,6 +76,12 @@ export default function CharacterLockPage() {
       setCharacters((prev) =>
         prev.map((c) => (c.id === characterId ? { ...c, pose_sheet_url: data.pose_sheet_url } : c))
       );
+      // Track placeholder status
+      if (data.is_placeholder) {
+        setPlaceholders((prev) => new Set(prev).add(characterId));
+      } else {
+        setPlaceholders((prev) => { const n = new Set(prev); n.delete(characterId); return n; });
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Generation failed";
       setPoseSheetError((prev) => ({ ...prev, [characterId]: msg }));
@@ -264,6 +280,22 @@ export default function CharacterLockPage() {
                                 className="w-full h-full object-contain"
                                 style={{ maxHeight: "400px" }}
                               />
+                              {placeholders.has(char.id) && (
+                                <div className="absolute top-3 right-3">
+                                  <button
+                                    onClick={() => triggerPoseSheet(char.id)}
+                                    disabled={isGenerating}
+                                    className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest px-3 py-1.5 rounded-full transition-colors disabled:opacity-40"
+                                    style={{
+                                      background: "rgba(255,138,42,0.9)",
+                                      color: "#fff",
+                                      backdropFilter: "blur(4px)",
+                                    }}
+                                  >
+                                    {isGenerating ? "Regenerating..." : "Placeholder — Regenerate"}
+                                  </button>
+                                </div>
+                              )}
                             </div>
                             <div
                               className="flex items-center justify-between px-4 py-2"

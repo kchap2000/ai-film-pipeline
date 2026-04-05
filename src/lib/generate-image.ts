@@ -433,7 +433,7 @@ export async function generatePoseSheet(
 /**
  * Generate an image using Gemini 2.5 Flash with native image output.
  */
-async function generateWithGemini(
+export async function generateWithGemini(
   apiKey: string,
   prompt: string,
   characterName: string,

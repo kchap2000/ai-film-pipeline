@@ -2,12 +2,21 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Project } from "@/lib/types";
+import { createClient } from "@/lib/supabase-browser";
 import ProjectCard from "@/components/ProjectCard";
 
 export default function Dashboard() {
+  const router = useRouter();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const handleSignOut = async () => {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push("/login");
+  };
 
   useEffect(() => {
     fetch("/api/projects")
@@ -130,6 +139,13 @@ export default function Dashboard() {
               Charleston, SC
             </span>
             <span className="font-medium" style={{ color: "var(--brand-orange)" }}>Khalil Chapman</span>
+            <button
+              onClick={() => void handleSignOut()}
+              className="text-[10px] uppercase tracking-widest transition-opacity hover:opacity-80 cursor-pointer"
+              style={{ color: "var(--brand-gray)" }}
+            >
+              Sign out
+            </button>
           </div>
         </footer>
       </div>

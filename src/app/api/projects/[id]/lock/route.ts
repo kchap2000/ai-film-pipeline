@@ -1,4 +1,4 @@
-import { getSupabase } from "@/lib/supabase";
+import { createRouteClient } from "@/lib/supabase-route";
 import { NextRequest, NextResponse } from "next/server";
 
 // GET /api/projects/:id/lock — get characters with their approved cast + pose sheet
@@ -7,7 +7,8 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   const { id } = params;
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const [charsRes, variationsRes] = await Promise.all([
     supabase
@@ -45,7 +46,8 @@ export async function PATCH(
   const { id } = params;
   const body = await req.json();
   const { character_id, lock_all } = body;
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   if (lock_all) {
     // Lock all characters that have an approved cast

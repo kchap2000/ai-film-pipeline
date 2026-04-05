@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PhaseStatus, PHASE_ORDER } from "@/lib/types";
+import { createClient } from "@/lib/supabase-browser";
 
 // Each nav step: a phase enum value OR a custom step that slots between phases
 const NAV_STEPS: Array<
@@ -28,7 +29,14 @@ interface ProjectNavProps {
 
 export default function ProjectNav({ projectId, currentPhase: phaseProp }: ProjectNavProps) {
   const pathname = usePathname();
+  const router = useRouter();
   const [currentPhase, setCurrentPhase] = useState<PhaseStatus | null>(phaseProp ?? null);
+
+  const handleSignOut = async () => {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push("/login");
+  };
 
   useEffect(() => {
     if (!phaseProp) {
@@ -55,6 +63,7 @@ export default function ProjectNav({ projectId, currentPhase: phaseProp }: Proje
       <div className="max-w-7xl mx-auto px-6">
         <div className="flex items-center overflow-x-auto">
           {NAV_STEPS.map((step, idx) => {
+
             // Determine the href and whether this step is active / unlocked
             const path = step.path;
             const href = path ? `/projects/${projectId}/${path}` : `/projects/${projectId}`;
@@ -123,6 +132,15 @@ export default function ProjectNav({ projectId, currentPhase: phaseProp }: Proje
               </div>
             );
           })}
+
+          {/* Sign Out */}
+          <button
+            onClick={() => void handleSignOut()}
+            className="ml-auto flex-shrink-0 px-4 py-3.5 text-[10px] uppercase tracking-widest transition-colors hover:opacity-80 cursor-pointer"
+            style={{ color: "var(--brand-gray)" }}
+          >
+            Sign out
+          </button>
         </div>
       </div>
     </nav>

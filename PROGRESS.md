@@ -387,6 +387,21 @@ git push
 
 ---
 
+---
+
+## 📌 Pre-Launch Note — Google Auth + Client Access (hold until ready to share)
+
+Before going live with clients, add:
+1. **Google OAuth login** — Supabase Auth, `signInWithOAuth({ provider: 'google' })`, callback at `/auth/callback`
+2. **user_id on projects table** — every project scoped to the logged-in user; API routes filter by `user.id`
+3. **Client portal access** — ability to share specific projects with client emails (read-only view of assets, storyboard, casting picks)
+4. **Middleware** — protect all `/projects/*` routes, redirect to `/login` if no session
+5. **Sign out button** in ProjectNav
+
+The Claude Code prompt for this is already written — just paste it when ready.
+
+---
+
 ### 🔄 Next Up: Deploy Aggressive Improvements Pass
 
 **Requires Claude Code push + Supabase migration:**

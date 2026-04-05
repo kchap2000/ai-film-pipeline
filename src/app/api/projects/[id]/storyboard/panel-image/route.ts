@@ -1,4 +1,4 @@
-import { getSupabase } from "@/lib/supabase";
+import { createRouteClient } from "@/lib/supabase-route";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +14,8 @@ export async function GET(
     return NextResponse.json({ error: "panel_id is required" }, { status: 400 });
   }
 
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const { data, error } = await supabase
     .from("storyboard_panels")
     .select("image_url")

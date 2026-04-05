@@ -1,14 +1,20 @@
-import { getSupabase } from "@/lib/supabase";
+import { createRouteClient } from "@/lib/supabase-route";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/projects — list all projects
+// GET /api/projects — list projects for the authenticated user
 export async function GET() {
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { data, error } = await supabase
     .from("projects")
     .select("*")
+    .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -18,8 +24,14 @@ export async function GET() {
   return NextResponse.json(data);
 }
 
-// POST /api/projects — create a new project
+// POST /api/projects — create a new project for the authenticated user
 export async function POST(req: NextRequest) {
+  const { supabase, user } = await createRouteClient();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = await req.json();
   const { title, type, client_name } = body;
 
@@ -30,10 +42,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const supabase = getSupabase();
   const { data, error } = await supabase
     .from("projects")
     .insert({
+      user_id: user.id,
       title,
       type,
       client_name: type === "client" ? client_name : null,

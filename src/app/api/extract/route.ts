@@ -1,4 +1,4 @@
-import { getSupabase } from "@/lib/supabase";
+import { createRouteClient } from "@/lib/supabase-route";
 import { extractFromText } from "@/lib/extract";
 import { NextRequest, NextResponse } from "next/server";
 // Use pdf-parse/lib/pdf-parse.js directly to skip the test-file initialization
@@ -13,6 +13,12 @@ export const maxDuration = 60; // Allow up to 60s for Claude extraction
 export async function POST(req: NextRequest) {
   // Top-level try-catch ensures we ALWAYS return JSON, never Vercel's HTML error page
   try {
+  const { supabase, user } = await createRouteClient();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = await req.json();
   const { project_id } = body;
 
@@ -23,13 +29,12 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const supabase = getSupabase();
-
-  // 1. Verify project exists
+  // 1. Verify project exists and belongs to user
   const { data: project, error: projError } = await supabase
     .from("projects")
     .select("*")
     .eq("id", project_id)
+    .eq("user_id", user.id)
     .single();
 
   if (projError || !project) {

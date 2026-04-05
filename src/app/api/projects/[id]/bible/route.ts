@@ -1,4 +1,4 @@
-import { getSupabase } from "@/lib/supabase";
+import { createRouteClient } from "@/lib/supabase-route";
 import { NextRequest, NextResponse } from "next/server";
 
 // GET /api/projects/:id/bible — get all extraction data for the Film Bible
@@ -7,7 +7,8 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   const { id } = params;
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const [projectRes, charsRes, scenesRes, extractionRes, castsRes] = await Promise.all([
     supabase.from("projects").select("*").eq("id", id).single(),
@@ -69,7 +70,8 @@ export async function PATCH(
 ) {
   const { id } = params;
   const body = await req.json();
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // ── Character update ──────────────────────────────────────
   if (body.character_id) {
@@ -131,7 +133,8 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   const { id } = params;
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { error } = await supabase
     .from("projects")

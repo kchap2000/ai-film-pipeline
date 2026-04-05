@@ -12,6 +12,7 @@
     "@anthropic-ai/sdk": "^0.80.0",
     "@google/genai": "^1.46.0",
     "@google/generative-ai": "^0.24.1",
+    "@supabase/auth-helpers-nextjs": "^0.15.0",
     "@supabase/ssr": "^0.9.0",
     "@supabase/supabase-js": "^2.100.0",
     "mammoth": "^1.12.0",

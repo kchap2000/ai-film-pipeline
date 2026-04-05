@@ -1,4 +1,4 @@
-import { getSupabase } from "@/lib/supabase";
+import { createRouteClient } from "@/lib/supabase-route";
 import { generateStoryboardPanel } from "@/lib/generate-image";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -11,7 +11,8 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   const { id } = params;
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const [scenesRes, panelsRes, charsRes, locsRes, castsRes] = await Promise.all([
     supabase
@@ -80,7 +81,8 @@ export async function POST(
   const { id } = params;
   const body = await req.json().catch(() => ({}));
   const targetSceneId = body.scene_id as string | undefined;
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // Fetch scenes, characters, locations
   let scenesQuery = supabase

@@ -1,4 +1,4 @@
-import { getSupabase } from "@/lib/supabase";
+import { createRouteClient } from "@/lib/supabase-route";
 import { generateLocationImage } from "@/lib/generate-image";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -13,7 +13,8 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   const { id } = params;
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const [locsRes, varsRes, scenesRes] = await Promise.all([
     supabase
@@ -68,7 +69,8 @@ export async function POST(
   const { id } = params;
   const body = await req.json().catch(() => ({}));
   const locationId = body.location_id;
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // If no locations exist yet, extract them from scenes
   const { data: existingLocs } = await supabase
@@ -244,7 +246,8 @@ export async function PATCH(
 ) {
   const { id } = params;
   const body = await req.json();
-  const supabase = getSupabase();
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // Approve/reject a variation
   if (body.variation_id && body.status) {
