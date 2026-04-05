@@ -12,8 +12,7 @@ interface LockCharacter {
   role: string;
   locked: boolean;
   approved_cast_id: string | null;
-  approved_image_url: string | null;
-  pose_sheet_url: string | null;
+  approved_variation_id: string | null;
 }
 
 export default function CharacterLockPage() {
@@ -24,6 +23,8 @@ export default function CharacterLockPage() {
   const [generatingPoseSheet, setGeneratingPoseSheet] = useState<Set<string>>(new Set());
   const [poseSheetError, setPoseSheetError] = useState<Record<string, string>>({});
   const [placeholders, setPlaceholders] = useState<Set<string>>(new Set());
+  const [imageCache, setImageCache] = useState<Record<string, string>>({});
+  const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
 
   const fetchData = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/lock`);
@@ -31,14 +32,6 @@ export default function CharacterLockPage() {
       const data = await res.json();
       const chars: LockCharacter[] = data.characters || [];
       setCharacters(chars);
-      // Detect existing SVG placeholders
-      const svgIds = new Set<string>();
-      for (const c of chars) {
-        if (c.pose_sheet_url?.startsWith("data:image/svg+xml")) {
-          svgIds.add(c.id);
-        }
-      }
-      if (svgIds.size > 0) setPlaceholders(svgIds);
     }
     setLoading(false);
   }, [id]);
@@ -47,17 +40,52 @@ export default function CharacterLockPage() {
     fetchData();
   }, [fetchData]);
 
+  // Lazy-load headshot and pose sheet images
+  const fetchCastImage = useCallback(async (key: string, url: string) => {
+    if (imageCache[key] || loadingImages.has(key)) return;
+    setLoadingImages((prev) => new Set(prev).add(key));
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const imgUrl = data.image_url || data.pose_sheet_url;
+        if (imgUrl) {
+          setImageCache((prev) => ({ ...prev, [key]: imgUrl }));
+          // Detect SVG placeholder for pose sheets
+          if (key.startsWith("pose-") && imgUrl.startsWith("data:image/svg+xml")) {
+            const charId = key.replace("pose-", "");
+            setPlaceholders((prev) => new Set(prev).add(charId));
+          }
+        }
+      }
+    } catch { /* silent */ } finally {
+      setLoadingImages((prev) => { const n = new Set(prev); n.delete(key); return n; });
+    }
+  }, [imageCache, loadingImages]);
+
+  // Fetch images for all cast characters
+  useEffect(() => {
+    for (const c of characters) {
+      if (c.approved_variation_id) {
+        fetchCastImage(`headshot-${c.id}`, `/api/projects/${id}/cast/image?variation_id=${c.approved_variation_id}`);
+        fetchCastImage(`pose-${c.id}`, `/api/projects/${id}/cast/image?character_id=${c.id}&type=pose`);
+      }
+    }
+  }, [characters, id, fetchCastImage]);
+
   // Auto-generate pose sheet for characters with headshot but no pose sheet
   useEffect(() => {
     if (characters.length === 0) return;
     const needs = characters.filter(
-      (c) => c.approved_image_url && !c.pose_sheet_url && !generatingPoseSheet.has(c.id)
+      (c) => c.approved_variation_id && !imageCache[`pose-${c.id}`] && !loadingImages.has(`pose-${c.id}`) && !generatingPoseSheet.has(c.id)
     );
+    // Only trigger after we've checked the pose endpoint (image is loaded or missing)
     for (const char of needs) {
-      triggerPoseSheet(char.id);
+      // Check if we've already tried loading and got nothing
+      if (imageCache[`pose-${char.id}`] === undefined && !loadingImages.has(`pose-${char.id}`)) continue;
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [characters.map((c) => c.id + (c.approved_image_url ? "1" : "0") + (c.pose_sheet_url ? "1" : "0")).join()]);
+  }, [characters.map((c) => c.id + (c.approved_variation_id ? "1" : "0")).join(), imageCache]);
 
   const triggerPoseSheet = async (characterId: string) => {
     setGeneratingPoseSheet((prev) => new Set(prev).add(characterId));
@@ -72,10 +100,10 @@ export default function CharacterLockPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Pose sheet generation failed");
 
-      // Update local state
-      setCharacters((prev) =>
-        prev.map((c) => (c.id === characterId ? { ...c, pose_sheet_url: data.pose_sheet_url } : c))
-      );
+      // Update image cache
+      if (data.pose_sheet_url) {
+        setImageCache((prev) => ({ ...prev, [`pose-${characterId}`]: data.pose_sheet_url }));
+      }
       // Track placeholder status
       if (data.is_placeholder) {
         setPlaceholders((prev) => new Set(prev).add(characterId));
@@ -243,12 +271,14 @@ export default function CharacterLockPage() {
                       {/* Approved Headshot — fixed-width column */}
                       <div style={{ borderRight: "1px solid var(--brand-steel)" }}>
                         <div className="aspect-[3/4] relative" style={{ background: "var(--brand-navy)" }}>
-                          {char.approved_image_url ? (
+                          {imageCache[`headshot-${char.id}`] ? (
                             <img
-                              src={char.approved_image_url}
+                              src={imageCache[`headshot-${char.id}`]}
                               alt={`${char.name} approved cast`}
                               className="w-full h-full object-cover"
                             />
+                          ) : loadingImages.has(`headshot-${char.id}`) ? (
+                            <div className="w-full h-full animate-pulse rounded" style={{ background: "var(--brand-steel)" }} />
                           ) : (
                             <div
                               className="w-full h-full flex items-center justify-center text-xs"
@@ -271,11 +301,11 @@ export default function CharacterLockPage() {
 
                       {/* Character Reference Sheet — fills remaining width */}
                       <div className="flex flex-col">
-                        {char.pose_sheet_url ? (
+                        {imageCache[`pose-${char.id}`] ? (
                           <>
                             <div className="flex-1 relative" style={{ background: "var(--brand-navy)" }}>
                               <img
-                                src={char.pose_sheet_url}
+                                src={imageCache[`pose-${char.id}`]}
                                 alt={`${char.name} character reference sheet`}
                                 className="w-full h-full object-contain"
                                 style={{ maxHeight: "400px" }}

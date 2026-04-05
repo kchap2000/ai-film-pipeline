@@ -8,10 +8,8 @@ import ProjectNav from "@/components/ProjectNav";
 interface CastVariation {
   id: string;
   character_id: string;
-  image_url: string;
   prompt_used: string;
   status: "pending" | "approved" | "rejected";
-  rejection_note: string | null;
   variation_number: number;
 }
 
@@ -46,9 +44,11 @@ export default function CastingPage() {
   const [rejectNote, setRejectNote] = useState("");
   const [genErrors, setGenErrors] = useState<string[]>([]);
   const [variationCount, setVariationCount] = useState(10);
-  const [uploadingFor, setUploadingFor] = useState<string | null>(null); // character_id being uploaded
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+  const [imageCache, setImageCache] = useState<Record<string, string>>({});
+  const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const uploadCharIdRef = useRef<string | null>(null); // tracks which char the file input is for
+  const uploadCharIdRef = useRef<string | null>(null);
 
   const fetchCast = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/cast`);
@@ -65,6 +65,33 @@ export default function CastingPage() {
   useEffect(() => {
     fetchCast();
   }, [fetchCast]);
+
+  // Lazy-load variation images
+  const fetchImage = useCallback(async (variationId: string) => {
+    if (imageCache[variationId] || loadingImages.has(variationId)) return;
+    setLoadingImages((prev) => new Set(prev).add(variationId));
+    try {
+      const res = await fetch(`/api/projects/${id}/cast/image?variation_id=${variationId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.image_url) {
+          setImageCache((prev) => ({ ...prev, [variationId]: data.image_url }));
+        }
+      }
+    } catch { /* silent */ } finally {
+      setLoadingImages((prev) => { const n = new Set(prev); n.delete(variationId); return n; });
+    }
+  }, [id, imageCache, loadingImages]);
+
+  // Fetch images for the selected character's variations
+  useEffect(() => {
+    if (!selectedChar) return;
+    const char = characters.find((c) => c.id === selectedChar);
+    if (!char) return;
+    for (const v of char.variations) {
+      fetchImage(v.id);
+    }
+  }, [selectedChar, characters, fetchImage]);
 
   const generateVariations = async (characterId?: string) => {
     setGenerating(true);
@@ -552,11 +579,15 @@ export default function CastingPage() {
                       }}
                     >
                       <div className="aspect-square relative" style={{ background: "var(--brand-navy)" }}>
-                        <img
-                          src={v.image_url}
-                          alt={`${activeChar.name} variation ${v.variation_number}`}
-                          className="w-full h-full object-cover"
-                        />
+                        {imageCache[v.id] ? (
+                          <img
+                            src={imageCache[v.id]}
+                            alt={`${activeChar.name} variation ${v.variation_number}`}
+                            className="w-full h-full object-cover"
+                          />
+                        ) : (
+                          <div className="w-full h-full animate-pulse rounded" style={{ background: "var(--brand-steel)" }} />
+                        )}
                         {/* Badge: show "Uploaded" for headshots, number for generated */}
                         <span className="absolute top-1 left-1 text-[9px] bg-black/60 text-neutral-400 px-1.5 py-0.5">
                           {v.prompt_used === "uploaded-headshot" ? "↑" : `#${v.variation_number}`}
@@ -584,10 +615,6 @@ export default function CastingPage() {
                             Reject
                           </button>
                         </div>
-                      )}
-
-                      {v.status === "rejected" && v.rejection_note && (
-                        <p className="px-2 py-1.5 text-[10px] text-red-400/70 truncate">{v.rejection_note}</p>
                       )}
 
                       {rejectingId === v.id && (

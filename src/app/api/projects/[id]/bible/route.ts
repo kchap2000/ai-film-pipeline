@@ -14,13 +14,13 @@ export async function GET(
     supabase.from("projects").select("*").eq("id", id).single(),
     supabase
       .from("characters")
-      .select("*, pose_sheet_url")
+      .select("id, name, description, role, personality, approved_cast_id, locked, voice_only")
       .eq("project_id", id)
       .order("role", { ascending: true })
       .order("name", { ascending: true }),
     supabase
       .from("scenes")
-      .select("*")
+      .select("id, project_id, scene_number, location, time_of_day, mood, action_summary, characters_present, props, wardrobe, locked, scene_type")
       .eq("project_id", id)
       .order("scene_number", { ascending: true }),
     supabase
@@ -32,7 +32,7 @@ export async function GET(
       .single(),
     supabase
       .from("cast_variations")
-      .select("id, character_id, image_url")
+      .select("id, character_id, variation_number, status")
       .eq("project_id", id)
       .eq("status", "approved"),
   ]);
@@ -44,15 +44,15 @@ export async function GET(
     );
   }
 
-  // Build a map of character_id → approved headshot URL
-  const headshotByCharId: Record<string, string> = {};
+  // Build a map of character_id → approved variation ID (images lazy-loaded by UI)
+  const approvedVarByCharId: Record<string, string> = {};
   for (const cv of castsRes.data || []) {
-    headshotByCharId[cv.character_id] = cv.image_url;
+    approvedVarByCharId[cv.character_id] = cv.id;
   }
 
   const characters = (charsRes.data || []).map((char) => ({
     ...char,
-    headshot_url: headshotByCharId[char.id] || null,
+    approved_variation_id: approvedVarByCharId[char.id] || null,
   }));
 
   return NextResponse.json({

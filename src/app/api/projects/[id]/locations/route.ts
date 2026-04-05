@@ -19,17 +19,17 @@ export async function GET(
   const [locsRes, varsRes, scenesRes] = await Promise.all([
     supabase
       .from("locations")
-      .select("*")
+      .select("id, project_id, name, description, time_of_day, mood, locked")
       .eq("project_id", id)
       .order("name", { ascending: true }),
     supabase
       .from("location_variations")
-      .select("*")
+      .select("id, location_id, variation_number, status, prompt_used, rejection_note, created_at")
       .eq("project_id", id)
       .order("variation_number", { ascending: true }),
     supabase
       .from("scenes")
-      .select("*")
+      .select("id, scene_number, location, time_of_day, mood, action_summary, characters_present")
       .eq("project_id", id)
       .order("scene_number", { ascending: true }),
   ]);

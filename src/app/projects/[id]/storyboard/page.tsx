@@ -32,7 +32,7 @@ interface Scene {
 interface Character {
   id: string;
   name: string;
-  approved_variation_url: string | null;
+  approved_variation_id: string | null;
 }
 
 export default function StoryboardPage() {
@@ -48,6 +48,7 @@ export default function StoryboardPage() {
   const [expandedScene, setExpandedScene] = useState<string | null>(null);
   const [panelImages, setPanelImages] = useState<Record<string, string>>({});
   const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
+  const [headshots, setHeadshots] = useState<Record<string, string>>({});
 
   const fetchData = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/storyboard`);
@@ -66,6 +67,20 @@ export default function StoryboardPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Lazy-load cast headshots
+  useEffect(() => {
+    for (const c of characters) {
+      if (c.approved_variation_id && !headshots[c.id]) {
+        fetch(`/api/projects/${id}/cast/image?variation_id=${c.approved_variation_id}`)
+          .then((r) => r.json())
+          .then((d) => {
+            if (d.image_url) setHeadshots((prev) => ({ ...prev, [c.id]: d.image_url }));
+          })
+          .catch(() => {});
+      }
+    }
+  }, [characters, id, headshots]);
 
   // Lazy-load panel images when a scene is expanded
   const fetchPanelImage = useCallback(async (panelId: string) => {
@@ -238,9 +253,9 @@ export default function StoryboardPage() {
                   className="w-12 h-12 rounded-full overflow-hidden"
                   style={{ border: "1px solid var(--brand-steel)", background: "var(--brand-mid)" }}
                 >
-                  {c.approved_variation_url ? (
+                  {headshots[c.id] ? (
                     <img
-                      src={c.approved_variation_url}
+                      src={headshots[c.id]}
                       alt={c.name}
                       className="w-full h-full object-cover"
                     />

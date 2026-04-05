@@ -21,13 +21,13 @@ export async function GET(
   const [charsRes, variationsRes] = await Promise.all([
     supabase
       .from("characters")
-      .select("*")
+      .select("id, name, description, role, personality, approved_cast_id, locked, voice_only")
       .eq("project_id", id)
       .order("role", { ascending: true })
       .order("name", { ascending: true }),
     supabase
       .from("cast_variations")
-      .select("*")
+      .select("id, character_id, variation_number, status, prompt_used, created_at")
       .eq("project_id", id)
       .order("variation_number", { ascending: true }),
   ]);

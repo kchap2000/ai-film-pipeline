@@ -8,9 +8,7 @@ import ProjectNav from "@/components/ProjectNav";
 interface SceneVariation {
   id: string;
   scene_id: string;
-  image_url: string;
   status: "pending" | "approved" | "rejected";
-  rejection_note: string | null;
   variation_number: number;
 }
 
@@ -23,7 +21,6 @@ interface ScoutScene {
   action_summary: string;
   scene_type: string;
   characters_present: string[];
-  approved_scout_image_url: string | null;
   locked: boolean;
   variations: SceneVariation[];
 }
@@ -47,6 +44,8 @@ export default function SceneScoutingPage() {
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectNote, setRejectNote] = useState("");
   const [locking, setLocking] = useState(false);
+  const [imageCache, setImageCache] = useState<Record<string, string>>({});
+  const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
 
   const fetchData = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/scenes`);
@@ -64,6 +63,33 @@ export default function SceneScoutingPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Lazy-load variation images for the selected scene
+  const fetchSceneImage = useCallback(async (variationId: string) => {
+    if (imageCache[variationId] || loadingImages.has(variationId)) return;
+    setLoadingImages((prev) => new Set(prev).add(variationId));
+    try {
+      const res = await fetch(`/api/projects/${id}/scenes/image?variation_id=${variationId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.image_url) {
+          setImageCache((prev) => ({ ...prev, [variationId]: data.image_url }));
+        }
+      }
+    } catch { /* silent */ } finally {
+      setLoadingImages((prev) => { const n = new Set(prev); n.delete(variationId); return n; });
+    }
+  }, [id, imageCache, loadingImages]);
+
+  // Fetch images when selected scene changes
+  useEffect(() => {
+    if (!selectedScene) return;
+    const scene = scenes.find((s) => s.id === selectedScene);
+    if (!scene) return;
+    for (const v of scene.variations) {
+      fetchSceneImage(v.id);
+    }
+  }, [selectedScene, scenes, fetchSceneImage]);
 
   const generateVariations = async (sceneId?: string) => {
     setGenerating(true);
@@ -133,7 +159,7 @@ export default function SceneScoutingPage() {
   const activeScene = scenes.find((s) => s.id === selectedScene);
   const unscouted = scenes.filter((s) => s.variations.length === 0);
   const hasVariations = scenes.some((s) => s.variations.length > 0);
-  const allApproved = scenes.length > 0 && scenes.every((s) => s.approved_scout_image_url !== null);
+  const allApproved = scenes.length > 0 && scenes.every((s) => s.variations.some((v) => v.status === "approved"));
   const allLocked = scenes.length > 0 && scenes.every((s) => s.locked);
 
   return (
@@ -233,7 +259,7 @@ export default function SceneScoutingPage() {
                 <div className="space-y-1 max-h-[calc(100vh-220px)] overflow-y-auto pr-1">
                   {scenes.map((scene) => {
                     const isSelected = selectedScene === scene.id;
-                    const approved = !!scene.approved_scout_image_url;
+                    const approved = scene.variations.some((v) => v.status === "approved");
                     const hasPending = scene.variations.some((v) => v.status === "pending");
                     const hasVars = scene.variations.length > 0;
 
@@ -388,11 +414,15 @@ export default function SceneScoutingPage() {
                           >
                             {/* Image */}
                             <div className="aspect-video relative overflow-hidden" style={{ background: "var(--brand-navy)" }}>
-                              <img
-                                src={v.image_url}
-                                alt={`Scene ${activeScene.scene_number} variation ${v.variation_number}`}
-                                className="w-full h-full object-cover"
-                              />
+                              {imageCache[v.id] ? (
+                                <img
+                                  src={imageCache[v.id]}
+                                  alt={`Scene ${activeScene.scene_number} variation ${v.variation_number}`}
+                                  className="w-full h-full object-cover"
+                                />
+                              ) : (
+                                <div className="w-full h-full animate-pulse rounded" style={{ background: "var(--brand-steel)" }} />
+                              )}
                               <span className="absolute top-2 left-2 text-[9px] bg-black/60 text-neutral-400 px-1.5 py-0.5">
                                 #{v.variation_number}
                               </span>
@@ -457,7 +487,7 @@ export default function SceneScoutingPage() {
                         ))}
 
                         {/* Regenerate slot */}
-                        {activeScene.variations.length > 0 && !activeScene.approved_scout_image_url && (
+                        {activeScene.variations.length > 0 && !activeScene.variations.some((v) => v.status === "approved") && (
                           <div
                             className="rounded-xl flex items-center justify-center cursor-pointer transition-colors"
                             style={{

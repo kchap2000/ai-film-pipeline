@@ -8,7 +8,6 @@ import ProjectNav from "@/components/ProjectNav";
 interface LocationVariation {
   id: string;
   location_id: string;
-  image_url: string;
   status: "pending" | "approved" | "rejected";
   rejection_note: string | null;
   variation_number: number;
@@ -30,7 +29,6 @@ interface Location {
   time_of_day: string;
   mood: string;
   locked: boolean;
-  approved_image_url: string | null;
   variations: LocationVariation[];
   scenes: LocationScene[];
 }
@@ -45,6 +43,8 @@ export default function LocationBiblePage() {
   const [selectedLoc, setSelectedLoc] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectNote, setRejectNote] = useState("");
+  const [imageCache, setImageCache] = useState<Record<string, string>>({});
+  const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
 
   const fetchData = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/locations`);
@@ -61,6 +61,33 @@ export default function LocationBiblePage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Lazy-load variation images for the selected location
+  const fetchLocImage = useCallback(async (variationId: string) => {
+    if (imageCache[variationId] || loadingImages.has(variationId)) return;
+    setLoadingImages((prev) => new Set(prev).add(variationId));
+    try {
+      const res = await fetch(`/api/projects/${id}/locations/image?variation_id=${variationId}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.image_url) {
+          setImageCache((prev) => ({ ...prev, [variationId]: data.image_url }));
+        }
+      }
+    } catch { /* silent */ } finally {
+      setLoadingImages((prev) => { const n = new Set(prev); n.delete(variationId); return n; });
+    }
+  }, [id, imageCache, loadingImages]);
+
+  // Fetch images when selected location changes
+  useEffect(() => {
+    if (!selectedLoc) return;
+    const loc = locations.find((l) => l.id === selectedLoc);
+    if (!loc) return;
+    for (const v of loc.variations) {
+      fetchLocImage(v.id);
+    }
+  }, [selectedLoc, locations, fetchLocImage]);
 
   const [genStatus, setGenStatus] = useState<string | null>(null);
 
@@ -163,7 +190,7 @@ export default function LocationBiblePage() {
   const activeLoc = locations.find((l) => l.id === selectedLoc);
   const hasVariations = locations.some((l) => l.variations.length > 0);
   const ungenerated = locations.filter((l) => l.variations.length === 0);
-  const allApproved = locations.length > 0 && locations.every((l) => l.approved_image_url !== null);
+  const allApproved = locations.length > 0 && locations.every((l) => l.variations.some((v) => v.status === "approved"));
   const allLocked = locations.length > 0 && locations.every((l) => l.locked);
 
   return (
@@ -286,7 +313,7 @@ export default function LocationBiblePage() {
                     </span>
                     {loc.locked ? (
                       <span className="text-green-500 text-[10px] ml-2 flex-shrink-0">LOCKED</span>
-                    ) : loc.approved_image_url ? (
+                    ) : loc.variations.some((v) => v.status === "approved") ? (
                       <span className="text-[10px] ml-2 flex-shrink-0" style={{ color: "var(--brand-orange)" }}>APPROVED</span>
                     ) : loc.variations.length > 0 ? (
                       <span className="text-[10px] ml-2 flex-shrink-0" style={{ color: "var(--brand-gray)" }}>REVIEW</span>
@@ -363,11 +390,15 @@ export default function LocationBiblePage() {
                         }}
                       >
                         <div className="aspect-[4/3] relative" style={{ background: "var(--brand-navy)" }}>
-                          <img
-                            src={v.image_url}
-                            alt={`${activeLoc.name} variation ${v.variation_number}`}
-                            className="w-full h-full object-cover"
-                          />
+                          {imageCache[v.id] ? (
+                            <img
+                              src={imageCache[v.id]}
+                              alt={`${activeLoc.name} variation ${v.variation_number}`}
+                              className="w-full h-full object-cover"
+                            />
+                          ) : (
+                            <div className="w-full h-full animate-pulse rounded" style={{ background: "var(--brand-steel)" }} />
+                          )}
                           <span className="absolute top-1 left-1 text-[9px] bg-black/60 text-neutral-400 px-1.5 py-0.5">
                             #{v.variation_number}
                           </span>

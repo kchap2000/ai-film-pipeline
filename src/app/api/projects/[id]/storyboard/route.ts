@@ -31,19 +31,19 @@ export async function GET(
       .eq("project_id", id),
     supabase
       .from("locations")
-      .select("id, name, description, time_of_day, mood, approved_image_url")
+      .select("id, name, description, time_of_day, mood")
       .eq("project_id", id),
     supabase
       .from("cast_variations")
-      .select("character_id, image_url")
+      .select("id, character_id, variation_number, status")
       .eq("project_id", id)
       .eq("status", "approved"),
   ]);
 
-  // Map approved headshots to characters
-  const headshotByCharId: Record<string, string> = {};
+  // Map approved variation IDs to characters (images lazy-loaded by UI)
+  const approvedVarByCharId: Record<string, string> = {};
   for (const cv of castsRes.data || []) {
-    headshotByCharId[cv.character_id] = cv.image_url;
+    approvedVarByCharId[cv.character_id] = cv.id;
   }
 
   // Group panels by scene
@@ -62,7 +62,7 @@ export async function GET(
 
   const characters = (charsRes.data || []).map((c) => ({
     ...c,
-    approved_variation_url: headshotByCharId[c.id] || null,
+    approved_variation_id: approvedVarByCharId[c.id] || null,
   }));
 
   return NextResponse.json({

@@ -133,14 +133,7 @@ export default function ProjectNav({ projectId, currentPhase: phaseProp }: Proje
             );
           })}
 
-          {/* Sign Out */}
-          <button
-            onClick={() => void handleSignOut()}
-            className="ml-auto flex-shrink-0 px-4 py-3.5 text-[10px] uppercase tracking-widest transition-colors hover:opacity-80 cursor-pointer"
-            style={{ color: "var(--brand-gray)" }}
-          >
-            Sign out
-          </button>
+          {/* Sign Out — hidden until real auth is wired up */}
         </div>
       </div>
     </nav>

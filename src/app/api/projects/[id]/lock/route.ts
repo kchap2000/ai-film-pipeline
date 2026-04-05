@@ -13,26 +13,26 @@ export async function GET(
   const [charsRes, variationsRes] = await Promise.all([
     supabase
       .from("characters")
-      .select("id, name, description, role, locked, approved_cast_id, pose_sheet_url")
+      .select("id, name, description, role, approved_cast_id, locked, voice_only")
       .eq("project_id", id)
       .order("role", { ascending: true })
       .order("name", { ascending: true }),
     supabase
       .from("cast_variations")
-      .select("character_id, image_url")
+      .select("id, character_id, variation_number, status")
       .eq("project_id", id)
       .eq("status", "approved"),
   ]);
 
-  // Map approved variation URLs by character
-  const approvedImages: Record<string, string> = {};
+  // Map approved variation IDs by character (images lazy-loaded by UI)
+  const approvedVarIds: Record<string, string> = {};
   for (const v of variationsRes.data || []) {
-    approvedImages[v.character_id] = v.image_url;
+    approvedVarIds[v.character_id] = v.id;
   }
 
   const characters = (charsRes.data || []).map((char) => ({
     ...char,
-    approved_image_url: approvedImages[char.id] || null,
+    approved_variation_id: approvedVarIds[char.id] || null,
   }));
 
   return NextResponse.json({ characters });

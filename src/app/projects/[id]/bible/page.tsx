@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
@@ -22,8 +22,7 @@ interface ExtractionData {
 }
 
 interface CharacterWithHeadshot extends Character {
-  headshot_url?: string | null;
-  pose_sheet_url?: string | null;
+  approved_variation_id?: string | null;
 }
 
 const ROLE_ORDER = ["lead", "supporting", "minor", "extra", "mentioned"];
@@ -90,6 +89,8 @@ export default function FilmBible() {
   const [savingScene, setSavingScene] = useState(false);
   const [generatingPoseSheet, setGeneratingPoseSheet] = useState<Set<string>>(new Set());
   const [poseSheetError, setPoseSheetError] = useState<Record<string, string>>({});
+  const [imageCache, setImageCache] = useState<Record<string, string>>({});
+  const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     fetch(`/api/projects/${id}/bible`)
@@ -160,7 +161,7 @@ export default function FilmBible() {
       });
       if (res.ok) {
         const data = await res.json();
-        setCharacters((prev) => prev.map((c) => (c.id === charId ? { ...data.character, headshot_url: c.headshot_url, pose_sheet_url: c.pose_sheet_url } : c)));
+        setCharacters((prev) => prev.map((c) => (c.id === charId ? { ...data.character, approved_variation_id: c.approved_variation_id } : c)));
         setEditingCharId(null);
       }
     } finally {
@@ -210,9 +211,7 @@ export default function FilmBible() {
       try { data = await res.json(); } catch { /* ignore */ }
       if (!res.ok) throw new Error(data.error || "Pose sheet generation failed");
       if (data.pose_sheet_url) {
-        setCharacters((prev) =>
-          prev.map((c) => c.id === charId ? { ...c, pose_sheet_url: data.pose_sheet_url! } : c)
-        );
+        setImageCache((prev) => ({ ...prev, [`pose-${charId}`]: data.pose_sheet_url as string }));
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed";
@@ -222,17 +221,32 @@ export default function FilmBible() {
     }
   };
 
-  // Auto-trigger pose sheet generation for any cast-locked character that doesn't have one yet
-  useEffect(() => {
-    if (characters.length === 0) return;
-    const needsPoseSheet = characters.filter(
-      (c) => c.headshot_url && !c.pose_sheet_url && !generatingPoseSheet.has(c.id)
-    );
-    for (const char of needsPoseSheet) {
-      generatePoseSheetForChar(char.id);
+  // Lazy-load headshot and pose sheet images for characters
+  const fetchBibleImage = useCallback(async (key: string, url: string) => {
+    if (imageCache[key] || loadingImages.has(key)) return;
+    setLoadingImages((prev) => new Set(prev).add(key));
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        const imgUrl = data.image_url || data.pose_sheet_url;
+        if (imgUrl) {
+          setImageCache((prev) => ({ ...prev, [key]: imgUrl }));
+        }
+      }
+    } catch { /* silent */ } finally {
+      setLoadingImages((prev) => { const n = new Set(prev); n.delete(key); return n; });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [characters.map(c => c.id + (c.headshot_url ? "1" : "0") + (c.pose_sheet_url ? "1" : "0")).join()]);
+  }, [imageCache, loadingImages]);
+
+  useEffect(() => {
+    for (const c of characters) {
+      if (c.approved_variation_id) {
+        fetchBibleImage(`headshot-${c.id}`, `/api/projects/${id}/cast/image?variation_id=${c.approved_variation_id}`);
+        fetchBibleImage(`pose-${c.id}`, `/api/projects/${id}/cast/image?character_id=${c.id}&type=pose`);
+      }
+    }
+  }, [characters, id, fetchBibleImage]);
 
   if (loading) {
     return (
@@ -286,8 +300,8 @@ export default function FilmBible() {
     (a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role)
   );
   // Any character with a headshot gets the full card — not just lead/supporting
-  const featuredCharacters = sortedCharacters.filter((c) => FEATURED_ROLES.includes(c.role) || !!c.headshot_url);
-  const secondaryCharacters = sortedCharacters.filter((c) => !FEATURED_ROLES.includes(c.role) && !c.headshot_url);
+  const featuredCharacters = sortedCharacters.filter((c) => FEATURED_ROLES.includes(c.role) || !!imageCache[`headshot-${c.id}`]);
+  const secondaryCharacters = sortedCharacters.filter((c) => !FEATURED_ROLES.includes(c.role) && !imageCache[`headshot-${c.id}`]);
   const uniqueLocations = new Set(scenes.map((s) => s.location)).size;
 
   return (
@@ -383,7 +397,7 @@ export default function FilmBible() {
                 { label: "Scenes", value: scenes.length },
                 { label: "Lead Roles", value: characters.filter((c) => c.role === "lead").length },
                 { label: "Locations", value: uniqueLocations },
-                { label: "Cast Locked", value: characters.filter((c) => c.headshot_url).length },
+                { label: "Cast Locked", value: characters.filter((c) => imageCache[`headshot-${c.id}`]).length },
               ].map((stat, i) => (
                 <div
                   key={stat.label}
@@ -443,13 +457,14 @@ export default function FilmBible() {
                     isEditing={editingCharId === char.id}
                     editState={editState}
                     saving={saving}
+                    imageCache={imageCache}
                     onStartEdit={() => startEdit(char)}
                     onCancelEdit={() => setEditingCharId(null)}
                     onSave={() => saveCharacter(char.id)}
                     onEditChange={(field, val) => setEditState((s) => ({ ...s, [field]: val }))}
                   />
                   {/* Pose sheet strip */}
-                  {char.headshot_url && (
+                  {imageCache[`headshot-${char.id}`] && (
                     <div
                       style={{
                         marginTop: "1px",
@@ -481,7 +496,7 @@ export default function FilmBible() {
                             Retry
                           </button>
                         </div>
-                      ) : char.pose_sheet_url ? (
+                      ) : imageCache[`pose-${char.id}`] ? (
                         <div>
                           <div className="flex items-center justify-between px-7 py-3">
                             <span
@@ -507,7 +522,7 @@ export default function FilmBible() {
                           </div>
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
-                            src={char.pose_sheet_url}
+                            src={imageCache[`pose-${char.id}`]}
                             alt={`${char.name} character reference sheet`}
                             style={{ width: "100%", display: "block", maxHeight: "480px", objectFit: "contain", background: "#0a0f18" }}
                           />
@@ -901,6 +916,7 @@ interface FeaturedCharacterCardProps {
   isEditing: boolean;
   editState: EditState;
   saving: boolean;
+  imageCache: Record<string, string>;
   onStartEdit: () => void;
   onCancelEdit: () => void;
   onSave: () => void;
@@ -908,10 +924,10 @@ interface FeaturedCharacterCardProps {
 }
 
 function FeaturedCharacterCard({
-  char, isEditing, editState, saving, onStartEdit, onCancelEdit, onSave, onEditChange,
+  char, isEditing, editState, saving, imageCache, onStartEdit, onCancelEdit, onSave, onEditChange,
 }: FeaturedCharacterCardProps) {
   const rs = ROLE_STYLE[char.role] || ROLE_STYLE.minor;
-  const hasHeadshot = !!char.headshot_url;
+  const hasHeadshot = !!imageCache[`headshot-${char.id}`];
 
   return (
     <div
@@ -1023,7 +1039,7 @@ function FeaturedCharacterCard({
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src={char.headshot_url!}
+              src={imageCache[`headshot-${char.id}`]}
               alt={`${char.name} headshot`}
               style={{
                 width: "100%",
