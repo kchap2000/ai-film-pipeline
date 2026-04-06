@@ -14,7 +14,6 @@ export async function GET() {
   const { data, error } = await supabase
     .from("projects")
     .select("*")
-    .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
   if (error) {
@@ -45,7 +44,6 @@ export async function POST(req: NextRequest) {
   const { data, error } = await supabase
     .from("projects")
     .insert({
-      user_id: user.id,
       title,
       type,
       client_name: type === "client" ? client_name : null,
