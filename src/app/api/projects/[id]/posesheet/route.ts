@@ -49,7 +49,8 @@ Tight close-up of face with a different emotional expression (eyes closed, dista
 🎯 STYLE + CONSISTENCY BLOCK (KEEP EXACTLY AS IS)
 Lighting inspired by dramatic studio cinema portraiture: soft key light with subtle rim light, shallow depth of field, photorealistic skin detail, cinematic contrast.
 Background: simple neutral light gray studio cyclorama.
-IMPORTANT: Same person, same face, same hairstyle, same outfit in every image.
+CRITICAL OUTFIT RULE: The character must wear EXACTLY the same clothing as shown in the reference/headshot image provided. Do NOT invent or substitute any clothing. Copy the outfit precisely — same shirt, same jacket, same color, same style. If the reference shows a specific outfit, reproduce it faithfully in all 9 frames.
+IMPORTANT: Same person, same face, same hairstyle, same exact outfit from reference image in every image.
 Lens style: anamorphic cinematic feel, shallow DOF, realistic proportions.`;
 
 // POST /api/projects/:id/posesheet
