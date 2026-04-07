@@ -139,13 +139,7 @@ export default function Dashboard() {
               Charleston, SC
             </span>
             <span className="font-medium" style={{ color: "var(--brand-orange)" }}>Khalil Chapman</span>
-            <button
-              onClick={() => void handleSignOut()}
-              className="text-[10px] uppercase tracking-widest transition-opacity hover:opacity-80 cursor-pointer"
-              style={{ color: "var(--brand-gray)" }}
-            >
-              Sign out
-            </button>
+            {/* Sign out — hidden until Google Auth is wired up */}
           </div>
         </footer>
       </div>

@@ -29,12 +29,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 1. Verify project exists and belongs to user
+  // 1. Verify project exists
   const { data: project, error: projError } = await supabase
     .from("projects")
     .select("*")
     .eq("id", project_id)
-    .eq("user_id", user.id)
     .single();
 
   if (projError || !project) {

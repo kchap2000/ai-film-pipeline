@@ -28,12 +28,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Verify user owns this project
+  // Verify project exists
   const { error: projectError } = await supabase
     .from("projects")
     .select("id")
     .eq("id", projectId)
-    .eq("user_id", user.id)
     .single();
 
   if (projectError) {
