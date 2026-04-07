@@ -3,17 +3,22 @@ import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/projects — list projects for the authenticated user
-export async function GET() {
+// GET /api/projects — list projects
+// ?archived=true  → return only archived projects
+// (default)       → return only active (non-archived) projects
+export async function GET(req: NextRequest) {
   const { supabase, user } = await createRouteClient();
 
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const showArchived = req.nextUrl.searchParams.get("archived") === "true";
+
   const { data, error } = await supabase
     .from("projects")
     .select("*")
+    .eq("archived", showArchived)
     .order("created_at", { ascending: false });
 
   if (error) {

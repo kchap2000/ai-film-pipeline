@@ -2,21 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Project } from "@/lib/types";
-import { createClient } from "@/lib/supabase-browser";
 import ProjectCard from "@/components/ProjectCard";
 
 export default function Dashboard() {
-  const router = useRouter();
   const [projects, setProjects] = useState<Project[]>([]);
+  const [archivedProjects, setArchivedProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
-
-  const handleSignOut = async () => {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push("/login");
-  };
+  const [showArchived, setShowArchived] = useState(false);
+  const [loadingArchived, setLoadingArchived] = useState(false);
 
   useEffect(() => {
     fetch("/api/projects")
@@ -27,6 +21,47 @@ export default function Dashboard() {
       })
       .catch(() => setLoading(false));
   }, []);
+
+  async function loadArchived() {
+    if (archivedProjects.length > 0) return; // already loaded
+    setLoadingArchived(true);
+    try {
+      const res = await fetch("/api/projects?archived=true");
+      const data = await res.json();
+      setArchivedProjects(Array.isArray(data) ? data : []);
+    } finally {
+      setLoadingArchived(false);
+    }
+  }
+
+  function toggleArchived() {
+    const next = !showArchived;
+    setShowArchived(next);
+    if (next) loadArchived();
+  }
+
+  function handleArchive(id: string) {
+    // Move project from active list to archived list
+    const p = projects.find((x) => x.id === id);
+    if (p) {
+      setProjects((prev) => prev.filter((x) => x.id !== id));
+      setArchivedProjects((prev) => [{ ...p, archived: true }, ...prev]);
+    }
+  }
+
+  function handleUnarchive(id: string) {
+    // Move project from archived list back to active list
+    const p = archivedProjects.find((x) => x.id === id);
+    if (p) {
+      setArchivedProjects((prev) => prev.filter((x) => x.id !== id));
+      setProjects((prev) => [{ ...p, archived: false }, ...prev]);
+    }
+  }
+
+  function handleDelete(id: string) {
+    setProjects((prev) => prev.filter((x) => x.id !== id));
+    setArchivedProjects((prev) => prev.filter((x) => x.id !== id));
+  }
 
   return (
     <div className="min-h-screen" style={{ background: "var(--brand-navy)" }}>
@@ -63,7 +98,7 @@ export default function Dashboard() {
           </div>
         </header>
 
-        {/* Grid */}
+        {/* Active projects grid */}
         {loading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {[1, 2, 3].map((i) => (
@@ -74,7 +109,12 @@ export default function Dashboard() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {projects.map((project) => (
-              <ProjectCard key={project.id} project={project} />
+              <ProjectCard
+                key={project.id}
+                project={project}
+                onArchive={handleArchive}
+                onDelete={handleDelete}
+              />
             ))}
 
             {/* Add New Project card */}
@@ -109,6 +149,62 @@ export default function Dashboard() {
             </Link>
           </div>
         )}
+
+        {/* Archived section */}
+        <div className="mt-12">
+          <button
+            onClick={toggleArchived}
+            className="flex items-center gap-2 text-xs font-medium uppercase tracking-widest transition-colors hover:opacity-80"
+            style={{ color: "var(--brand-gray)" }}
+          >
+            <svg
+              viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"
+              className="w-4 h-4 transition-transform duration-200"
+              style={{ transform: showArchived ? "rotate(180deg)" : "rotate(0deg)" }}
+            >
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="w-4 h-4">
+              <path d="M3 9l1 11a2 2 0 002 2h12a2 2 0 002-2L21 9" />
+              <path d="M3 9h18M9 3h6l2 6H7L9 3z" />
+            </svg>
+            Archived
+            {archivedProjects.length > 0 && (
+              <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-mono"
+                    style={{ background: "rgba(255,255,255,0.08)", color: "var(--brand-gray)" }}>
+                {archivedProjects.length}
+              </span>
+            )}
+          </button>
+
+          {showArchived && (
+            <div className="mt-5">
+              {loadingArchived ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {[1, 2].map((i) => (
+                    <div key={i} className="rounded-2xl p-6 h-40 animate-pulse"
+                         style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)", opacity: 0.5 }} />
+                  ))}
+                </div>
+              ) : archivedProjects.length === 0 ? (
+                <p className="text-sm mt-3" style={{ color: "var(--brand-gray)", opacity: 0.5 }}>
+                  No archived projects.
+                </p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" style={{ opacity: 0.65 }}>
+                  {archivedProjects.map((project) => (
+                    <ProjectCard
+                      key={project.id}
+                      project={project}
+                      onUnarchive={handleUnarchive}
+                      onDelete={handleDelete}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Footer */}
         <footer className="mt-16 pt-6 flex items-center justify-between"

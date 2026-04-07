@@ -282,6 +282,15 @@ create index if not exists idx_scene_variations_scene on scene_variations(scene_
 create index if not exists idx_scene_variations_project on scene_variations(project_id);
 
 -- ============================================================
+-- Migration: Archive support (2026-04-07)
+-- ============================================================
+
+-- Soft-delete flag. archived=true hides a project from the dashboard
+-- but preserves all data. Hard delete is via DELETE /api/projects/:id.
+alter table projects add column if not exists archived boolean not null default false;
+create index if not exists idx_projects_archived on projects(archived);
+
+-- ============================================================
 -- Migration: Add user_id to existing projects (2026-04-04)
 -- ============================================================
 -- Run this ONLY if you already have data in the projects table.
