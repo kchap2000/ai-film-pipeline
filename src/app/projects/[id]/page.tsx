@@ -18,6 +18,7 @@ export default function ProjectDetail() {
     characters: number;
     scenes: number;
   } | null>(null);
+  const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
 
   const fetchProject = async () => {
     const res = await fetch(`/api/projects/${id}`);
@@ -103,6 +104,18 @@ export default function ProjectDetail() {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const deleteFile = async (fileId: string) => {
+    setDeletingFileId(fileId);
+    try {
+      await fetch(`/api/projects/${id}/files?file_id=${fileId}`, {
+        method: "DELETE",
+      });
+      setFiles((prev) => prev.filter((f) => f.id !== fileId));
+    } finally {
+      setDeletingFileId(null);
+    }
   };
 
   const fileTypeLabel = (mimeType: string) => {
@@ -214,9 +227,36 @@ export default function ProjectDetail() {
                       {file.file_name}
                     </span>
                   </div>
-                  <span className="text-xs" style={{ color: "var(--brand-gray)" }}>
-                    {formatSize(file.file_size)}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs" style={{ color: "var(--brand-gray)" }}>
+                      {formatSize(file.file_size)}
+                    </span>
+                    <button
+                      onClick={() => deleteFile(file.id)}
+                      disabled={deletingFileId === file.id}
+                      className="w-6 h-6 flex items-center justify-center rounded transition-colors disabled:opacity-40"
+                      style={{ color: "var(--brand-gray)" }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLElement).style.color = "#f87171";
+                        (e.currentTarget as HTMLElement).style.background = "rgba(248,113,113,0.1)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLElement).style.color = "var(--brand-gray)";
+                        (e.currentTarget as HTMLElement).style.background = "transparent";
+                      }}
+                      title="Remove file"
+                    >
+                      {deletingFileId === file.id ? (
+                        <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 animate-spin" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                        </svg>
+                      ) : (
+                        <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                          <path d="M18 6 6 18M6 6l12 12" />
+                        </svg>
+                      )}
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
