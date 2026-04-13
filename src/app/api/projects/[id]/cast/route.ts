@@ -220,33 +220,33 @@ export async function PATCH(
   }
 }
 
-// PUT /api/projects/:id/cast — upload an existing headshot for a character
-// Body: FormData with character_id (string) + file (File)
-// Creates an auto-approved cast_variation from the uploaded image.
+// PUT /api/projects/:id/cast — register an uploaded headshot for a character.
+// The browser uploads the file directly to Supabase Storage (bypassing Vercel's
+// 4.5 MB payload limit), then calls this route with just the storage metadata.
+// Body JSON: { character_id: string, storage_path: string, image_url: string }
 export async function PUT(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
     const { id } = params;
-    const formData = await req.formData();
-    const characterId = formData.get("character_id") as string;
-    const file = formData.get("file") as File | null;
+    const body = await req.json() as { character_id?: string; storage_path?: string; image_url?: string };
+    const { character_id: characterId, storage_path: storagePath, image_url: imageUrl } = body;
 
-    if (!characterId || !file) {
+    if (!characterId || !storagePath || !imageUrl) {
       return NextResponse.json(
-        { error: "character_id and file are required" },
+        { error: "character_id, storage_path, and image_url are required" },
         { status: 400 }
       );
     }
 
     const { supabase, user } = await createRouteClient();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     // Verify character belongs to this project
     const { data: char, error: charError } = await supabase
       .from("characters")
-      .select("*")
+      .select("id")
       .eq("id", characterId)
       .eq("project_id", id)
       .single();
@@ -254,30 +254,6 @@ export async function PUT(
     if (charError || !char) {
       return NextResponse.json({ error: "Character not found" }, { status: 404 });
     }
-
-    // Upload image to Supabase storage
-    const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-    const storagePath = `cast-headshots/${id}/${characterId}/headshot-${Date.now()}.${ext}`;
-    const arrayBuffer = await file.arrayBuffer();
-
-    const { error: uploadError } = await supabase.storage
-      .from("project-uploads")
-      .upload(storagePath, arrayBuffer, {
-        contentType: file.type || "image/jpeg",
-        upsert: true,
-      });
-
-    if (uploadError) {
-      return NextResponse.json(
-        { error: `Upload failed: ${uploadError.message}` },
-        { status: 500 }
-      );
-    }
-
-    // Get public URL
-    const { data: { publicUrl } } = supabase.storage
-      .from("project-uploads")
-      .getPublicUrl(storagePath);
 
     // Determine next variation number
     const { count } = await supabase
@@ -287,13 +263,13 @@ export async function PUT(
 
     const variationNumber = (count || 0) + 1;
 
-    // Insert as an approved variation
+    // Insert as an auto-approved variation (uploaded headshots are always approved)
     const { data: variation, error: insertError } = await supabase
       .from("cast_variations")
       .insert({
         character_id: characterId,
         project_id: id,
-        image_url: publicUrl,
+        image_url: imageUrl,
         prompt_used: "uploaded-headshot",
         variation_number: variationNumber,
         status: "approved",

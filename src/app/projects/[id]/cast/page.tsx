@@ -4,6 +4,48 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import ProjectNav from "@/components/ProjectNav";
+import { createClient } from "@/lib/supabase-browser";
+
+// ---------------------------------------------------------------------------
+// Client-side image compression using Canvas API.
+// Resizes to maxPx on the longest side and re-encodes as JPEG.
+// Keeps the original file untouched on the user's disk.
+// ---------------------------------------------------------------------------
+async function compressImage(
+  file: File,
+  maxPx = 1400,
+  quality = 0.88
+): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      let { width, height } = img;
+      if (Math.max(width, height) > maxPx) {
+        const scale = maxPx / Math.max(width, height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return reject(new Error("Canvas 2D context unavailable"));
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error("Canvas toBlob returned null"))),
+        "image/jpeg",
+        quality
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Failed to load image for compression"));
+    };
+    img.src = objectUrl;
+  });
+}
 
 interface CastVariation {
   id: string;
@@ -226,53 +268,64 @@ export default function CastingPage() {
 
     // Reset input so same file can be re-selected if needed
     e.target.value = "";
-
     setUploadingFor(characterId);
 
-    const formData = new FormData();
-    formData.append("character_id", characterId);
-    formData.append("file", file);
-
     try {
+      // ── Step 1: Compress client-side (resize to 1400px max, JPEG 88%) ──
+      // Original file stays untouched on the user's disk.
+      const compressed = await compressImage(file);
+
+      // ── Step 2: Upload directly from browser to Supabase Storage ──
+      // This bypasses the Vercel function size limit entirely.
+      const supabase = createClient();
+      const storagePath = `cast-headshots/${id}/${characterId}/headshot-${Date.now()}.jpg`;
+      const { error: storageError } = await supabase.storage
+        .from("project-uploads")
+        .upload(storagePath, compressed, {
+          contentType: "image/jpeg",
+          upsert: true,
+        });
+      if (storageError) throw new Error(`Storage upload failed: ${storageError.message}`);
+
+      const { data: { publicUrl } } = supabase.storage
+        .from("project-uploads")
+        .getPublicUrl(storagePath);
+
+      // ── Step 3: Lightweight API call — just saves the DB record ──
       const res = await fetch(`/api/projects/${id}/cast`, {
         method: "PUT",
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ character_id: characterId, storage_path: storagePath, image_url: publicUrl }),
       });
 
       let data: { error?: string; variation?: CastVariation } = {};
-      try {
-        data = await res.json();
-      } catch {
-        // ignore parse error, we'll fetchCast anyway
-      }
+      try { data = await res.json(); } catch { /* ignore parse error */ }
 
       if (!res.ok) {
         setGenErrors((prev) => [
           ...prev,
           `Headshot upload failed: ${data.error || `Error ${res.status}`}`,
         ]);
-      } else {
-        // Optimistic: mark character as approved with uploaded image
-        if (data.variation) {
-          const v = data.variation;
-          setCharacters((prev) =>
-            prev.map((char) => {
-              if (char.id !== characterId) return char;
-              return {
-                ...char,
-                approved_cast_id: v.id,
-                variations: [
-                  ...char.variations.map((existing) =>
-                    existing.status === "pending"
-                      ? { ...existing, status: "rejected" as const }
-                      : existing
-                  ),
-                  v,
-                ],
-              };
-            })
-          );
-        }
+      } else if (data.variation) {
+        // Optimistic: mark character approved with real headshot
+        const v = data.variation;
+        setCharacters((prev) =>
+          prev.map((char) => {
+            if (char.id !== characterId) return char;
+            return {
+              ...char,
+              approved_cast_id: v.id,
+              variations: [
+                ...char.variations.map((existing) =>
+                  existing.status === "pending"
+                    ? { ...existing, status: "rejected" as const }
+                    : existing
+                ),
+                v,
+              ],
+            };
+          })
+        );
       }
     } catch (err) {
       setGenErrors((prev) => [
