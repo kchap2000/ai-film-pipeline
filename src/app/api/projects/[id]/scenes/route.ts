@@ -70,6 +70,14 @@ export async function POST(
     );
   }
 
+  // Fetch per-project production directive once so every variation honors it
+  const { data: projectRow } = await supabase
+    .from("projects")
+    .select("production_notes")
+    .eq("id", id)
+    .single();
+  const productionNotes: string = projectRow?.production_notes || "";
+
   // Fetch all characters so we can include descriptions in prompts
   const { data: characters } = await supabase
     .from("characters")
@@ -107,6 +115,7 @@ export async function POST(
           charactersPresent: scene.characters_present || [],
           characterDescriptions: charDescriptions,
           variationNumber: i,
+          productionNotes,
         });
 
         await supabase.from("scene_variations").insert({

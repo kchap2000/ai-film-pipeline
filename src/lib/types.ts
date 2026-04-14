@@ -36,6 +36,7 @@ export interface Project {
   client_name: string | null;
   phase_status: PhaseStatus;
   archived: boolean;
+  production_notes: string;
   created_at: string;
   updated_at: string;
 }

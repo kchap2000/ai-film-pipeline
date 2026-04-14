@@ -63,11 +63,12 @@ export async function generateLocationImage(
   description: string,
   timeOfDay: string,
   mood: string,
-  variationNumber: number
+  variationNumber: number,
+  productionNotes?: string
 ): Promise<GeneratedImage> {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
 
-  const prompt = buildLocationPrompt(locationName, description, timeOfDay, mood, variationNumber);
+  const prompt = buildLocationPrompt(locationName, description, timeOfDay, mood, variationNumber, productionNotes);
 
   if (!apiKey || apiKey === "your-key-here") {
     return generatePlaceholder(locationName, prompt, variationNumber);
@@ -76,12 +77,24 @@ export async function generateLocationImage(
   return await generateWithGemini(apiKey, prompt, locationName, variationNumber);
 }
 
+/**
+ * Prepends the per-project production directive so director-level style rules
+ * (aspect ratio, color grade, continuity overrides) win over generic prompt
+ * boilerplate in every downstream image.
+ */
+function productionDirectivePrefix(notes?: string): string {
+  const trimmed = (notes || "").trim();
+  if (!trimmed) return "";
+  return `PRODUCTION DIRECTIVE (locked — these rules override any conflicting style guidance below): ${trimmed}`;
+}
+
 function buildLocationPrompt(
   name: string,
   description: string,
   timeOfDay: string,
   mood: string,
-  variation: number
+  variation: number,
+  productionNotes?: string
 ): string {
   const styles = [
     "wide establishing shot",
@@ -93,6 +106,7 @@ function buildLocationPrompt(
   const style = styles[(variation - 1) % styles.length];
 
   return [
+    productionDirectivePrefix(productionNotes),
     `Generate a high-quality cinematic location reference photograph.`,
     `Location: ${name}.`,
     description ? `Description: ${description}.` : "",
@@ -119,6 +133,7 @@ export async function generateSceneScoutImage(opts: {
   charactersPresent: string[];
   characterDescriptions: Record<string, string>;
   variationNumber: number;
+  productionNotes?: string;
 }): Promise<GeneratedImage> {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   const prompt = buildSceneScoutPrompt(opts);
@@ -141,6 +156,7 @@ function buildSceneScoutPrompt(opts: {
   charactersPresent: string[];
   characterDescriptions: Record<string, string>;
   variationNumber: number;
+  productionNotes?: string;
 }): string {
   const charDetails = opts.charactersPresent
     .map((name) => {
@@ -161,6 +177,7 @@ function buildSceneScoutPrompt(opts: {
     : "";
 
   return [
+    productionDirectivePrefix(opts.productionNotes),
     `Generate a high-quality cinematic scene reference image for film pre-production.`,
     `Scene ${opts.sceneNumber}: ${opts.actionSummary}`,
     `Location: ${opts.location}.`,
@@ -269,6 +286,7 @@ export async function generateStoryboardPanel(opts: {
   mood: string;
   panelNumber: number;
   sceneReferenceImageUrl?: string | null; // optional approved scout image
+  productionNotes?: string;
 }): Promise<GeneratedImage> {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   const prompt = buildStoryboardPrompt(opts);
@@ -326,6 +344,7 @@ function buildStoryboardPrompt(opts: {
   timeOfDay: string;
   mood: string;
   panelNumber: number;
+  productionNotes?: string;
 }): string {
   const charDetails = opts.charactersInShot
     .map((name) => {
@@ -335,6 +354,7 @@ function buildStoryboardPrompt(opts: {
     .join("; ");
 
   return [
+    productionDirectivePrefix(opts.productionNotes),
     `Generate a cinematic storyboard panel for a film production.`,
     `Shot type: ${opts.shotType || "medium shot"}.`,
     `Camera angle: ${opts.cameraAngle || "eye-level"}.`,

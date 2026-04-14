@@ -94,7 +94,7 @@ export async function POST(
     scenesQuery = scenesQuery.eq("id", targetSceneId);
   }
 
-  const [scenesRes, charsRes, locsRes] = await Promise.all([
+  const [scenesRes, charsRes, locsRes, projectRes] = await Promise.all([
     scenesQuery,
     supabase
       .from("characters")
@@ -104,7 +104,13 @@ export async function POST(
       .from("locations")
       .select("name, description, time_of_day, mood")
       .eq("project_id", id),
+    supabase
+      .from("projects")
+      .select("production_notes")
+      .eq("id", id)
+      .single(),
   ]);
+  const productionNotes: string = projectRes.data?.production_notes || "";
 
   const scenes = scenesRes.data || [];
   const charDescMap: Record<string, string> = {};
@@ -222,6 +228,7 @@ Wardrobe: ${(scene.wardrobe || []).join(", ") || "None"}`,
           mood: locInfo.mood,
           panelNumber,
           sceneReferenceImageUrl: scene.approved_scout_image_url || null,
+          productionNotes,
         });
 
         await supabase.from("storyboard_panels").insert({

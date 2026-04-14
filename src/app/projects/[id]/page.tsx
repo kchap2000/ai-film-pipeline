@@ -19,6 +19,10 @@ export default function ProjectDetail() {
     scenes: number;
   } | null>(null);
   const [deletingFileId, setDeletingFileId] = useState<string | null>(null);
+  const [notes, setNotes] = useState("");
+  const [notesDirty, setNotesDirty] = useState(false);
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
 
   const fetchProject = async () => {
     const res = await fetch(`/api/projects/${id}`);
@@ -26,8 +30,30 @@ export default function ProjectDetail() {
       const data = await res.json();
       setProject(data.project);
       setFiles(data.files || []);
+      setNotes(data.project?.production_notes || "");
+      setNotesDirty(false);
     }
     setLoading(false);
+  };
+
+  const saveNotes = async () => {
+    if (!notesDirty || savingNotes) return;
+    setSavingNotes(true);
+    setNotesSaved(false);
+    try {
+      const res = await fetch(`/api/projects/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ production_notes: notes }),
+      });
+      if (res.ok) {
+        setNotesDirty(false);
+        setNotesSaved(true);
+        setTimeout(() => setNotesSaved(false), 2000);
+      }
+    } finally {
+      setSavingNotes(false);
+    }
   };
 
   useEffect(() => {
@@ -325,6 +351,68 @@ export default function ProjectDetail() {
                 {extractError}
               </p>
             )}
+          </div>
+        </section>
+
+        {/* Production Notes — director-level style/continuity directive,
+            injected into all downstream generation prompts. */}
+        <section className="mb-10">
+          <h2 className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
+            Production Notes
+          </h2>
+          <div
+            className="rounded-xl p-6"
+            style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}
+          >
+            <p className="text-xs mb-3" style={{ color: "var(--brand-gray)" }}>
+              Any text here is prepended as a locked directive to storyboard, scene-scout, and
+              location-scout image prompts. Use it for overrides like &ldquo;all scenes at night&rdquo;,
+              &ldquo;2.39:1 anamorphic aspect&rdquo;, or &ldquo;character X always wears a red coat&rdquo;.
+            </p>
+            <textarea
+              value={notes}
+              onChange={(e) => {
+                setNotes(e.target.value);
+                setNotesDirty(true);
+                setNotesSaved(false);
+              }}
+              onBlur={saveNotes}
+              rows={5}
+              placeholder="e.g. All scenes shot at night. Cool blue/teal color grade throughout. 2.39:1 anamorphic aspect. Always render Rob in a charcoal peacoat."
+              className="w-full text-sm px-3 py-2 rounded-md outline-none resize-y"
+              style={{
+                background: "var(--brand-navy)",
+                color: "var(--brand-white)",
+                border: "1px solid var(--brand-steel)",
+                minHeight: 96,
+              }}
+            />
+            <div className="flex items-center justify-between mt-3">
+              <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                {savingNotes
+                  ? "Saving..."
+                  : notesDirty
+                  ? "Unsaved — click outside or Save to persist"
+                  : notesSaved
+                  ? "Saved"
+                  : notes
+                  ? "Saved"
+                  : "Empty"}
+              </span>
+              <button
+                onClick={saveNotes}
+                disabled={!notesDirty || savingNotes}
+                className="text-xs uppercase tracking-widest px-4 py-2 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                style={{
+                  color: "var(--brand-orange)",
+                  border: "1px solid rgba(255,138,42,0.4)",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,138,42,0.08)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                Save
+              </button>
+            </div>
           </div>
         </section>
 

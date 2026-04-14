@@ -293,6 +293,14 @@ alter table projects add column if not exists archived boolean not null default 
 create index if not exists idx_projects_archived on projects(archived);
 
 -- ============================================================
+-- Migration: Production notes / style directive (2026-04-14)
+-- ============================================================
+-- Freeform per-project directive injected into storyboard, scene-scout, and
+-- location-scout prompts so the director can lock style/continuity rules
+-- (e.g. "all scenes at night", "aspect 2.39:1", "character X always in red").
+alter table projects add column if not exists production_notes text not null default '';
+
+-- ============================================================
 -- Migration: Make project-uploads bucket public (2026-04-14)
 -- ============================================================
 -- Headshot uploads use getPublicUrl(); the bucket must be public or rendered

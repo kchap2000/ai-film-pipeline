@@ -72,6 +72,14 @@ export async function POST(
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  // Fetch per-project production directive once so every variation honors it
+  const { data: projectRow } = await supabase
+    .from("projects")
+    .select("production_notes")
+    .eq("id", id)
+    .single();
+  const productionNotes: string = projectRow?.production_notes || "";
+
   // If no locations exist yet, extract them from scenes
   const { data: existingLocs } = await supabase
     .from("locations")
@@ -203,7 +211,8 @@ export async function POST(
           loc.description,
           loc.time_of_day,
           loc.mood,
-          i
+          i,
+          productionNotes
         );
 
         await supabase.from("location_variations").insert({

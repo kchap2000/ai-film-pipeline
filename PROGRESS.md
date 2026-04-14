@@ -507,6 +507,109 @@ UPDATE storage.buckets SET public = true WHERE id = 'project-uploads';
 
 ---
 
+## 🔄 Next Up: Re-Extraction Cleanup Bug (discovered 2026-04-14)
+
+After commit `1b6f349` shipped, re-ran extraction on WAYW Ep2 project (`c0ee0350-b95d-4a45-8c8d-538e3e252395`) to backfill the locations FK fix. The extraction **inserted new rows alongside the old ones instead of wiping and rebuilding** — `delete()` calls in the extract route are silently failing because of foreign-key constraints on dependent tables.
+
+### Current DB state (mess)
+| Table | Rows | Expected | Problem |
+|-------|------|----------|---------|
+| locations | 6 | 3 | 3 old Ep1 beach locations still present + 3 new Ep2 added alongside |
+| scenes | 7 | 4 | 3 old orphaned scenes with `location_id: null` + 4 new correct scenes with FK populated |
+| location_variations | ~15 | 0 | All linked to old Ep1 locations |
+| storyboard_panels | 21 | 0 (re-gen needed) | All linked to old orphaned scene IDs |
+| cast_variations | ~30 | (keep approved) | Linked to old character IDs |
+
+### Root cause
+- `locations.delete()` is blocked by `location_variations` FKs (15 wrong images)
+- `scenes.delete()` is blocked by `storyboard_panels` FKs (21 panels)
+- Supabase returns success on a no-op delete when FK constraints reject the rows, so the extract route doesn't see an error
+
+### Fix (Claude Code end-to-end)
+
+**1. `supabase/schema.sql` — add ON DELETE CASCADE to these FKs:**
+```sql
+-- location_variations.location_id → locations.id
+ALTER TABLE location_variations DROP CONSTRAINT IF EXISTS location_variations_location_id_fkey;
+ALTER TABLE location_variations ADD CONSTRAINT location_variations_location_id_fkey
+  FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE;
+
+-- storyboard_panels.scene_id → scenes.id
+ALTER TABLE storyboard_panels DROP CONSTRAINT IF EXISTS storyboard_panels_scene_id_fkey;
+ALTER TABLE storyboard_panels ADD CONSTRAINT storyboard_panels_scene_id_fkey
+  FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE;
+
+-- scene_variations.scene_id → scenes.id
+ALTER TABLE scene_variations DROP CONSTRAINT IF EXISTS scene_variations_scene_id_fkey;
+ALTER TABLE scene_variations ADD CONSTRAINT scene_variations_scene_id_fkey
+  FOREIGN KEY (scene_id) REFERENCES scenes(id) ON DELETE CASCADE;
+
+-- cast_variations.character_id → characters.id
+ALTER TABLE cast_variations DROP CONSTRAINT IF EXISTS cast_variations_character_id_fkey;
+ALTER TABLE cast_variations ADD CONSTRAINT cast_variations_character_id_fkey
+  FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE;
+
+-- character_poses.character_id → characters.id
+ALTER TABLE character_poses DROP CONSTRAINT IF EXISTS character_poses_character_id_fkey;
+ALTER TABLE character_poses ADD CONSTRAINT character_poses_character_id_fkey
+  FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE;
+
+-- scenes.location_id → locations.id (use SET NULL so scenes survive location re-seeding)
+ALTER TABLE scenes DROP CONSTRAINT IF EXISTS scenes_location_id_fkey;
+ALTER TABLE scenes ADD CONSTRAINT scenes_location_id_fkey
+  FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE SET NULL;
+```
+
+**2. `src/app/api/extract/route.ts` — delete order + error surfacing:**
+- On re-extract, delete in dependency order: `storyboard_panels → scene_variations → scenes → location_variations → locations → character_poses → cast_variations → characters → extractions`
+- Check `error` on every `.delete()` result and throw — do not silently swallow FK rejections
+- Log the row counts deleted per table so the response can include `deleted: { scenes: N, locations: M, ... }` for verification
+
+**3. One-time cleanup SQL for the existing WAYW Ep2 project (`c0ee0350-b95d-4a45-8c8d-538e3e252395`):**
+
+Claude Code should run this to clean up the current mess before fixing the re-extract logic (or run the cleanup SQL as part of a migration that also adds the CASCADE constraints, then tell the user to re-run extraction once more):
+
+```sql
+-- Project scope
+DO $$
+DECLARE
+  proj_id uuid := 'c0ee0350-b95d-4a45-8c8d-538e3e252395';
+BEGIN
+  -- Delete storyboard panels for ALL scenes in this project (they're all stale)
+  DELETE FROM storyboard_panels WHERE project_id = proj_id;
+
+  -- Delete scene variations for ALL scenes in this project
+  DELETE FROM scene_variations WHERE project_id = proj_id;
+
+  -- Delete orphaned scenes (the old ones with location_id IS NULL)
+  DELETE FROM scenes WHERE project_id = proj_id AND location_id IS NULL;
+
+  -- Delete the old Ep1 beach locations (and their variations via CASCADE, once added)
+  -- Until CASCADE is added, delete variations first:
+  DELETE FROM location_variations WHERE location_id IN (
+    SELECT id FROM locations
+    WHERE project_id = proj_id
+      AND name IN ('Beach - Exterior', 'Beach House - Kitchen/Interior', 'Beach House Kitchen - Interior')
+  );
+  DELETE FROM locations
+  WHERE project_id = proj_id
+    AND name IN ('Beach - Exterior', 'Beach House - Kitchen/Interior', 'Beach House Kitchen - Interior');
+END $$;
+```
+
+After cleanup, DB should show:
+- 3 locations (Donna's Bedroom, Donna's Kitchen, Donna's Kitchen/Donna's Pool)
+- 4 scenes, all with `location_id` populated
+- 0 storyboard panels (user must regenerate)
+- 0 scene variations (user must regenerate)
+
+### Expected outcome
+- Re-extraction on any existing project becomes safely idempotent (wipes + rebuilds cleanly)
+- WAYW Ep2 project ends up with the correct 4 scenes + 3 locations + proper FK linkage
+- User will need to re-run scene scouting + storyboard generation after cleanup
+
+---
+
 ### Build Log — 2026-04-14 — E2E Bug Sweep ✅ COMPLETE
 
 Worked the E2E bug list autonomously. All twelve actionable issues (E2E-13 left as a future feature request) are fixed. Build is clean.
@@ -544,5 +647,34 @@ Worked the E2E bug list autonomously. All twelve actionable issues (E2E-13 left 
 - `supabase/schema.sql` — bucket public on creation + restated migration
 
 ### ✅ COMPLETE: 2026-04-14 — E2E Bug Sweep
+
+---
+
+### Build Log — 2026-04-14 — E2E-13: Production Notes / Style Override ✅ COMPLETE
+
+Closed out the last E2E list item. Directors can now set per-project production directives that get locked into every downstream image prompt (storyboard panels, scene scouts, location scouts).
+
+**Schema** — `supabase/schema.sql`
+- Added `alter table projects add column if not exists production_notes text not null default ''` migration block.
+
+**Types** — `src/lib/types.ts`
+- `Project.production_notes: string` added.
+
+**API** — `src/app/api/projects/[id]/route.ts`
+- Added `"production_notes"` to the PATCH `allowed` allowlist.
+
+**UI** — `src/app/projects/[id]/page.tsx`
+- New "Production Notes" card between Extraction and Phase Links. Multiline textarea, autosave on blur, manual Save button, status line ("Saving…", "Unsaved", "Saved", "Empty"). Example placeholder tells the director what kinds of directives work (aspect ratio, color grade, costume continuity).
+
+**Prompt injection** — `src/lib/generate-image.ts`
+- New `productionDirectivePrefix(notes)` helper prepends `PRODUCTION DIRECTIVE (locked — these rules override any conflicting style guidance below): {notes}` as the first line of each prompt.
+- `buildLocationPrompt`, `buildSceneScoutPrompt`, `buildStoryboardPrompt` all take optional `productionNotes` and emit the prefix when non-empty. Casting/pose-sheet builders intentionally skipped (they're identity-anchored to reference images, not style plates).
+
+**Callers** — fetch `production_notes` once per request and pass through:
+- `src/app/api/projects/[id]/locations/route.ts`
+- `src/app/api/projects/[id]/scenes/route.ts`
+- `src/app/api/projects/[id]/storyboard/route.ts`
+
+Build clean: `npm run build` passes with no TypeScript errors.
 
 
