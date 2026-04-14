@@ -18,7 +18,7 @@ Extract the following:
 
 1. **characters** — every speaking or physically present character. For each:
    - "name": string — the character's name as written
-   - "description": string — ALL physical details mentioned: age, approximate age range, ethnicity, hair, build, distinguishing features. If the script provides NO physical details, write exactly: "No physical description provided in script — awaiting production notes."
+   - "description": string — ALL physical details mentioned: age, approximate age range, ethnicity, hair, build, distinguishing features. If the script provides NO physical details, write exactly: "No physical description provided in script — awaiting production notes." RELATIONSHIP PRECISION: when describing a character's relationship to others, use the EXACT term the script uses (e.g. "husband", "wife", "boyfriend", "girlfriend", "partner", "ex"). Do NOT substitute a looser term. If the script refers to "his wife" or "her husband", write "husband" or "wife" — never default to "boyfriend" or "girlfriend". If relationship is ambiguous, write "partner" or describe what's shown without labeling.
    - "role": one of "lead", "supporting", "minor", "extra", "mentioned"
    - "personality": string — personality traits, demeanor, emotional arc
    - "voice_only": boolean — true if this character ONLY appears as a voice (V.O., O.S., phone recording, narration) and is never physically present on screen; false otherwise

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import ProjectNav from "@/components/ProjectNav";
@@ -32,6 +32,7 @@ interface Scene {
 interface Character {
   id: string;
   name: string;
+  voice_only: boolean;
   approved_variation_id: string | null;
 }
 
@@ -49,6 +50,7 @@ export default function StoryboardPage() {
   const [panelImages, setPanelImages] = useState<Record<string, string>>({});
   const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
   const [headshots, setHeadshots] = useState<Record<string, string>>({});
+  const cancelRef = useRef(false);
 
   const fetchData = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/storyboard`);
@@ -111,30 +113,73 @@ export default function StoryboardPage() {
     }
   }, [expandedScene, scenes, fetchPanelImage]);
 
-  // Generate All: sequential per-scene, skip scenes with panels
-  const generateAll = async () => {
-    setGenerating(true);
-    setGenError(null);
-    const pending = scenes.filter((s) => s.panels.length === 0);
-    for (let i = 0; i < pending.length; i++) {
-      const scene = pending[i];
-      setGenScene(scene.id);
-      setGenProgress(`Generating scene ${i + 1} of ${pending.length} (Scene ${scene.scene_number})…`);
+  const cancelGeneration = () => {
+    cancelRef.current = true;
+  };
+
+  // Generate panels for a single scene, with one auto-retry on failure.
+  // Returns { ok: true } or { ok: false, error: string }.
+  const generateSceneWithRetry = useCallback(async (sceneId: string, sceneNumber: number): Promise<{ ok: boolean; error?: string }> => {
+    for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         const res = await fetch(`/api/projects/${id}/storyboard`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ scene_id: scene.id }),
+          body: JSON.stringify({ scene_id: sceneId }),
         });
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          setGenError(data.error || `Scene ${scene.scene_number} failed (${res.status}).`);
+        if (res.ok) return { ok: true };
+        const data = await res.json().catch(() => ({}));
+        if (attempt === 2) {
+          return {
+            ok: false,
+            error: data.error || `Scene ${sceneNumber} failed after retry (${res.status}).`,
+          };
         }
       } catch {
-        setGenError(`Network error on scene ${scene.scene_number}.`);
+        if (attempt === 2) {
+          return { ok: false, error: `Scene ${sceneNumber} failed after retry (network error).` };
+        }
       }
     }
-    await fetchData();
+    return { ok: false, error: `Scene ${sceneNumber} failed.` };
+  }, [id]);
+
+  // Generate All: sequential per-scene, retry on failure, refresh between scenes,
+  // and report any gaps after the loop completes.
+  const generateAll = async () => {
+    cancelRef.current = false;
+    setGenerating(true);
+    setGenError(null);
+    const pending = scenes.filter((s) => s.panels.length === 0);
+    const failures: string[] = [];
+
+    for (let i = 0; i < pending.length; i++) {
+      if (cancelRef.current) break;
+      const scene = pending[i];
+      setGenScene(scene.id);
+      setGenProgress(`Generating scene ${i + 1} of ${pending.length} (Scene ${scene.scene_number})…`);
+
+      const result = await generateSceneWithRetry(scene.id, scene.scene_number);
+      if (!result.ok && result.error) failures.push(result.error);
+
+      // Refresh data after each scene so the panel count + BOARDED badges update live.
+      await fetchData();
+    }
+
+    // After loop: detect any pending scenes that still have zero panels (a real gap).
+    const post = await fetch(`/api/projects/${id}/storyboard`).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+    if (post?.scenes) {
+      const stillEmpty = post.scenes.filter((s: Scene) => pending.some((p) => p.id === s.id) && (s.panels?.length ?? 0) === 0);
+      if (stillEmpty.length > 0) {
+        const numbers = stillEmpty.map((s: Scene) => `Scene ${s.scene_number}`).join(", ");
+        failures.push(`Did not finish: ${numbers}. Click "Generate Panels" on each to retry individually.`);
+      }
+    }
+
+    if (cancelRef.current) failures.unshift("Generation cancelled by user.");
+    if (failures.length > 0) setGenError(failures.join("  •  "));
+
+    cancelRef.current = false;
     setGenerating(false);
     setGenScene(null);
     setGenProgress(null);
@@ -220,6 +265,18 @@ export default function StoryboardPage() {
                   : `Generate All (${scenesWithoutPanels.length} scenes)`}
               </button>
             )}
+            {generating && (
+              <button
+                onClick={cancelGeneration}
+                disabled={cancelRef.current}
+                className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors disabled:opacity-40"
+                style={{ color: "rgb(248,113,113)", border: "1px solid rgba(239,68,68,0.4)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(239,68,68,0.08)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+              >
+                {cancelRef.current ? "Cancelling…" : "Cancel"}
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -240,14 +297,14 @@ export default function StoryboardPage() {
         </div>
       )}
 
-      {/* Character cast strip */}
-      {characters.length > 0 && (
+      {/* Character cast strip — voice-only chars excluded since they never appear on screen */}
+      {characters.filter((c) => !c.voice_only).length > 0 && (
         <div className="mb-8">
           <p className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
             Cast Reference
           </p>
           <div className="flex gap-3 overflow-x-auto pb-2">
-            {characters.map((c) => (
+            {characters.filter((c) => !c.voice_only).map((c) => (
               <div key={c.id} className="flex-shrink-0 text-center">
                 <div
                   className="w-12 h-12 rounded-full overflow-hidden"
@@ -486,23 +543,108 @@ export default function StoryboardPage() {
         </div>
       )}
 
-      {/* Pipeline complete */}
+      {/* Pipeline complete — full celebration view with per-scene stats */}
       {scenesWithPanels.length === scenes.length && scenes.length > 0 && (
-        <div className="mt-10 pt-8 text-center" style={{ borderTop: "1px solid var(--brand-steel)" }}>
-          <p className="text-green-400 text-lg mb-2">Storyboard Complete</p>
-          <p className="text-xs max-w-md mx-auto" style={{ color: "var(--brand-gray)" }}>
-            All {scenes.length} scenes have been broken into {totalPanels} shot panels with an estimated runtime of{" "}
-            {Math.round(totalDuration)} seconds.
-          </p>
-          <Link
-            href={`/projects/${id}`}
-            className="inline-block mt-6 text-xs uppercase tracking-widest px-6 py-3 transition-colors"
-            style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
-            onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "rgba(255,138,42,0.08)")}
-            onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
-          >
-            Back to Project Overview
-          </Link>
+        <div
+          className="mt-12 rounded-2xl overflow-hidden"
+          style={{
+            border: "1px solid rgba(34,197,94,0.4)",
+            background: "linear-gradient(180deg, rgba(34,197,94,0.06), rgba(11,28,45,0.6))",
+          }}
+        >
+          {/* Hero */}
+          <div className="px-8 py-10 text-center" style={{ borderBottom: "1px solid rgba(34,197,94,0.2)" }}>
+            <p
+              className="text-[10px] uppercase tracking-[0.4em] mb-3"
+              style={{ color: "rgba(34,197,94,0.8)" }}
+            >
+              All 7 Phases Complete
+            </p>
+            <h2
+              className="text-4xl font-bold tracking-tight mb-3"
+              style={{ color: "var(--brand-white)" }}
+            >
+              Pipeline Complete
+            </h2>
+            <p className="text-sm max-w-xl mx-auto" style={{ color: "var(--brand-gray)" }}>
+              Your script is now a fully-boarded production package. Every scene is broken into
+              cinematic panels with consistent characters, locked locations, and approved cast.
+            </p>
+          </div>
+
+          {/* Stat tiles */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-px" style={{ background: "rgba(34,197,94,0.15)" }}>
+            <div className="px-6 py-5 text-center" style={{ background: "var(--brand-mid)" }}>
+              <p className="text-2xl font-bold" style={{ color: "var(--brand-orange)" }}>{scenes.length}</p>
+              <p className="text-[10px] uppercase tracking-widest mt-1" style={{ color: "var(--brand-gray)" }}>Scenes</p>
+            </div>
+            <div className="px-6 py-5 text-center" style={{ background: "var(--brand-mid)" }}>
+              <p className="text-2xl font-bold" style={{ color: "var(--brand-orange)" }}>{totalPanels}</p>
+              <p className="text-[10px] uppercase tracking-widest mt-1" style={{ color: "var(--brand-gray)" }}>Panels</p>
+            </div>
+            <div className="px-6 py-5 text-center" style={{ background: "var(--brand-mid)" }}>
+              <p className="text-2xl font-bold" style={{ color: "var(--brand-orange)" }}>{characters.filter((c) => !c.voice_only).length}</p>
+              <p className="text-[10px] uppercase tracking-widest mt-1" style={{ color: "var(--brand-gray)" }}>Cast</p>
+            </div>
+            <div className="px-6 py-5 text-center" style={{ background: "var(--brand-mid)" }}>
+              <p className="text-2xl font-bold" style={{ color: "var(--brand-orange)" }}>{Math.round(totalDuration)}s</p>
+              <p className="text-[10px] uppercase tracking-widest mt-1" style={{ color: "var(--brand-gray)" }}>Runtime</p>
+            </div>
+          </div>
+
+          {/* Per-scene breakdown */}
+          <div className="px-8 py-6" style={{ borderTop: "1px solid rgba(34,197,94,0.2)" }}>
+            <p className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
+              Scene Breakdown
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              {scenes.map((s) => {
+                const dur = s.panels.reduce((a, p) => a + (p.duration_seconds || 0), 0);
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => {
+                      setExpandedScene(s.id);
+                      window.scrollTo({ top: 0, behavior: "smooth" });
+                    }}
+                    className="text-left px-3 py-2 rounded-md transition-colors"
+                    style={{ border: "1px solid var(--brand-steel)", background: "var(--brand-navy)" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,138,42,0.04)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "var(--brand-navy)")}
+                  >
+                    <p className="text-xs" style={{ color: "var(--brand-orange)" }}>
+                      Scene {s.scene_number}
+                    </p>
+                    <p className="text-[10px] truncate" style={{ color: "var(--brand-gray)" }}>
+                      {s.location || "—"} &middot; {s.panels.length} panels &middot; {Math.round(dur)}s
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* CTAs */}
+          <div className="px-8 py-6 flex items-center justify-center gap-4 flex-wrap" style={{ borderTop: "1px solid rgba(34,197,94,0.2)" }}>
+            <Link
+              href={`/projects/${id}`}
+              className="text-xs uppercase tracking-widest px-6 py-3 transition-colors"
+              style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+              onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "rgba(255,138,42,0.08)")}
+              onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
+            >
+              Back to Project Overview
+            </Link>
+            <button
+              onClick={() => window.print()}
+              className="text-xs uppercase tracking-widest px-6 py-3 transition-colors"
+              style={{ color: "var(--brand-cyan)", border: "1px solid rgba(76,201,240,0.35)" }}
+              onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "rgba(76,201,240,0.08)")}
+              onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
+            >
+              Print / Export PDF
+            </button>
+          </div>
         </div>
       )}
     </div>

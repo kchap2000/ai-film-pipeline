@@ -81,6 +81,7 @@ export default function CastingPage() {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [genProgress, setGenProgress] = useState<{ current: number; total: number; charName: string } | null>(null);
+  const cancelRef = useRef(false);
   const [selectedChar, setSelectedChar] = useState<string | null>(null);
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectNote, setRejectNote] = useState("");
@@ -135,7 +136,12 @@ export default function CastingPage() {
     }
   }, [selectedChar, characters, fetchImage]);
 
+  const cancelGeneration = () => {
+    cancelRef.current = true;
+  };
+
   const generateVariations = async (characterId?: string) => {
+    cancelRef.current = false;
     setGenerating(true);
     setGenErrors([]);
     const errors: string[] = [];
@@ -148,7 +154,7 @@ export default function CastingPage() {
       ? chars.filter((c) => c.id === characterId && !c.voice_only)
       : chars.filter((c) => !c.voice_only);
 
-    for (const char of targetChars) {
+    outer: for (const char of targetChars) {
       const existingNums = new Set(char.variations.map((v) => v.variation_number));
       // Only generate up to the user-selected variationCount
       const needed = Array.from({ length: variationCount }, (_, i) => i + 1).filter(
@@ -158,6 +164,7 @@ export default function CastingPage() {
       if (needed.length === 0) continue;
 
       for (let idx = 0; idx < needed.length; idx++) {
+        if (cancelRef.current) break outer;
         const variationNum = needed[idx];
         setGenProgress({
           current: idx + 1,
@@ -202,7 +209,11 @@ export default function CastingPage() {
       }
     }
 
+    if (cancelRef.current) {
+      errors.unshift("Generation cancelled by user.");
+    }
     if (errors.length > 0) setGenErrors(errors);
+    cancelRef.current = false;
     setGenProgress(null);
     setGenerating(false);
   };
@@ -459,11 +470,20 @@ export default function CastingPage() {
       {/* Generation progress bar */}
       {genProgress && (
         <div className="p-4 mb-6 rounded-xl" style={{ border: "1px solid rgba(255,138,42,0.3)", background: "rgba(255,138,42,0.06)" }}>
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-2 gap-3">
             <p className="text-xs uppercase tracking-widest" style={{ color: "var(--brand-orange)" }}>
-              Generating {genProgress.charName} — {genProgress.current} / {genProgress.total}
+              {cancelRef.current ? "Cancelling…" : `Generating ${genProgress.charName} — ${genProgress.current} / ${genProgress.total}`}
             </p>
-            <p className="text-xs" style={{ color: "var(--brand-gray)" }}>Images appear as they complete</p>
+            <div className="flex items-center gap-3">
+              <p className="text-xs hidden sm:block" style={{ color: "var(--brand-gray)" }}>Images appear as they complete</p>
+              <button
+                onClick={cancelGeneration}
+                disabled={cancelRef.current}
+                className="text-[10px] uppercase tracking-widest text-red-400 border border-red-900/50 px-3 py-1.5 hover:bg-red-950/30 transition-colors disabled:opacity-40 flex-shrink-0"
+              >
+                {cancelRef.current ? "Cancelling…" : "Cancel"}
+              </button>
+            </div>
           </div>
           <div className="w-full h-1 rounded-full" style={{ background: "var(--brand-steel)" }}>
             <div

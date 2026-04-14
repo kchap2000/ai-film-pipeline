@@ -80,10 +80,12 @@ create trigger projects_updated_at
   for each row
   execute function update_updated_at();
 
--- Create storage bucket for project uploads
+-- Create storage bucket for project uploads.
+-- MUST be public: the cast-headshots flow uses getPublicUrl() to render headshots
+-- directly from Storage URLs (see src/app/projects/[id]/cast/page.tsx).
 insert into storage.buckets (id, name, public)
-values ('project-uploads', 'project-uploads', false)
-on conflict (id) do nothing;
+values ('project-uploads', 'project-uploads', true)
+on conflict (id) do update set public = true;
 
 -- ============================================================
 -- Phase 2: LLM Extraction Engine
@@ -289,6 +291,13 @@ create index if not exists idx_scene_variations_project on scene_variations(proj
 -- but preserves all data. Hard delete is via DELETE /api/projects/:id.
 alter table projects add column if not exists archived boolean not null default false;
 create index if not exists idx_projects_archived on projects(archived);
+
+-- ============================================================
+-- Migration: Make project-uploads bucket public (2026-04-14)
+-- ============================================================
+-- Headshot uploads use getPublicUrl(); the bucket must be public or rendered
+-- image URLs 400. Safe to re-run.
+update storage.buckets set public = true where id = 'project-uploads';
 
 -- ============================================================
 -- Migration: Add user_id to existing projects (2026-04-04)

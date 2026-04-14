@@ -583,16 +583,20 @@ export default function SceneScoutingPage() {
             </div>
           )}
 
-          {/* Phase complete footer */}
-          {allLocked && scenes.length > 0 && (
+          {/* Phase complete footer — show once every scene has an approved variation,
+              even if not yet locked. Locking is optional for moving to storyboard. */}
+          {allApproved && scenes.length > 0 && (
             <div
               className="mt-10 pt-8 flex items-center justify-between"
               style={{ borderTop: "1px solid var(--brand-steel)" }}
             >
               <div>
-                <p className="text-sm text-green-400">All scenes scouted and locked</p>
+                <p className="text-sm text-green-400">
+                  {allLocked ? "All scenes scouted and locked" : "All scenes scouted"}
+                </p>
                 <p className="text-xs mt-1" style={{ color: "var(--brand-gray)" }}>
                   Approved visuals will be used to enrich storyboard panel generation.
+                  {!allLocked && " (Locking is optional — you can proceed without it.)"}
                 </p>
               </div>
               <Link

@@ -27,7 +27,7 @@ export async function GET(
       .order("panel_number", { ascending: true }),
     supabase
       .from("characters")
-      .select("id, name, description")
+      .select("id, name, description, voice_only")
       .eq("project_id", id),
     supabase
       .from("locations")

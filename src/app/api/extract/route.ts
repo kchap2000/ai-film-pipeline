@@ -123,9 +123,13 @@ export async function POST(req: NextRequest) {
   }
 
   // 5. Clear previous extraction data for this project (re-extraction replaces old data)
+  //    locations don't cascade from scenes/characters so we must delete them explicitly.
+  //    location_variations / cast_variations / storyboard_panels / scene_variations / character_poses
+  //    cascade via FKs, so deleting parents is enough.
   await Promise.all([
     supabase.from("characters").delete().eq("project_id", project_id),
     supabase.from("scenes").delete().eq("project_id", project_id),
+    supabase.from("locations").delete().eq("project_id", project_id),
     supabase.from("extractions").delete().eq("project_id", project_id),
   ]);
 
@@ -146,21 +150,67 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // 7. Insert scenes
+  // 7. Derive unique locations from scenes and insert FIRST (so we can FK-link scenes to them)
+  //    Scene location_id is NOT NULL-able so we insert locations, then insert scenes with location_id set.
+  const locationMeta: Record<string, { time_of_day: string; mood: string }> = {};
+  for (const s of extraction.scenes) {
+    const key = (s.location || "").toLowerCase().trim();
+    if (key && !locationMeta[key]) {
+      locationMeta[key] = { time_of_day: s.time_of_day || "", mood: s.mood || "" };
+    }
+  }
+  const uniqueLocationNames = Object.keys(locationMeta);
+  const locNameToId: Record<string, string> = {}; // lowercase name → location_id
+
+  if (uniqueLocationNames.length > 0) {
+    // Find the original cased name for each (first occurrence in scenes)
+    const firstCased: Record<string, string> = {};
+    for (const s of extraction.scenes) {
+      const key = (s.location || "").toLowerCase().trim();
+      if (key && !firstCased[key]) firstCased[key] = s.location;
+    }
+
+    const { data: insertedLocs, error: locError } = await supabase
+      .from("locations")
+      .insert(
+        uniqueLocationNames.map((key) => ({
+          project_id,
+          name: firstCased[key] || key,
+          description: `${firstCased[key] || key} — ${locationMeta[key].time_of_day}`,
+          time_of_day: locationMeta[key].time_of_day,
+          mood: locationMeta[key].mood,
+        }))
+      )
+      .select("id, name");
+
+    if (locError) {
+      console.error("Failed to insert locations:", locError.message);
+    } else if (insertedLocs) {
+      for (const loc of insertedLocs) {
+        locNameToId[loc.name.toLowerCase().trim()] = loc.id;
+      }
+    }
+  }
+
+  // 8. Insert scenes with location_id FK populated
   if (extraction.scenes.length > 0) {
     const { error: sceneError } = await supabase.from("scenes").insert(
-      extraction.scenes.map((s) => ({
-        project_id,
-        scene_number: s.scene_number,
-        location: s.location || "",
-        time_of_day: s.time_of_day || "",
-        scene_type: s.scene_type || "real",
-        action_summary: s.action_summary || "",
-        mood: s.mood || "",
-        props: s.props || [],
-        wardrobe: s.wardrobe || [],
-        characters_present: s.characters_present || [],
-      }))
+      extraction.scenes.map((s) => {
+        const locKey = (s.location || "").toLowerCase().trim();
+        return {
+          project_id,
+          scene_number: s.scene_number,
+          location: s.location || "",
+          location_id: locNameToId[locKey] || null,
+          time_of_day: s.time_of_day || "",
+          scene_type: s.scene_type || "real",
+          action_summary: s.action_summary || "",
+          mood: s.mood || "",
+          props: s.props || [],
+          wardrobe: s.wardrobe || [],
+          characters_present: s.characters_present || [],
+        };
+      })
     );
     if (sceneError) {
       console.error("Failed to insert scenes:", sceneError.message);

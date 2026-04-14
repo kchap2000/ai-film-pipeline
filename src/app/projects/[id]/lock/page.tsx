@@ -1,9 +1,44 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import ProjectNav from "@/components/ProjectNav";
+import { createClient } from "@/lib/supabase-browser";
+
+// Same client-side compression as the cast page — keeps Storage payload small
+// and avoids Vercel's 4.5 MB function payload limit (we go straight to Storage).
+async function compressImage(file: File, maxPx = 1600, quality = 0.9): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      let { width, height } = img;
+      if (Math.max(width, height) > maxPx) {
+        const scale = maxPx / Math.max(width, height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return reject(new Error("Canvas 2D context unavailable"));
+      ctx.drawImage(img, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error("Canvas toBlob returned null"))),
+        "image/jpeg",
+        quality
+      );
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Failed to load image for compression"));
+    };
+    img.src = objectUrl;
+  });
+}
 
 interface LockCharacter {
   id: string;
@@ -25,6 +60,9 @@ export default function CharacterLockPage() {
   const [placeholders, setPlaceholders] = useState<Set<string>>(new Set());
   const [imageCache, setImageCache] = useState<Record<string, string>>({});
   const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadCharIdRef = useRef<string | null>(null);
 
   const fetchData = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/lock`);
@@ -122,6 +160,55 @@ export default function CharacterLockPage() {
     }
   };
 
+  // Open file picker for a specific character's reference sheet
+  const triggerUpload = (characterId: string) => {
+    uploadCharIdRef.current = characterId;
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    const characterId = uploadCharIdRef.current;
+    if (!file || !characterId) return;
+    e.target.value = "";
+    setUploadingFor(characterId);
+    setPoseSheetError((prev) => { const n = { ...prev }; delete n[characterId]; return n; });
+
+    try {
+      const compressed = await compressImage(file);
+
+      const supabase = createClient();
+      const storagePath = `pose-sheets/${id}/${characterId}/sheet-${Date.now()}.jpg`;
+      const { error: storageErr } = await supabase.storage
+        .from("project-uploads")
+        .upload(storagePath, compressed, { contentType: "image/jpeg", upsert: true });
+      if (storageErr) throw new Error(`Storage upload failed: ${storageErr.message}`);
+
+      const { data: { publicUrl } } = supabase.storage
+        .from("project-uploads")
+        .getPublicUrl(storagePath);
+
+      const res = await fetch(`/api/projects/${id}/posesheet`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ character_id: characterId, storage_path: storagePath, image_url: publicUrl }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+
+      // Optimistic: replace cached pose sheet image with the uploaded one,
+      // and clear placeholder badge if it was set.
+      setImageCache((prev) => ({ ...prev, [`pose-${characterId}`]: publicUrl }));
+      setPlaceholders((prev) => { const n = new Set(prev); n.delete(characterId); return n; });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Upload failed";
+      setPoseSheetError((prev) => ({ ...prev, [characterId]: msg }));
+    } finally {
+      setUploadingFor(null);
+      uploadCharIdRef.current = null;
+    }
+  };
+
   const lockCharacter = async (characterId: string) => {
     setLocking(characterId);
     await fetch(`/api/projects/${id}/lock`, {
@@ -161,6 +248,15 @@ export default function CharacterLockPage() {
 
   return (
     <>
+      {/* Hidden file input for reference sheet uploads */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
       <ProjectNav projectId={id} />
       <div className="min-h-screen" style={{ background: "var(--brand-navy)" }}>
         <div className="max-w-6xl mx-auto px-6 py-12">
@@ -337,14 +433,24 @@ export default function CharacterLockPage() {
                               >
                                 Character Reference Sheet
                               </span>
-                              <button
-                                onClick={() => triggerPoseSheet(char.id)}
-                                disabled={isGenerating}
-                                className="text-[10px] uppercase tracking-widest transition-colors disabled:opacity-40"
-                                style={{ color: "var(--brand-orange)" }}
-                              >
-                                {isGenerating ? "Regenerating..." : "Regenerate"}
-                              </button>
+                              <div className="flex items-center gap-3">
+                                <button
+                                  onClick={() => triggerUpload(char.id)}
+                                  disabled={uploadingFor === char.id}
+                                  className="text-[10px] uppercase tracking-widest transition-colors disabled:opacity-40"
+                                  style={{ color: "var(--brand-cyan)" }}
+                                >
+                                  {uploadingFor === char.id ? "Uploading..." : "↑ Upload"}
+                                </button>
+                                <button
+                                  onClick={() => triggerPoseSheet(char.id)}
+                                  disabled={isGenerating}
+                                  className="text-[10px] uppercase tracking-widest transition-colors disabled:opacity-40"
+                                  style={{ color: "var(--brand-orange)" }}
+                                >
+                                  {isGenerating ? "Regenerating..." : "Regenerate"}
+                                </button>
+                              </div>
                             </div>
                           </>
                         ) : isGenerating ? (
@@ -369,47 +475,85 @@ export default function CharacterLockPage() {
                             style={{ minHeight: "200px" }}
                           >
                             <p className="text-xs text-center text-red-400">{error}</p>
-                            <button
-                              onClick={() => triggerPoseSheet(char.id)}
-                              className="text-[10px] uppercase tracking-widest px-4 py-2 transition-colors"
-                              style={{
-                                color: "var(--brand-orange)",
-                                border: "1px solid rgba(255,138,42,0.4)",
-                              }}
-                              onMouseEnter={(e) =>
-                                (e.currentTarget.style.background = "rgba(255,138,42,0.08)")
-                              }
-                              onMouseLeave={(e) =>
-                                (e.currentTarget.style.background = "transparent")
-                              }
-                            >
-                              Retry
-                            </button>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => triggerPoseSheet(char.id)}
+                                className="text-[10px] uppercase tracking-widest px-4 py-2 transition-colors"
+                                style={{
+                                  color: "var(--brand-orange)",
+                                  border: "1px solid rgba(255,138,42,0.4)",
+                                }}
+                                onMouseEnter={(e) =>
+                                  (e.currentTarget.style.background = "rgba(255,138,42,0.08)")
+                                }
+                                onMouseLeave={(e) =>
+                                  (e.currentTarget.style.background = "transparent")
+                                }
+                              >
+                                Retry
+                              </button>
+                              <button
+                                onClick={() => triggerUpload(char.id)}
+                                disabled={uploadingFor === char.id}
+                                className="text-[10px] uppercase tracking-widest px-4 py-2 transition-colors disabled:opacity-40"
+                                style={{
+                                  color: "var(--brand-cyan)",
+                                  border: "1px solid rgba(76,201,240,0.35)",
+                                }}
+                                onMouseEnter={(e) =>
+                                  (e.currentTarget.style.background = "rgba(76,201,240,0.08)")
+                                }
+                                onMouseLeave={(e) =>
+                                  (e.currentTarget.style.background = "transparent")
+                                }
+                              >
+                                {uploadingFor === char.id ? "Uploading..." : "↑ Upload Sheet"}
+                              </button>
+                            </div>
                           </div>
                         ) : (
                           <div
-                            className="flex-1 flex flex-col items-center justify-center gap-2"
+                            className="flex-1 flex flex-col items-center justify-center gap-3"
                             style={{ minHeight: "200px" }}
                           >
                             <p className="text-xs" style={{ color: "var(--brand-gray)" }}>
                               No reference sheet yet
                             </p>
-                            <button
-                              onClick={() => triggerPoseSheet(char.id)}
-                              className="text-[10px] uppercase tracking-widest px-4 py-2 transition-colors"
-                              style={{
-                                color: "var(--brand-orange)",
-                                border: "1px solid rgba(255,138,42,0.4)",
-                              }}
-                              onMouseEnter={(e) =>
-                                (e.currentTarget.style.background = "rgba(255,138,42,0.08)")
-                              }
-                              onMouseLeave={(e) =>
-                                (e.currentTarget.style.background = "transparent")
-                              }
-                            >
-                              Generate Reference Sheet
-                            </button>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => triggerPoseSheet(char.id)}
+                                className="text-[10px] uppercase tracking-widest px-4 py-2 transition-colors"
+                                style={{
+                                  color: "var(--brand-orange)",
+                                  border: "1px solid rgba(255,138,42,0.4)",
+                                }}
+                                onMouseEnter={(e) =>
+                                  (e.currentTarget.style.background = "rgba(255,138,42,0.08)")
+                                }
+                                onMouseLeave={(e) =>
+                                  (e.currentTarget.style.background = "transparent")
+                                }
+                              >
+                                Generate Reference Sheet
+                              </button>
+                              <button
+                                onClick={() => triggerUpload(char.id)}
+                                disabled={uploadingFor === char.id}
+                                className="text-[10px] uppercase tracking-widest px-4 py-2 transition-colors disabled:opacity-40"
+                                style={{
+                                  color: "var(--brand-cyan)",
+                                  border: "1px solid rgba(76,201,240,0.35)",
+                                }}
+                                onMouseEnter={(e) =>
+                                  (e.currentTarget.style.background = "rgba(76,201,240,0.08)")
+                                }
+                                onMouseLeave={(e) =>
+                                  (e.currentTarget.style.background = "transparent")
+                                }
+                              >
+                                {uploadingFor === char.id ? "Uploading..." : "↑ Upload Sheet"}
+                              </button>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -420,35 +564,45 @@ export default function CharacterLockPage() {
             </div>
           )}
 
-          {/* Phase complete footer */}
-          {allLocked && castCharacters.length > 0 && (
-            <div
-              className="mt-10 pt-8 flex items-center justify-between"
-              style={{ borderTop: "1px solid var(--brand-steel)" }}
-            >
-              <div>
-                <p className="text-sm text-green-400">All characters locked</p>
-                <p className="text-xs mt-1" style={{ color: "var(--brand-gray)" }}>
-                  Character identities are now canonical for all downstream generation.
-                </p>
-              </div>
-              <Link
-                href={`/projects/${id}/locations`}
-                className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors"
-                style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
-                onMouseEnter={(e) =>
-                  ((e.currentTarget as HTMLElement).style.background = "rgba(255,138,42,0.08)")
-                }
-                onMouseLeave={(e) =>
-                  ((e.currentTarget as HTMLElement).style.background = "transparent")
-                }
-              >
-                Continue to Location Scouting &rarr;
-              </Link>
-            </div>
-          )}
+          {/* Spacer so the sticky bar never overlaps the last card */}
+          {allLocked && castCharacters.length > 0 && <div className="h-24" />}
         </div>
       </div>
+
+      {/* Sticky completion bar — always visible at viewport bottom when all locked,
+          so the user doesn't have to scroll past tall reference sheets to find it. */}
+      {allLocked && castCharacters.length > 0 && (
+        <div
+          className="fixed bottom-0 left-0 right-0 z-40 backdrop-blur-md"
+          style={{
+            background: "rgba(11, 28, 45, 0.92)",
+            borderTop: "1px solid rgba(34,197,94,0.35)",
+            boxShadow: "0 -8px 24px rgba(0,0,0,0.35)",
+          }}
+        >
+          <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
+            <div>
+              <p className="text-sm text-green-400">All characters locked</p>
+              <p className="text-xs mt-0.5" style={{ color: "var(--brand-gray)" }}>
+                Character identities are now canonical for all downstream generation.
+              </p>
+            </div>
+            <Link
+              href={`/projects/${id}/locations`}
+              className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors flex-shrink-0"
+              style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+              onMouseEnter={(e) =>
+                ((e.currentTarget as HTMLElement).style.background = "rgba(255,138,42,0.08)")
+              }
+              onMouseLeave={(e) =>
+                ((e.currentTarget as HTMLElement).style.background = "transparent")
+              }
+            >
+              Continue to Location Scouting &rarr;
+            </Link>
+          </div>
+        </div>
+      )}
     </>
   );
 }

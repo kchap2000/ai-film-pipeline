@@ -158,6 +158,67 @@ export async function POST(
   }
 }
 
+// PUT /api/projects/:id/posesheet
+// Body JSON: { character_id: string, storage_path: string, image_url: string }
+// Registers a user-uploaded reference sheet (browser uploads directly to Storage,
+// then calls this endpoint with the public URL — same pattern as cast PUT).
+export async function PUT(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const { id } = params;
+    const body = (await req.json()) as {
+      character_id?: string;
+      storage_path?: string;
+      image_url?: string;
+    };
+    const { character_id: characterId, storage_path: storagePath, image_url: imageUrl } = body;
+
+    if (!characterId || !storagePath || !imageUrl) {
+      return NextResponse.json(
+        { error: "character_id, storage_path, and image_url are required" },
+        { status: 400 }
+      );
+    }
+
+    const { supabase, user } = await createRouteClient();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    // Verify character belongs to project
+    const { data: char, error: charErr } = await supabase
+      .from("characters")
+      .select("id")
+      .eq("id", characterId)
+      .eq("project_id", id)
+      .single();
+
+    if (charErr || !char) {
+      return NextResponse.json({ error: "Character not found" }, { status: 404 });
+    }
+
+    const { error: updateErr } = await supabase
+      .from("characters")
+      .update({ pose_sheet_url: imageUrl })
+      .eq("id", characterId);
+
+    if (updateErr) {
+      return NextResponse.json({ error: updateErr.message }, { status: 500 });
+    }
+
+    return NextResponse.json({
+      success: true,
+      character_id: characterId,
+      pose_sheet_url: imageUrl,
+      is_placeholder: false,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Pose sheet upload failed";
+    console.error("Posesheet PUT crash:", message);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
 // GET /api/projects/:id/posesheet?character_id=xxx
 // Returns the current pose_sheet_url for a character (for polling).
 export async function GET(
