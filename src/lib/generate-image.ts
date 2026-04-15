@@ -18,6 +18,51 @@ export interface GeneratedImage {
 }
 
 /**
+ * Normalize an image reference (data: URL or https:// URL) into the
+ * {mimeType, base64} shape Gemini's `inlineData` expects.
+ *
+ * The client-side headshot upload refactor stores reference images as
+ * Supabase Storage HTTPS URLs, but older rows / Gemini-generated variations
+ * are still base64 data URLs. This helper handles both paths.
+ *
+ * Returns null if the URL can't be resolved — callers should treat that as
+ * a hard error (NOT a content-policy block), so the route can surface the
+ * real failure instead of silently text-only-retrying and producing an
+ * identity-less image.
+ */
+export async function toInlineData(
+  imageUrl: string
+): Promise<{ mimeType: string; data: string } | null> {
+  if (!imageUrl) return null;
+
+  // Already a base64 data URL — parse directly
+  const dataMatch = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (dataMatch) {
+    return { mimeType: dataMatch[1], data: dataMatch[2] };
+  }
+
+  // HTTPS/HTTP URL — fetch and convert to base64
+  if (imageUrl.startsWith("https://") || imageUrl.startsWith("http://")) {
+    try {
+      const res = await fetch(imageUrl);
+      if (!res.ok) {
+        console.error(`toInlineData: fetch failed ${res.status} for ${imageUrl}`);
+        return null;
+      }
+      const mimeType = res.headers.get("content-type") || "image/jpeg";
+      const buf = await res.arrayBuffer();
+      const data = Buffer.from(buf).toString("base64");
+      return { mimeType, data };
+    } catch (err) {
+      console.error("toInlineData: fetch crashed", err);
+      return null;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Generate a single character casting image.
  */
 export async function generateCastingImage(
@@ -298,9 +343,8 @@ export async function generateStoryboardPanel(opts: {
 
   // If we have an approved scene scout reference image, use multimodal generation
   if (opts.sceneReferenceImageUrl) {
-    const match = opts.sceneReferenceImageUrl.match(/^data:([^;]+);base64,(.+)$/);
-    if (match) {
-      const [, mimeType, base64Data] = match;
+    const inline = await toInlineData(opts.sceneReferenceImageUrl);
+    if (inline) {
       const ai = new GoogleGenAI({ apiKey });
       try {
         const response = await ai.models.generateContent({
@@ -309,7 +353,7 @@ export async function generateStoryboardPanel(opts: {
             {
               role: "user",
               parts: [
-                { inlineData: { mimeType, data: base64Data } },
+                { inlineData: { mimeType: inline.mimeType, data: inline.data } },
                 { text: `Use the above image as an atmospheric reference for color palette, lighting mood, and visual style.\n\n${prompt}` },
               ],
             },
@@ -326,6 +370,10 @@ export async function generateStoryboardPanel(opts: {
       } catch {
         // Fall through to standard generation if multimodal fails
       }
+    } else {
+      console.error(
+        `generateStoryboardPanel: could not load scene reference ${opts.sceneReferenceImageUrl} — falling back to text-only`
+      );
     }
   }
 
@@ -372,14 +420,32 @@ function buildStoryboardPrompt(opts: {
 }
 
 /**
+ * Thrown when the reference headshot can't be loaded (bad URL, fetch 404,
+ * network crash). Distinct from content-policy blocks so the route layer can
+ * error loudly instead of silently text-only-retrying and producing an
+ * identity-less pose sheet.
+ */
+export class ReferenceImageUnreachableError extends Error {
+  constructor(url: string) {
+    super(`Could not load reference image: ${url}`);
+    this.name = "ReferenceImageUnreachableError";
+  }
+}
+
+/**
  * Generate a character pose sheet using an approved headshot as a visual reference.
  * Passes the reference image + the pose sheet prompt to Gemini multimodal.
+ *
+ * Accepts either a base64 data URL or an HTTPS Supabase Storage URL — see
+ * toInlineData() for the normalization. Throws ReferenceImageUnreachableError
+ * if the reference can't be resolved so the caller doesn't silently fall back
+ * to text-only (which produces a pose sheet of the wrong person).
  */
 export async function generatePoseSheet(
   characterName: string,
   description: string,
-  referenceImageDataUrl: string,   // the approved headshot as a data URL
-  customPrompt: string             // the user-defined pose sheet prompt
+  referenceImageUrl: string,   // data: URL or https:// URL
+  customPrompt: string         // the user-defined pose sheet prompt
 ): Promise<GeneratedImage> {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
 
@@ -393,13 +459,12 @@ export async function generatePoseSheet(
     return generatePlaceholder(characterName, fullPrompt, 99);
   }
 
-  // Extract base64 data and mime type from the data URL
-  const match = referenceImageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!match) {
-    console.error("generatePoseSheet: invalid reference image data URL");
-    return generatePlaceholder(characterName, fullPrompt, 99);
+  // Normalize the reference (handles both data: URLs and HTTPS Storage URLs)
+  const inline = await toInlineData(referenceImageUrl);
+  if (!inline) {
+    throw new ReferenceImageUnreachableError(referenceImageUrl);
   }
-  const [, mimeType, base64Data] = match;
+  const { mimeType, data: base64Data } = inline;
 
   const ai = new GoogleGenAI({ apiKey });
 

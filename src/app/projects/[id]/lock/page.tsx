@@ -61,6 +61,7 @@ export default function CharacterLockPage() {
   const [imageCache, setImageCache] = useState<Record<string, string>>({});
   const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+  const [bulkRegenProgress, setBulkRegenProgress] = useState<{ done: number; total: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadCharIdRef = useRef<string | null>(null);
 
@@ -231,6 +232,33 @@ export default function CharacterLockPage() {
     setLocking(null);
   };
 
+  /**
+   * Bulk regenerate pose sheets for every character that has an approved
+   * headshot. Used after the HTTPS/data-URL fix to replace identity-leaked
+   * sheets produced by the pre-fix text-only fallback path.
+   *
+   * Runs sequentially — each Gemini call takes ~30s and serial keeps us
+   * well under the function timeout per-request (the browser fires one
+   * POST per character, not one for the whole batch).
+   */
+  const regenerateAllPoseSheets = async () => {
+    const targets = characters.filter((c) => c.approved_variation_id);
+    if (targets.length === 0) return;
+    setBulkRegenProgress({ done: 0, total: targets.length });
+    for (let i = 0; i < targets.length; i++) {
+      const char = targets[i];
+      // Drop the cached placeholder image so the spinner shows during regen
+      setImageCache((prev) => {
+        const n = { ...prev };
+        delete n[`pose-${char.id}`];
+        return n;
+      });
+      await triggerPoseSheet(char.id);
+      setBulkRegenProgress({ done: i + 1, total: targets.length });
+    }
+    setBulkRegenProgress(null);
+  };
+
   if (loading) {
     return (
       <div
@@ -284,14 +312,31 @@ export default function CharacterLockPage() {
                   headshot &amp; reference sheet to lock
                 </p>
               </div>
-              {!allLocked && !noCast && (
-                <button
-                  onClick={lockAll}
-                  disabled={locking === "all"}
-                  className="text-xs uppercase tracking-widest text-green-400 border border-green-800/50 px-5 py-2.5 hover:bg-green-950/30 transition-colors disabled:opacity-40"
-                >
-                  {locking === "all" ? "Locking..." : "Lock All"}
-                </button>
+              {!noCast && (
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={regenerateAllPoseSheets}
+                    disabled={bulkRegenProgress !== null || generatingPoseSheet.size > 0}
+                    className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors disabled:opacity-40"
+                    style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,138,42,0.08)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                    title="Regenerate every pose sheet from scratch using the approved headshot as a multimodal identity anchor. Use this after fixing identity leaks or updating headshots."
+                  >
+                    {bulkRegenProgress
+                      ? `Regenerating ${bulkRegenProgress.done}/${bulkRegenProgress.total}...`
+                      : "Regenerate All Pose Sheets"}
+                  </button>
+                  {!allLocked && (
+                    <button
+                      onClick={lockAll}
+                      disabled={locking === "all"}
+                      className="text-xs uppercase tracking-widest text-green-400 border border-green-800/50 px-5 py-2.5 hover:bg-green-950/30 transition-colors disabled:opacity-40"
+                    >
+                      {locking === "all" ? "Locking..." : "Lock All"}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </header>

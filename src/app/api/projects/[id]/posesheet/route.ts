@@ -1,5 +1,9 @@
 import { createRouteClient } from "@/lib/supabase-route";
-import { generatePoseSheet, generateWithGemini } from "@/lib/generate-image";
+import {
+  generatePoseSheet,
+  generateWithGemini,
+  ReferenceImageUnreachableError,
+} from "@/lib/generate-image";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -108,12 +112,30 @@ export async function POST(
       description ? `Physical description for reference: ${description}.` : "",
     ].filter(Boolean).join("\n");
 
-    let result = await generatePoseSheet(
-      char.name,
-      description,
-      variation.image_url,
-      POSE_SHEET_PROMPT
-    );
+    let result;
+    try {
+      result = await generatePoseSheet(
+        char.name,
+        description,
+        variation.image_url,
+        POSE_SHEET_PROMPT
+      );
+    } catch (err) {
+      // Distinguish "reference unreachable" (a real failure we must surface)
+      // from Gemini errors (fall through to placeholder + text-only retry).
+      if (err instanceof ReferenceImageUnreachableError) {
+        console.error(`Pose sheet for ${char.name}: reference headshot unreachable`, err.message);
+        return NextResponse.json(
+          {
+            error:
+              "Could not load this character's approved headshot for multimodal reference. Check that the Supabase Storage bucket is public and the URL resolves.",
+            reference_url: variation.image_url,
+          },
+          { status: 502 }
+        );
+      }
+      throw err;
+    }
 
     let isPlaceholder = result.url.startsWith("data:image/svg+xml");
 

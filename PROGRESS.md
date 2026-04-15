@@ -610,6 +610,165 @@ After cleanup, DB should show:
 
 ---
 
+## 🔄 Next Up: Identity Reference Bug — Pose Sheets + Storyboard Panels (CRITICAL, discovered 2026-04-14)
+
+### Symptom
+Pose sheets in the Film Bible show a **completely different person** than the approved headshot. Khalil confirmed this visually after the E2E-14 fix was shipped.
+
+### Root cause
+The client-side headshot upload refactor (commit `2f6eced`) stores `cast_variations.image_url` as an **HTTPS Supabase Storage URL** (`https://onavhfhpdxwzdwotkddq.supabase.co/storage/v1/object/public/...`). But `generatePoseSheet()` and `buildStoryboardPrompt()` both have a regex that only accepts **base64 data URLs**:
+
+```typescript
+const match = referenceImageDataUrl.match(/^data:([^;]+);base64,(.+)$/);
+if (!match) {
+  console.error("generatePoseSheet: invalid reference image data URL");
+  return generatePlaceholder(...);   // returns SVG
+}
+```
+
+### What actually happens in production
+1. `POST /api/projects/:id/posesheet` passes `variation.image_url` (HTTPS) to `generatePoseSheet()`
+2. Regex fails → function returns SVG placeholder
+3. Route detects SVG → thinks Gemini content-policy-blocked the multimodal call → falls back to `generateWithGemini()` **text-only**
+4. Text-only path produces a realistic JPEG **without the headshot as reference**
+5. DB stores a real-looking pose sheet, `is_placeholder: false` — but the character identity isn't anchored to the headshot
+6. User sees "pose sheet of a different person" in Film Bible
+
+### Verification
+- Triggered `POST /api/projects/c0ee0350…/posesheet` for Donna (char `29d12ca3-…`) on 2026-04-14
+- Response: `success: true, is_placeholder: false` with a real JPEG
+- But identity is NOT locked to Donna's uploaded headshot — matches the visual symptom exactly
+
+### Fix (Claude Code end-to-end)
+
+**1. `src/lib/generate-image.ts` — add URL fetching helper:**
+```typescript
+async function toInlineData(
+  imageUrl: string
+): Promise<{ mimeType: string; data: string } | null> {
+  // Already a data URL — parse and return
+  const dataMatch = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (dataMatch) {
+    return { mimeType: dataMatch[1], data: dataMatch[2] };
+  }
+  // HTTPS URL — fetch and convert to base64
+  if (imageUrl.startsWith("https://") || imageUrl.startsWith("http://")) {
+    try {
+      const res = await fetch(imageUrl);
+      if (!res.ok) {
+        console.error(`toInlineData: fetch failed ${res.status} for ${imageUrl}`);
+        return null;
+      }
+      const mimeType = res.headers.get("content-type") || "image/jpeg";
+      const buf = await res.arrayBuffer();
+      const data = Buffer.from(buf).toString("base64");
+      return { mimeType, data };
+    } catch (err) {
+      console.error("toInlineData: fetch crashed", err);
+      return null;
+    }
+  }
+  return null;
+}
+```
+
+**2. Apply this in both places that currently use the regex:**
+- `generatePoseSheet()` at ~line 397
+- Storyboard panel prompt builder at ~line 300 (for `sceneReferenceImageUrl`)
+- Any other place that passes reference imagery to Gemini (character reference injection into storyboard panels — see below)
+
+**3. Route-level improvement — distinguish real content-policy blocks from "regex failed" errors:**
+The current fallback logic in `posesheet/route.ts` treats *any* SVG return as "Gemini blocked the content" and retries text-only. But if `toInlineData()` returns `null` (bad URL, fetch failed), the route should **error loudly** instead of silently falling back to an identity-less text-only generation. Return `{ error: "Could not load headshot for multimodal reference" }` with a 500 so the user sees the failure.
+
+**4. After fix lands, regenerate all existing pose sheets for WAYW Ep2:**
+Claude Code should add a one-shot migration or script:
+```sql
+UPDATE characters SET pose_sheet_url = NULL
+WHERE project_id = 'c0ee0350-b95d-4a45-8c8d-538e3e252395' AND locked = true;
+```
+Then user re-runs "Generate Pose Sheet" per character, or a bulk "Regenerate All" button on the Lock page triggers `POST /posesheet` for each locked character in sequence.
+
+---
+
+## 🎯 Strategic Vision / Product Roadmap Notes (added 2026-04-14)
+
+### Khalil's end-state vision
+> "Script goes in → all the casting is done → we make the choices or put in our own casting → it has already analyzed the script → then it goes through all the phases of pose sheets, scenes, making sure we have all the information we need → once everything is OK'd, then I say okay on all the things → and then you would generate the actual realistic first frames for all of the shots so the storyboard would be actually a realistic storyboard."
+
+### Current pipeline vs. target
+| Stage | Current Behavior | Target Behavior |
+|-------|------------------|-----------------|
+| Script ingest | ✅ Works (PDF/DOCX/TXT) | — |
+| Character/scene extraction | ✅ Works (Claude) | — |
+| Film Bible | ✅ Works, editable | Add scene scout images inline (E2E-15 still open) |
+| AI Casting | ✅ 10 variations OR upload real headshot | Consider: user-uploaded headshot as the canonical "cast choice"; AI variations become "suggestions" |
+| Character Lock (pose sheets) | ❌ Identity leak (see bug above) | Pose sheets must be 100% faithful to uploaded/approved headshot |
+| Location Scouting | ✅ 5 variations per location | — |
+| Scene Scouting | ✅ 3 atmospheric images per scene | — |
+| Storyboard | Generates cinematic "panel art" — stylized, not photorealistic | **Generate realistic first-frame images per shot** that serve as actual shoot-day reference |
+
+### Recommended changes to reach the realistic-first-frame goal
+
+**A. Add an "Approve All & Generate Frames" gate between Storyboard and Final Frames**
+Right now Storyboard is the final phase. Introduce a new Phase 9: **"First Frames"** (or rename Storyboard to "Shot Breakdown" and make First Frames the new 9).
+- Prerequisite: every character locked, every location approved, every scene scouted, every shot broken down
+- Single "Approve Pipeline & Generate First Frames" button
+- Each panel → photorealistic first frame using:
+  - Approved character headshots as **identity references** (multimodal)
+  - Approved location/scene scout image as **environment reference** (multimodal)
+  - Shot type/angle/camera movement as prompt constraints
+  - Production notes (E2E-13) as style directive
+
+**B. Enforce identity by passing *multiple* reference images into Gemini**
+The current storyboard prompt injects one scene reference image. For realistic first frames, Gemini should receive:
+- 1 scene scout image (environment/color grading anchor)
+- 1 image per character in the shot (identity anchor)
+- The shot prompt text last
+Gemini's `generateContent` accepts multiple `inlineData` parts — the order is meaningful (references before text).
+
+**C. Storyboard → First Frame aspect ratio + resolution**
+Storyboard panels are currently 1408x768 (wide). First frames for shoot reference probably want 16:9 at higher resolution (e.g., 1920x1080) and should use the production-finals model rather than the flash preview. When Gemini's higher-quality image model is available (or Imagen 4), swap it in for this phase only — keep Flash for fast iteration in earlier phases.
+
+**D. Per-shot approval + regenerate on the First Frame phase**
+Each first frame needs its own approve/regenerate cycle since identity drift is the #1 failure mode. Build in:
+- Approve (lock this frame)
+- Regenerate (try again with same prompt)
+- Edit prompt (tweak the shot description and regenerate)
+- Replace with upload (upload a real on-set reference)
+
+**E. Pipeline state machine / phase completion gate**
+Add a computed "pipeline_readiness" flag per project:
+```
+ready_for_first_frames =
+  all characters locked AND
+  all locations have approved_image_url AND
+  all scenes have approved_scout_image_url AND
+  all scenes have storyboard panels
+```
+Show a big disabled button "Generate First Frames (N/M ready)" that unlocks when ready.
+
+**F. Store prompts alongside every generated image**
+`storyboard_panels.prompt_used` already exists — extend this to cast/location/scene variations too so:
+- Regeneration uses the exact same prompt
+- Tweaks are traceable
+- A "show full prompt" UI lets the user debug identity leaks
+
+**G. Consider: "Casting Lock" vs. "Character Lock" semantics**
+Currently "lock" means "this is the approved headshot." In a real production you may want:
+- **Cast choice** (the actor/face) → headshot upload or AI pick
+- **Character look** (wardrobe/styling/hair) → which may change across scenes or episodes
+Separating these two concepts allows per-scene wardrobe variations while keeping identity constant.
+
+### Immediate action items (in priority order)
+1. **Fix the pose sheet HTTPS/data-URL bug above** — this is the blocker Khalil is hitting right now
+2. **Complete E2E-15** (scene scout images in Film Bible)
+3. **Regenerate pose sheets for WAYW Ep2** after the fix
+4. **Decide on Phase 9: First Frames** and scope it out — the current "storyboard panel" output isn't the final deliverable Khalil wants
+5. **Multimodal identity injection into storyboard/first-frame generation** — pass all in-shot character headshots as references, not just the scene scout
+6. **Pipeline readiness gate** — computed boolean + UI gating
+
+---
+
 ### Build Log — 2026-04-14 — E2E Bug Sweep ✅ COMPLETE
 
 Worked the E2E bug list autonomously. All twelve actionable issues (E2E-13 left as a future feature request) are fixed. Build is clean.
@@ -647,6 +806,145 @@ Worked the E2E bug list autonomously. All twelve actionable issues (E2E-13 left 
 - `supabase/schema.sql` — bucket public on creation + restated migration
 
 ### ✅ COMPLETE: 2026-04-14 — E2E Bug Sweep
+
+---
+
+### Build Log — 2026-04-15 — Identity-reference fix + E2E-15 + pose-sheet regen tool ✅ COMPLETE
+
+Closed out the immediate action items from the 2026-04-14 roadmap section above.
+
+**1. HTTPS / data-URL regression — fixed** (`src/lib/generate-image.ts`)
+- New exported helper `toInlineData(url)` accepts both base64 data URLs and HTTPS/HTTP URLs. For HTTPS it fetches, grabs `content-type`, and base64-encodes. Returns `null` on any failure so callers can distinguish "couldn't load" from "Gemini blocked it".
+- New `ReferenceImageUnreachableError` class so `generatePoseSheet` throws a typed error when the reference can't be resolved (instead of silently returning an SVG placeholder, which the posesheet route misread as a content-policy block → text-only retry → identity-less pose sheet).
+- `generatePoseSheet()` rewritten to use `toInlineData()`. Param renamed `referenceImageDataUrl` → `referenceImageUrl` to reflect that HTTPS is now accepted.
+- `generateStoryboardPanel()` multimodal branch also uses `toInlineData()` so approved scene-scout references survive the HTTPS migration.
+
+**2. Route-level loud failure** (`src/app/api/projects/[id]/posesheet/route.ts`)
+- POST now catches `ReferenceImageUnreachableError` and returns HTTP 502 with a descriptive error instead of falling through to text-only retry. This guarantees we never store a pose sheet produced without the headshot as an identity anchor.
+
+**3. E2E-15 — scene scout images in Film Bible ✅ COMPLETE**
+- `GET /api/projects/:id/bible` now returns a 6th parallel query for `scenes` filtered on `approved_scout_image_url IS NOT NULL`, selecting only `id`. That set is mapped into `has_approved_scout_image: boolean` per scene in the response. No base64 in the bulk payload — complies with the "no images in bulk GETs" rule.
+- `src/app/projects/[id]/bible/page.tsx`:
+  - New `SceneWithScout` type extending `Scene` with `has_approved_scout_image`.
+  - New `useEffect` loops scenes and lazy-loads each approved scout via the existing `GET /api/projects/:id/scenes/image?scene_id=xxx&type=approved` endpoint.
+  - `fetchBibleImage` helper extended to read `data.approved_scout_image_url` as a valid image key.
+  - Each scene card now renders a 192px-tall approved-scout thumbnail at the top of its body (with a loading placeholder while the image resolves).
+
+**4. "Regenerate All Pose Sheets" bulk action** (`src/app/projects/[id]/lock/page.tsx`)
+- Header now shows a second button next to "Lock All" (or solo if everyone is already locked). Sequentially drops the cached pose sheet + calls `triggerPoseSheet(char.id)` for every character with an approved headshot. Progress counter in the button label (`Regenerating 3/7...`). Used to clean up identity-leaked sheets produced before the fix above landed.
+- Khalil can run this once on WAYW Ep2 and the sheets will be regenerated against the correct HTTPS headshots via the fixed multimodal path — no manual SQL needed.
+
+**Files touched in this commit**
+- `src/lib/generate-image.ts`
+- `src/app/api/projects/[id]/posesheet/route.ts`
+- `src/app/api/projects/[id]/bible/route.ts`
+- `src/app/projects/[id]/bible/page.tsx`
+- `src/app/projects/[id]/lock/page.tsx`
+- `PROGRESS.md`
+
+Build clean: `npm run build` passes with no TypeScript errors.
+
+---
+
+## 🔄 Next Up: Phase 9 — First Frames (scoped 2026-04-15)
+
+### Why this phase exists
+Khalil's stated end state (PROGRESS.md lines 695-697) is **photorealistic first-frame images per shot** that serve as shoot-day reference — not the stylized "storyboard panel" art the current Storyboard phase produces. That requirement is structurally different enough from Storyboard that it warrants its own phase with its own gating, UI, and generation path. This spec converts the "A/B/C/D/E/F/G" brainstorm at lines 710-761 into a concrete buildable plan.
+
+### Phase model
+Keep current phase 8 (**Storyboard**) as-is — it stays the "shot breakdown" phase: Claude splits each scene into shots, Gemini Flash renders a stylized panel for each shot so Khalil can verify the breakdown is structurally correct. Add a new phase 9 (**First Frames**) gated behind storyboard completion.
+
+### Schema changes
+```sql
+-- New phase token in the enum
+alter type phase_status_enum add value if not exists 'first_frames';
+-- Actually: Postgres doesn't allow if-not-exists on enum values pre-14. Use:
+-- do $$ begin
+--   alter type phase_status_enum add value 'first_frames';
+-- exception when duplicate_object then null; end $$;
+
+-- First frame per storyboard panel. Separate table so panels stay cheap to
+-- query and we can regenerate frames without touching the panel record.
+create table if not exists first_frames (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  panel_id uuid not null references storyboard_panels(id) on delete cascade,
+  image_url text not null,                -- data URL or HTTPS Storage URL
+  prompt_used text not null,
+  model_used text not null default 'gemini-3.1-flash-image-preview',
+  aspect_ratio text not null default '16:9',
+  status text not null default 'pending', -- pending, approved, replaced
+  parent_frame_id uuid references first_frames(id) on delete set null, -- regen lineage
+  created_at timestamp with time zone default now()
+);
+create index if not exists idx_first_frames_project on first_frames(project_id);
+create index if not exists idx_first_frames_panel on first_frames(panel_id);
+
+-- On the panel side, store which first_frame is the chosen one
+alter table storyboard_panels add column if not exists approved_first_frame_id uuid references first_frames(id) on delete set null;
+```
+
+### API routes (new)
+- `POST /api/projects/:id/first-frames` — bulk generate frames for all panels (or one panel when `{ panel_id }` body). 300s maxDuration. Iterates panels sequentially; per panel assembles multimodal input of [scene-scout ref, one headshot per character-in-shot, prompt text] and calls Gemini. Returns summary `{ framesGenerated, errors[] }`.
+- `POST /api/projects/:id/first-frames/regenerate` — `{ panel_id }` → generate a new frame row with `parent_frame_id` set to the previous approved one.
+- `PATCH /api/projects/:id/first-frames` — `{ frame_id, status: "approved" }` flips the row and stamps `storyboard_panels.approved_first_frame_id`.
+- `GET /api/projects/:id/first-frames` — bulk list, NO base64 (select `id, panel_id, status, created_at` only). Image bytes via dedicated `/image` endpoint.
+- `GET /api/projects/:id/first-frames/image?frame_id=xxx` — lazy load, returns `{ image_url }`.
+
+### Generation logic (`src/lib/generate-image.ts`)
+New `generateFirstFrame(opts)` function that accepts up to N reference images and produces a photorealistic frame:
+```typescript
+export async function generateFirstFrame(opts: {
+  panelNumber: number;
+  actionDescription: string;
+  shotType: string;
+  cameraAngle: string;
+  cameraMovement: string;
+  characterReferences: { name: string; imageUrl: string }[]; // HTTPS or data URL
+  sceneReferenceImageUrl?: string | null;                    // approved scout
+  locationName: string;
+  timeOfDay: string;
+  mood: string;
+  productionNotes?: string;
+  aspectRatio?: '16:9' | '2.39:1';
+}): Promise<GeneratedImage>
+```
+Implementation notes:
+- Use `toInlineData()` (shipped today) for every reference — no more regex gating.
+- Parts order matters: scene ref first (environment anchor), then each character ref (identity anchors, labeled with a text preamble `Reference for {name}:`), then the shot prompt text last. Gemini weights earlier parts more heavily.
+- Prompt text should explicitly instruct "photorealistic first-frame image, not a stylized storyboard panel".
+- If any character ref fails to load, error loudly (same pattern as `ReferenceImageUnreachableError`) — do NOT silently drop references; identity leak is the #1 failure mode.
+- Use Gemini's higher-quality image model when available; leave `model_used` stored on the row so we can A/B later.
+
+### Pipeline readiness gate
+Before exposing the "Generate First Frames" button, compute:
+```typescript
+ready_for_first_frames =
+  every cast character is locked AND
+  every location has approved_image_url AND
+  every scene has approved_scout_image_url AND
+  every scene has at least one storyboard_panel
+```
+Query the above with counts in a single derived endpoint (`GET /api/projects/:id/readiness`) so the storyboard page can show `Generate First Frames (N/M ready)` with a tooltip listing what's missing.
+
+### UI — new `/projects/[id]/first-frames` page
+- Mirrors the storyboard page layout but each row shows: the shot breakdown metadata + the generated first frame thumbnail (lazy-loaded).
+- Per-frame actions: Approve · Regenerate · Edit Prompt (opens a textarea, then regen with edited prompt) · Replace with Upload (direct Storage + PUT, same pattern as headshot/pose-sheet upload).
+- Cancel button + sequential generation loop with `fetchData()` between frames (same pattern as storyboard Generate All, carrying over the E2E-6 retry + gap-detection logic).
+- Completion view: "Pipeline Complete — First Frames Ready" hero + per-scene grid linking to each frame + Export PDF CTA.
+
+### Phase transition
+- `POST /api/projects/:id/storyboard` already sets `phase_status = "storyboard"`.
+- Add `POST /api/projects/:id/first-frames` (bulk) to set `phase_status = "first_frames"` on success.
+- Dashboard/ProjectNav/PhaseIndicator need the `first_frames` token added to `PHASE_ORDER` and `PHASE_LABELS` in `src/lib/types.ts`.
+
+### What's deferred
+- **"Casting Lock vs Character Look" split** (PROGRESS.md G) — not blocking Phase 9; can ship later as a per-scene wardrobe override.
+- **Higher-res model swap** — depends on Gemini/Imagen availability; the `model_used` column makes this a no-migration change later.
+- **Per-frame print layout tuning** — deliver baseline PDF export first, iterate on layout after Khalil uses it on WAYW Ep2.
+
+### Immediate next step when Phase 9 kicks off
+Start with the schema + types + readiness endpoint. Once readiness is computable, the UI gating is trivial and the generation route can be built and tested end-to-end on a single scene before batching.
 
 ---
 

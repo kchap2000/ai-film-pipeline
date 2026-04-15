@@ -1,6 +1,8 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { NextRequest, NextResponse } from "next/server";
 
+export const dynamic = "force-dynamic";
+
 // GET /api/projects/:id/bible — get all extraction data for the Film Bible
 export async function GET(
   _req: NextRequest,
@@ -10,7 +12,7 @@ export async function GET(
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const [projectRes, charsRes, scenesRes, extractionRes, castsRes] = await Promise.all([
+  const [projectRes, charsRes, scenesRes, extractionRes, castsRes, sceneScoutRes] = await Promise.all([
     supabase.from("projects").select("*").eq("id", id).single(),
     supabase
       .from("characters")
@@ -35,6 +37,14 @@ export async function GET(
       .select("id, character_id, variation_number, status")
       .eq("project_id", id)
       .eq("status", "approved"),
+    // Scenes that already have an approved scout image — return only IDs so
+    // the bulk payload stays small. UI lazy-loads the actual image via
+    // GET /api/projects/:id/scenes/image?scene_id=xxx&type=approved
+    supabase
+      .from("scenes")
+      .select("id")
+      .eq("project_id", id)
+      .not("approved_scout_image_url", "is", null),
   ]);
 
   if (projectRes.error) {
@@ -55,10 +65,16 @@ export async function GET(
     approved_variation_id: approvedVarByCharId[char.id] || null,
   }));
 
+  const sceneIdsWithScout = new Set((sceneScoutRes.data || []).map((s) => s.id));
+  const scenes = (scenesRes.data || []).map((scene) => ({
+    ...scene,
+    has_approved_scout_image: sceneIdsWithScout.has(scene.id),
+  }));
+
   return NextResponse.json({
     project: projectRes.data,
     characters,
-    scenes: scenesRes.data || [],
+    scenes,
     extraction: extractionRes.data || null,
   });
 }

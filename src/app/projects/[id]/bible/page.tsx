@@ -25,6 +25,10 @@ interface CharacterWithHeadshot extends Character {
   approved_variation_id?: string | null;
 }
 
+interface SceneWithScout extends Scene {
+  has_approved_scout_image?: boolean;
+}
+
 const ROLE_ORDER = ["lead", "supporting", "minor", "extra", "mentioned"];
 const FEATURED_ROLES = ["lead", "supporting"];
 
@@ -75,7 +79,7 @@ export default function FilmBible() {
   const router = useRouter();
   const [project, setProject] = useState<Project | null>(null);
   const [characters, setCharacters] = useState<CharacterWithHeadshot[]>([]);
-  const [scenes, setScenes] = useState<Scene[]>([]);
+  const [scenes, setScenes] = useState<SceneWithScout[]>([]);
   const [extraction, setExtraction] = useState<ExtractionData | null>(null);
   const [loading, setLoading] = useState(true);
   const [approving, setApproving] = useState(false);
@@ -229,7 +233,7 @@ export default function FilmBible() {
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
-        const imgUrl = data.image_url || data.pose_sheet_url;
+        const imgUrl = data.image_url || data.pose_sheet_url || data.approved_scout_image_url;
         if (imgUrl) {
           setImageCache((prev) => ({ ...prev, [key]: imgUrl }));
         }
@@ -247,6 +251,19 @@ export default function FilmBible() {
       }
     }
   }, [characters, id, fetchBibleImage]);
+
+  // E2E-15: lazy-load approved scene-scout thumbnails once the bible responds
+  // with `has_approved_scout_image: true` for that scene.
+  useEffect(() => {
+    for (const s of scenes) {
+      if (s.has_approved_scout_image) {
+        fetchBibleImage(
+          `scout-${s.id}`,
+          `/api/projects/${id}/scenes/image?scene_id=${s.id}&type=approved`
+        );
+      }
+    }
+  }, [scenes, id, fetchBibleImage]);
 
   if (loading) {
     return (
@@ -805,6 +822,27 @@ export default function FilmBible() {
 
                     {/* Scene body */}
                     <div className="px-5 py-4">
+                      {/* E2E-15: approved scene scout thumbnail, lazy-loaded */}
+                      {scene.has_approved_scout_image && (
+                        <div className="mb-4">
+                          {imageCache[`scout-${scene.id}`] ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={imageCache[`scout-${scene.id}`]}
+                              alt={`Scene ${scene.scene_number} scout reference`}
+                              className="rounded-md max-h-48 w-auto"
+                              style={{ border: "1px solid var(--brand-steel)" }}
+                            />
+                          ) : (
+                            <div
+                              className="rounded-md w-64 h-36 flex items-center justify-center text-[10px] uppercase tracking-widest animate-pulse"
+                              style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)", color: "var(--brand-gray)" }}
+                            >
+                              Loading scout…
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {scene.action_summary && editingSceneId !== scene.id && (
                         <p className="text-xs leading-relaxed mb-4" style={{ color: "var(--brand-gray)" }}>
                           {scene.action_summary}
