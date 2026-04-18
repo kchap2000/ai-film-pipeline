@@ -5,7 +5,7 @@ import { PhaseStatus, PHASE_ORDER } from "@/lib/types";
 export default function PhaseIndicator({ status }: { status: PhaseStatus }) {
   const currentIndex = PHASE_ORDER.indexOf(status);
   const pct = Math.round(((currentIndex + 1) / PHASE_ORDER.length) * 100);
-  const isComplete = status === "storyboard";
+  const isComplete = status === "first_frames";
 
   return (
     <div className="w-full">

@@ -635,6 +635,12 @@ export default function StoryboardPage() {
             >
               Back to Project Overview
             </Link>
+            <Link
+              href={`/projects/${id}/first-frames`}
+              className="text-xs uppercase tracking-widest px-6 py-3 transition-colors text-green-400 border border-green-800/50 hover:bg-green-950/30"
+            >
+              Continue to First Frames &rarr;
+            </Link>
             <button
               onClick={() => window.print()}
               className="text-xs uppercase tracking-widest px-6 py-3 transition-colors"

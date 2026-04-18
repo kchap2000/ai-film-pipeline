@@ -433,6 +433,117 @@ export class ReferenceImageUnreachableError extends Error {
 }
 
 /**
+ * Generate a photorealistic "first frame" for a storyboard panel (Phase 9).
+ *
+ * Unlike generateStoryboardPanel() which produces a stylized illustration,
+ * this produces a shoot-day-quality photorealistic frame. Identity is locked
+ * via multimodal references:
+ *   - scene scout image first (environment/lighting/color anchor)
+ *   - one headshot per character in the shot (identity anchor)
+ *   - prompt text last
+ * Parts order matters — Gemini weights earlier parts more heavily.
+ *
+ * Throws ReferenceImageUnreachableError if ANY provided reference fails to
+ * resolve. Silent dropping of a character reference is the #1 identity-leak
+ * failure mode, so we refuse to proceed in that case.
+ */
+export async function generateFirstFrame(opts: {
+  panelNumber: number;
+  actionDescription: string;
+  shotType: string;
+  cameraAngle: string;
+  cameraMovement: string;
+  characterReferences: { name: string; imageUrl: string }[];
+  sceneReferenceImageUrl?: string | null;
+  locationName: string;
+  timeOfDay: string;
+  mood: string;
+  productionNotes?: string;
+  aspectRatio?: "16:9" | "2.39:1";
+}): Promise<GeneratedImage> {
+  const apiKey = process.env.GOOGLE_AI_API_KEY;
+  const aspect = opts.aspectRatio || "16:9";
+
+  const charDetails = opts.characterReferences
+    .map((c) => c.name)
+    .join(", ");
+
+  const prompt = [
+    productionDirectivePrefix(opts.productionNotes),
+    `Generate a PHOTOREALISTIC FIRST FRAME for a film shoot — not a storyboard illustration, not a concept sketch.`,
+    `This image will be used as shoot-day visual reference: composition, lighting, blocking, and costume must match production standards.`,
+    `Shot type: ${opts.shotType || "medium shot"}.`,
+    `Camera angle: ${opts.cameraAngle || "eye-level"}.`,
+    opts.cameraMovement ? `Camera movement implied: ${opts.cameraMovement}.` : "",
+    `Action: ${opts.actionDescription}.`,
+    charDetails
+      ? `Characters in shot (identities locked from attached reference images above): ${charDetails}.`
+      : "",
+    `Location: ${opts.locationName}.`,
+    opts.timeOfDay ? `Time of day: ${opts.timeOfDay}.` : "",
+    opts.mood ? `Mood/atmosphere: ${opts.mood}.` : "",
+    `Aspect ratio: ${aspect}.`,
+    `Style: photorealistic cinematic frame, natural film grain, shallow depth of field where appropriate, production-quality color grading, NOT illustrated or animated.`,
+    `Panel ${opts.panelNumber} of the sequence.`,
+  ].filter(Boolean).join(" ");
+
+  if (!apiKey || apiKey === "your-key-here") {
+    return generatePlaceholder(`Panel ${opts.panelNumber}`, prompt, opts.panelNumber);
+  }
+
+  // Assemble multimodal parts: scene ref first, then each character ref, then the prompt text.
+  const parts: Array<{ inlineData?: { mimeType: string; data: string }; text?: string }> = [];
+
+  if (opts.sceneReferenceImageUrl) {
+    const sceneInline = await toInlineData(opts.sceneReferenceImageUrl);
+    if (!sceneInline) {
+      throw new ReferenceImageUnreachableError(opts.sceneReferenceImageUrl);
+    }
+    parts.push({ text: `Environment / lighting / color reference (use as visual anchor):` });
+    parts.push({ inlineData: sceneInline });
+  }
+
+  for (const ref of opts.characterReferences) {
+    const inline = await toInlineData(ref.imageUrl);
+    if (!inline) {
+      throw new ReferenceImageUnreachableError(ref.imageUrl);
+    }
+    parts.push({ text: `Identity reference for ${ref.name} (match face, hair, build exactly):` });
+    parts.push({ inlineData: inline });
+  }
+
+  parts.push({ text: prompt });
+
+  const ai = new GoogleGenAI({ apiKey });
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-flash-image-preview",
+      contents: [{ role: "user", parts }],
+      config: { responseModalities: [Modality.IMAGE, Modality.TEXT] },
+    });
+    const respParts = response.candidates?.[0]?.content?.parts || [];
+    for (const part of respParts) {
+      if (part.inlineData?.data) {
+        const outMime = part.inlineData.mimeType || "image/png";
+        return { url: `data:${outMime};base64,${part.inlineData.data}`, prompt };
+      }
+    }
+    console.error(`First frame panel ${opts.panelNumber}: Gemini returned no image, falling back to placeholder`);
+    return generatePlaceholder(`Panel ${opts.panelNumber}`, prompt, opts.panelNumber);
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.error(`First frame panel ${opts.panelNumber} failed:`, errMsg);
+    if (errMsg.includes("429") || errMsg.includes("quota")) {
+      throw new Error("Gemini API quota exceeded. Please check your Google AI billing.");
+    }
+    if (errMsg.includes("403") || errMsg.includes("401")) {
+      throw new Error("Gemini API authentication failed. Check your GOOGLE_AI_API_KEY.");
+    }
+    return generatePlaceholder(`Panel ${opts.panelNumber}`, prompt, opts.panelNumber);
+  }
+}
+
+/**
  * Generate a character pose sheet using an approved headshot as a visual reference.
  * Passes the reference image + the pose sheet prompt to Gemini multimodal.
  *

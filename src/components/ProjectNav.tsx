@@ -20,6 +20,7 @@ const NAV_STEPS: Array<
   // Scene Scouting: custom step, unlocks after index 4 (lock phase)
   { type: "custom", key: "scenes", label: "Scene Scout", path: "scenes", unlockedAfter: 4 },
   { type: "phase", phase: "storyboard",  label: "Storyboard",      path: "storyboard",  unlocksAt: 5 }, // unlocks after scene_bible
+  { type: "phase", phase: "first_frames", label: "First Frames",   path: "first-frames", unlocksAt: 6 }, // unlocks after storyboard
 ];
 
 interface ProjectNavProps {

@@ -846,7 +846,116 @@ Build clean: `npm run build` passes with no TypeScript errors.
 
 ---
 
-## 🔄 Next Up: Phase 9 — First Frames (scoped 2026-04-15)
+### Verification run — 2026-04-16 — Pose sheet fix confirmed in production ✅
+
+Live POST calls against `https://ai-film-pipeline-git-main-khalil-chapmans-projects.vercel.app/api/projects/c0ee0350-b95d-4a45-8c8d-538e3e252395/posesheet` for all three locked WAYW Ep2 characters:
+
+| Character | HTTP | is_placeholder | Output | Wall time |
+|---|---|---|---|---|
+| Donna | 200 | false | 840 KB JPEG (C2PA-signed) | 21.7s |
+| Jeff  | 200 | false | 823 KB JPEG | 24.3s |
+| Rob   | 200 | false | 857 KB JPEG | 20.0s |
+
+No `ReferenceImageUnreachableError`, no SVG fallback, no text-only retry. Postgres logs clean (only my own probing query errors from `information_schema` exploration). The HTTPS headshot URLs on `cast_variations.image_url` were fetched by `toInlineData()`, base64-encoded, and passed to Gemini as multimodal reference input — exactly the path the fix was designed for. Visual identity match to be confirmed by Khalil via `/projects/c0ee0350-b95d-4a45-8c8d-538e3e252395/bible`.
+
+WAYW Ep2 state after verification:
+- Characters: 3 visible locked (Donna, Jeff, Rob) + 2 voice-only. 3/3 real pose sheets, 0 SVG placeholders.
+- Locations: 3 correct Ep2 locations linked to scenes via `location_id` FK. 0 approved images → phase 6 needs regen.
+- Scenes: 4 scenes (re-extraction split the fantasy sequence into kitchen/pool + kitchen). 0 approved scout images → phase 7 needs regen.
+- Storyboard panels: 0 → phase 8 needs regen once phases 6 and 7 are approved.
+
+---
+
+## 🔄 Next Up: Backport multimodal identity refs into Storyboard (Phase 7)
+
+Phase 9 now multimodal-references the scene scout + every in-shot character headshot, so first-frame identity is locked. Phase 7 (Storyboard panels) still only references the scene scout — character identity is prompt-text-only, which is why panel art sometimes drifts from the cast.
+
+**Scope**
+- In `src/app/api/projects/[id]/storyboard/route.ts`, mirror the character-headshot lookup pattern used in `first-frames/route.ts` (already built): fetch approved headshot URL per name, assemble `characterReferences: {name, imageUrl}[]`.
+- Extend `generateStoryboardPanel()` in `src/lib/generate-image.ts` to accept `characterReferences` (same shape as `generateFirstFrame()`). Merge into the multimodal parts array: scene scout first → per-character identity refs → prompt text. Use `toInlineData()` — already shipped.
+- On `ReferenceImageUnreachableError`, fall back to text-only + log (don't error-out the whole batch like first-frames does — storyboard panels are faster-to-regen and already have a retry loop).
+
+**Files**
+- `src/lib/generate-image.ts` — `generateStoryboardPanel()` sig + impl
+- `src/app/api/projects/[id]/storyboard/route.ts` — fetch cast headshots, pass to generator
+- `PROGRESS.md` — build log + mark complete
+
+This closes roadmap action-item #5 ("Multimodal identity injection into storyboard / first-frame generation").
+
+---
+
+## ✅ COMPLETE: Phase 9 — First Frames (2026-04-15)
+
+Built the entire Phase 9 pipeline end-to-end. Commit below.
+
+**Schema** (`supabase/schema.sql`)
+- New enum value `first_frames` on `phase_status` (idempotent via exception handler so re-running the schema is safe).
+- New `first_frames` table: `id`, `project_id`, `panel_id`, `image_url`, `prompt_used`, `model_used`, `aspect_ratio`, `status` (pending/approved/replaced), `parent_frame_id` (for regen lineage).
+- Added `approved_first_frame_id` FK on `storyboard_panels`.
+
+**Types** (`src/lib/types.ts`)
+- `PhaseStatus`, `PHASE_ORDER`, `PHASE_LABELS` all extended with `first_frames`.
+
+**Generation** (`src/lib/generate-image.ts`)
+- New `generateFirstFrame()` function builds a parts array in this exact order: scene scout reference → one identity-reference block per character (text label + inline image) → prompt text last. Gemini weights earlier parts more heavily so identity is locked by construction.
+- Uses `toInlineData()` for every ref (shipped yesterday). Throws `ReferenceImageUnreachableError` if ANY reference fails to resolve — silent dropping is the #1 identity-leak failure mode, so the loop refuses to proceed.
+- Prompt explicitly instructs "photorealistic first frame, NOT a storyboard illustration" to distinguish from the Phase 7 panel output.
+
+**Readiness endpoint** (`src/app/api/projects/[id]/readiness/route.ts`)
+- `GET /api/projects/:id/readiness` returns `{ ready_for_first_frames: boolean, total_panels, checks }` where `checks` is the 4-tuple: characters locked (excluding voice-only), locations approved, scenes scouted, scenes with panels. UI uses this to gate + label the Generate button.
+
+**First Frames API** (`src/app/api/projects/[id]/first-frames/route.ts`)
+- `GET` — metadata-only (no base64 in bulk), frames grouped by panel.
+- `POST` — generate. `{ panel_id }` for single; no body = bulk for every panel without an approved frame. Sequential; 300s maxDuration. Per panel: fetches scene + approved scout + per-character approved headshot URLs, assembles `characterReferences`, calls `generateFirstFrame()`, inserts the result. On bulk success, advances `phase_status` to `first_frames`.
+- `PATCH` — `{ frame_id, status: "approved" }` → flips prior approved to `replaced`, marks this row `approved`, stamps `storyboard_panels.approved_first_frame_id`.
+- `PUT` — user-uploaded replacement. Same direct-Storage pattern as cast/posesheet uploads.
+- `src/app/api/projects/[id]/first-frames/image/route.ts` — lazy-load image bytes by `frame_id`.
+
+**UI page** (`src/app/projects/[id]/first-frames/page.tsx`)
+- Readiness banner when not ready, listing the 4 checks with done/total counts.
+- Grid of panels (2-up on md+). Each card: aspect-video thumbnail, Panel NN + approved badge, action description + shot metadata, action buttons (Approve · Regenerate · Upload Replace). Lazy-loads approved/latest frame via the `/image` endpoint.
+- Generate-all button with inline progress counter + Cancel.
+- Sequential bulk gen with `fetchAll()` between panels so thumbnails appear live.
+- Completion celebration when every panel has an approved frame.
+
+**Nav + indicator wiring**
+- `ProjectNav`: appended First Frames as phase 8 (unlocks after storyboard).
+- `PhaseIndicator`: "complete" gradient now fires on `first_frames`, not `storyboard`.
+- Project overview page: added First Frames tile + extended the "Next Up" logic.
+- Storyboard completion view: added "Continue to First Frames" CTA next to Print / Export PDF.
+
+Build clean: `npm run build` passes with no TypeScript errors.
+
+**Schema migration note for Khalil**
+Run this block once in Supabase SQL Editor to apply the Phase 9 migration to the existing database (or just re-run the full schema.sql — it's idempotent):
+```sql
+do $$ begin
+  alter type phase_status add value 'first_frames';
+exception when duplicate_object then null; end $$;
+
+create table if not exists first_frames (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  panel_id uuid not null references storyboard_panels(id) on delete cascade,
+  image_url text not null,
+  prompt_used text not null,
+  model_used text not null default 'gemini-3.1-flash-image-preview',
+  aspect_ratio text not null default '16:9',
+  status text not null default 'pending',
+  parent_frame_id uuid references first_frames(id) on delete set null,
+  created_at timestamp with time zone default now()
+);
+create index if not exists idx_first_frames_project on first_frames(project_id);
+create index if not exists idx_first_frames_panel on first_frames(panel_id);
+create index if not exists idx_first_frames_status on first_frames(status);
+alter table storyboard_panels
+  add column if not exists approved_first_frame_id uuid
+  references first_frames(id) on delete set null;
+```
+
+---
+
+## Scoping Reference: Phase 9 — First Frames (scoped 2026-04-15, shipped same day)
 
 ### Why this phase exists
 Khalil's stated end state (PROGRESS.md lines 695-697) is **photorealistic first-frame images per shot** that serve as shoot-day reference — not the stylized "storyboard panel" art the current Storyboard phase produces. That requirement is structurally different enough from Storyboard that it warrants its own phase with its own gating, UI, and generation path. This spec converts the "A/B/C/D/E/F/G" brainstorm at lines 710-761 into a concrete buildable plan.
@@ -975,4 +1084,492 @@ Closed out the last E2E list item. Directors can now set per-project production 
 
 Build clean: `npm run build` passes with no TypeScript errors.
 
+---
+
+## 🔧 NEW BUGS — discovered 2026-04-18 during WAYW Ep2 review
+
+### BUG-16: Location Descriptions Are Empty / Synthetic — No Script Detail (MEDIUM-HIGH)
+
+**Phase:** Extraction → Location Scouting
+**Symptom:** Location scouting images are generic because the `locations.description` field contains only `"Location Name — time_of_day"` (e.g., "Khalil's Apartment — night"). No physical details from the script.
+
+**Root cause:** In `src/app/api/extract/route.ts` (lines ~175-182), location descriptions are algorithmically constructed:
+```
+description: `${firstCased[key] || key} — ${locationMeta[key].time_of_day}`
+```
+The extraction prompt in `src/lib/extract.ts` asks Claude to extract location names but does NOT ask for physical descriptions of the space. Script prose like "cramped studio with exposed brick" or "modern kitchen with marble countertops" is never captured.
+
+**Fix (Claude Code end-to-end):**
+1. Update the extraction prompt in `src/lib/extract.ts` to ask Claude to include a `location_description` field for each unique location — a 1-2 sentence physical description derived from the script's scene headings and action lines.
+2. Update `src/app/api/extract/route.ts` to store the LLM-extracted description in `locations.description` instead of the synthetic `"Name — time"` string.
+3. Pass `locations.description` into the location scouting image generation prompt (verify `buildLocationPrompt` in `generate-image.ts` already uses it — if so, richer descriptions will automatically produce better images).
+4. For existing projects (Life of the Lazy Mon, WAYW Ep2): offer a one-time re-extraction or allow manual editing of location descriptions in the UI.
+
+---
+
+### BUG-17: Storyboard Panels Don't Use Character Headshots as Visual Reference (HIGH)
+
+**Phase:** Storyboard (Phase 8)
+**Symptom:** Storyboard panel images show generic/inconsistent character faces because Gemini only receives text descriptions of characters, not their approved headshot images. Each panel is Gemini's fresh interpretation of "Donna, mid-40s, wearing sweatpants" rather than a likeness-anchored render.
+
+**Root cause:** In `src/app/api/projects/[id]/storyboard/route.ts`, the code queries `cast_variations` and maps them to characters (lines ~37-46) but only for UI display — the `approved_variation_id` is returned so the frontend can lazy-load headshots in the cast reference strip. The headshot images are **never fetched or passed** to `generateStoryboardPanel()` in `src/lib/generate-image.ts`.
+
+`generateStoryboardPanel()` accepts an optional `sceneReferenceImageUrl` (the approved scene scout) as a single multimodal reference, but has no parameter for character reference images.
+
+**Fix (Claude Code end-to-end):**
+1. **`src/lib/generate-image.ts` — `generateStoryboardPanel()`:**
+   - Add a new parameter: `characterReferences?: Array<{ name: string; imageUrl: string }>`.
+   - For each character reference, use `toInlineData()` (already built for the pose sheet fix) to fetch the headshot and include it as an `inlineData` part in the Gemini request.
+   - Prepend each character image part with a text part: `"Reference image for character {name} — maintain exact likeness in the panel:"`.
+   - Order: character reference images first, then scene scout reference (if any), then the text prompt. This follows Gemini's multimodal best practice of references-before-prompt.
+
+2. **`src/app/api/projects/[id]/storyboard/route.ts`:**
+   - Already queries `cast_variations` for approved headshots. Currently only maps to `approved_variation_id`.
+   - After the existing query, build a `characterReferences` array: for each character present in the current shot, look up `characters.approved_cast_id` → `cast_variations.image_url`.
+   - Pass `characterReferences` into `generateStoryboardPanel()`.
+   - Skip `voice_only` characters (they have no headshot and shouldn't appear in panels).
+
+3. **Prompt update in `generateStoryboardPanel()`:**
+   - When character references are provided, add to the text prompt: `"CRITICAL: The characters in this shot must match the reference images provided above. Maintain exact facial likeness, hairstyle, and proportions for each character."`
+
+4. **Performance consideration:**
+   - Each headshot is ~100-400KB as base64. A panel with 2-3 characters + a scene scout = ~1-2MB of reference images per Gemini call. This is within Gemini's multimodal limits but will increase latency by ~2-5s per panel.
+   - The `toInlineData()` calls should be parallelized with `Promise.all()` before the Gemini call to avoid serial fetch overhead.
+
+**Impact:** This fix will dramatically improve character consistency across storyboard panels — the same improvement we got from fixing pose sheets. It also directly feeds Phase 9 First Frames, which will use the same multi-reference pattern but at higher fidelity.
+
+---
+
+### Priority order for Claude Code:
+1. **BUG-17** (storyboard character headshots) — HIGH, directly visible quality improvement
+2. **BUG-16** (location descriptions from script) — MEDIUM-HIGH, improves location scouting quality
+3. **Phase 9 First Frames** — next major feature, gated behind phases 6-8 completion
+
+---
+
+## 🔄 NEXT UP: "Project Brain" — Single Source of Truth Architecture (scoped 2026-04-18)
+
+### What this is and why it matters
+
+Every project needs a **single source of truth** — a "brain" — where all canonical assets live, and every downstream generated image traces back to those sources. Right now each phase generates independently. If you change a character's headshot, nothing downstream knows. Pose sheets still show the old face, storyboard panels still show the old face, first frames (when built) would still show the old face. The pipeline produces artifacts that silently become inconsistent.
+
+The Project Brain fixes this by introducing **provenance tracking** (every generated asset records what it was built from), **staleness detection** (when a source changes, all derived assets are flagged), and **cascade regeneration** (one button to re-derive everything that's out of date, in the correct order).
+
+This is NOT a separate feature bolted on top — it restructures how every generation call works. BUG-16, BUG-17, and Phase 9 First Frames are all subsumed into this plan. Claude Code should read this entire section, analyze the existing codebase for gaps, and build everything end-to-end.
+
+---
+
+### PART 1: The Dependency Graph
+
+Every generated asset in the pipeline is derived from one or more source assets. Here is the complete dependency tree:
+
+```
+CANONICAL SOURCES (user-controlled):
+├── Script text (uploaded PDF/DOCX/TXT)
+├── Production Notes (text, per-project)
+├── Character Headshots (approved cast_variation per character)
+└── (future: per-scene wardrobe overrides)
+
+DERIVED ASSETS (AI-generated, each traces to its sources):
+│
+├── Extraction (scenes, characters, locations)
+│   └── derived from: script text
+│
+├── Character Pose Sheet
+│   └── derived from: character headshot + character description + script wardrobe
+│
+├── Location Scout Images (5 per location)
+│   └── derived from: location description + production notes
+│
+├── Scene Scout Images (3 per scene → 1 approved)
+│   └── derived from: location scout (approved) + scene metadata + production notes
+│
+├── Storyboard Panels (N per scene)
+│   └── derived from: scene scout (approved) + character headshots (per in-shot character) + shot breakdown + production notes
+│
+└── First Frames (1 per panel, Phase 9)
+    └── derived from: scene scout (approved) + character headshots (per in-shot character) + pose sheet (optional style ref) + panel shot data + production notes
+```
+
+**Key insight:** Character headshots fan out into pose sheets, storyboard panels, AND first frames. Changing one headshot can invalidate dozens of downstream assets. The system must track this.
+
+---
+
+### PART 2: Schema Changes
+
+#### 2A. Version tracking on source assets
+
+Add a `version` counter to every table that holds a canonical approved asset. The version bumps any time the approved asset changes.
+
+```sql
+-- Characters: version bumps when approved_cast_id changes (new headshot) or description changes
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
+
+-- Locations: version bumps when approved_image_url changes or description changes
+ALTER TABLE locations ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
+
+-- Scenes: version bumps when approved_scout_image_url changes
+ALTER TABLE scenes ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
+
+-- Projects: version bumps when production_notes changes
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS version integer NOT NULL DEFAULT 1;
+```
+
+#### 2B. Provenance tracking table
+
+A single junction table that records every source→derived relationship at generation time:
+
+```sql
+CREATE TABLE IF NOT EXISTS asset_provenance (
+  id uuid PRIMARY KEY DEFAULT uuid_generate_v4(),
+  -- The derived asset
+  asset_type text NOT NULL,  -- 'pose_sheet', 'location_variation', 'scene_variation', 'storyboard_panel', 'first_frame'
+  asset_id uuid NOT NULL,    -- FK to the specific row (character.id for pose_sheet, panel.id for storyboard, etc.)
+  -- The source it was derived from
+  source_type text NOT NULL, -- 'character_headshot', 'character_description', 'location_description', 'scene_scout', 'location_scout', 'production_notes'
+  source_id uuid NOT NULL,   -- FK to the source row (character.id, location.id, scene.id, project.id)
+  source_version integer NOT NULL, -- the version of the source at generation time
+  created_at timestamptz DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_provenance_asset ON asset_provenance(asset_type, asset_id);
+CREATE INDEX IF NOT EXISTS idx_provenance_source ON asset_provenance(source_type, source_id);
+```
+
+#### 2C. First Frames table (Phase 9 — already scoped above, unchanged)
+
+Keep the `first_frames` table from the Phase 9 spec. It participates in provenance like any other derived asset.
+
+---
+
+### PART 3: Provenance Recording — How to Wire It
+
+Every generation function must record provenance AFTER successful generation. Create a reusable helper:
+
+```typescript
+// src/lib/provenance.ts
+
+interface ProvenanceEntry {
+  source_type: string;
+  source_id: string;
+  source_version: number;
+}
+
+export async function recordProvenance(
+  supabase: SupabaseClient,
+  assetType: string,
+  assetId: string,
+  sources: ProvenanceEntry[]
+): Promise<void> {
+  // Delete old provenance for this asset (it's being regenerated)
+  await supabase.from('asset_provenance').delete()
+    .eq('asset_type', assetType).eq('asset_id', assetId);
+
+  // Insert new provenance rows
+  const rows = sources.map(s => ({
+    asset_type: assetType,
+    asset_id: assetId,
+    source_type: s.source_type,
+    source_id: s.source_id,
+    source_version: s.source_version,
+  }));
+  await supabase.from('asset_provenance').insert(rows);
+}
+```
+
+**Where to call it (every generation route):**
+
+| Generation route | Asset type | Sources to record |
+|---|---|---|
+| `POST /api/projects/:id/posesheet` | `pose_sheet` | `character_headshot` (character.id, character.version) |
+| `POST /api/projects/:id/locations` (generate) | `location_variation` | `location_description` (location.id, location.version), `production_notes` (project.id, project.version) |
+| `POST /api/projects/:id/scenes` (generate scout) | `scene_variation` | `scene_scout` (scene.id, scene.version), `location_scout` (location.id, location.version), `production_notes` (project.id, project.version) |
+| `POST /api/projects/:id/storyboard` | `storyboard_panel` | `scene_scout` (scene.id, scene.version), `character_headshot` (one per in-shot character), `production_notes` (project.id, project.version) |
+| `POST /api/projects/:id/first-frames` | `first_frame` | `scene_scout` (scene.id, scene.version), `character_headshot` (one per in-shot character), `production_notes` (project.id, project.version) |
+
+---
+
+### PART 4: Version Bumping — When Sources Change
+
+Create a helper or use Supabase triggers to bump versions when canonical assets change:
+
+```typescript
+// src/lib/provenance.ts
+
+export async function bumpVersion(
+  supabase: SupabaseClient,
+  table: 'characters' | 'locations' | 'scenes' | 'projects',
+  id: string
+): Promise<number> {
+  const { data } = await supabase.from(table)
+    .select('version')
+    .eq('id', id)
+    .single();
+  const newVersion = (data?.version ?? 0) + 1;
+  await supabase.from(table)
+    .update({ version: newVersion })
+    .eq('id', id);
+  return newVersion;
+}
+```
+
+**Where to call it:**
+
+| User action | Bump what |
+|---|---|
+| Approve a new headshot (PATCH cast → `approved_cast_id` changes) | `bumpVersion('characters', characterId)` |
+| Upload/replace headshot | `bumpVersion('characters', characterId)` |
+| Edit character description (bible inline edit) | `bumpVersion('characters', characterId)` |
+| Approve a new location scout image | `bumpVersion('locations', locationId)` |
+| Edit location description | `bumpVersion('locations', locationId)` |
+| Approve a new scene scout image | `bumpVersion('scenes', sceneId)` |
+| Save production notes (PATCH project) | `bumpVersion('projects', projectId)` |
+
+---
+
+### PART 5: Staleness Detection
+
+A derived asset is **stale** when any of its recorded source versions are older than the source's current version. Single query to get all stale assets for a project:
+
+```sql
+SELECT
+  ap.asset_type,
+  ap.asset_id,
+  ap.source_type,
+  ap.source_id,
+  ap.source_version AS generated_with_version,
+  CASE ap.source_type
+    WHEN 'character_headshot' THEN c.version
+    WHEN 'character_description' THEN c.version
+    WHEN 'location_description' THEN l.version
+    WHEN 'scene_scout' THEN s.version
+    WHEN 'location_scout' THEN l.version
+    WHEN 'production_notes' THEN p.version
+  END AS current_version
+FROM asset_provenance ap
+LEFT JOIN characters c ON c.id = ap.source_id AND ap.source_type IN ('character_headshot', 'character_description')
+LEFT JOIN locations l ON l.id = ap.source_id AND ap.source_type IN ('location_description', 'location_scout')
+LEFT JOIN scenes s ON s.id = ap.source_id AND ap.source_type = 'scene_scout'
+LEFT JOIN projects p ON p.id = ap.source_id AND ap.source_type = 'production_notes'
+WHERE p.id = $projectId OR c.project_id = $projectId OR l.project_id = $projectId OR s.project_id = $projectId
+HAVING ap.source_version < CASE ap.source_type ... END;
+```
+
+**API endpoint:** `GET /api/projects/:id/staleness`
+
+Returns:
+```json
+{
+  "stale_assets": [
+    {
+      "asset_type": "storyboard_panel",
+      "asset_id": "abc-123",
+      "stale_because": [
+        { "source_type": "character_headshot", "source_name": "Donna", "generated_v": 1, "current_v": 2 }
+      ]
+    }
+  ],
+  "summary": {
+    "pose_sheets": { "total": 3, "stale": 1 },
+    "storyboard_panels": { "total": 21, "stale": 14 },
+    "first_frames": { "total": 0, "stale": 0 },
+    "location_variations": { "total": 15, "stale": 0 },
+    "scene_variations": { "total": 9, "stale": 3 }
+  }
+}
+```
+
+---
+
+### PART 6: Cascade Regeneration Engine
+
+When a user clicks "Regenerate Stale Assets" or when a source changes and the user confirms cascade:
+
+```typescript
+// src/lib/cascade.ts
+
+// Regeneration must follow dependency order:
+// 1. Pose sheets (depends only on headshots)
+// 2. Location variations (depends on location descriptions + production notes)
+// 3. Scene variations (depends on location scouts + scene metadata + production notes)
+// 4. Storyboard panels (depends on scene scouts + character headshots + production notes)
+// 5. First frames (depends on scene scouts + character headshots + production notes)
+
+export const REGEN_ORDER = [
+  'pose_sheet',
+  'location_variation',
+  'scene_variation',
+  'storyboard_panel',
+  'first_frame',
+] as const;
+```
+
+**API endpoint:** `POST /api/projects/:id/cascade-regenerate`
+
+Body: `{ asset_types?: string[] }` — optional filter; omit to regen all stale assets.
+
+Logic:
+1. Call `/staleness` to get all stale assets.
+2. Group by `asset_type`.
+3. For each type in `REGEN_ORDER`, if there are stale assets of that type:
+   a. Call the existing generation endpoint for each asset.
+   b. Record new provenance with current source versions.
+   c. Return progress: `{ completed: ['pose_sheet'], in_progress: 'storyboard_panel', remaining: ['first_frame'] }`.
+4. If a type has no stale assets, skip it.
+5. Return a summary of what was regenerated.
+
+**Frontend integration:**
+- Every page that shows generated assets should call `/staleness` on mount.
+- Stale assets get a yellow warning badge: "⚠ Generated with outdated Donna headshot (v1 → v2)".
+- A floating action button appears when any stale assets exist: "Regenerate N stale assets".
+- Clicking it shows a confirmation dialog listing what will be regenerated and the estimated time.
+- Progress indicator during regeneration (WebSocket or polling).
+
+---
+
+### PART 7: UI — Staleness Badges + Cascade Controls
+
+#### 7A. Staleness badge component
+
+```typescript
+// src/components/StaleBadge.tsx
+// Renders a yellow "⚠ Outdated" pill with a tooltip showing which source changed.
+// Props: staleReasons: Array<{ source_type, source_name, generated_v, current_v }>
+// If empty/null, renders nothing (asset is fresh).
+```
+
+#### 7B. Per-page integration
+
+| Page | What to badge | Action |
+|---|---|---|
+| Film Bible | Character cards with stale pose sheets | "Regenerate Pose Sheet" per card |
+| Character Lock | Pose sheet thumbnails | "Regenerate" button per character + "Regenerate All Stale" bulk |
+| Location Scouting | Stale location variation images | "Regenerate" per location |
+| Scene Scouting | Stale scene scout images | "Regenerate" per scene |
+| Storyboard | Stale panels | "Regenerate Panel" per panel + "Regenerate All Stale" bulk |
+| First Frames | Stale frames | Same pattern |
+
+#### 7C. Project overview page
+
+Add a "Project Health" card to the project page showing:
+- Total assets: N | Fresh: M | Stale: K
+- If K > 0: "Regenerate All Stale Assets" button with estimated time
+- If K == 0: green "✓ All assets current" badge
+
+---
+
+### PART 8: Fixes That Ship With This (BUG-16 + BUG-17)
+
+This architecture subsumes both outstanding bugs:
+
+**BUG-16 (location descriptions):** Part of the Project Brain because richer location descriptions are a canonical source that flows into location scout → scene scout → storyboard → first frames. Fix the extraction prompt to pull physical details from the script. The new `version` system means re-extracting a project bumps location versions and correctly flags downstream scouts as stale.
+
+**BUG-17 (character headshots in storyboard):** Part of the Project Brain because the storyboard generation route needs to pull character headshots as multimodal references AND record provenance for each one. The `characterReferences` parameter on `generateStoryboardPanel()` is required infrastructure for both the staleness system (we need to know which headshots went in) and visual quality (consistent characters).
+
+**Both must be implemented as part of this plan, not separately.**
+
+---
+
+### PART 9: Implementation Order for Claude Code
+
+Build in this sequence. Each step should compile (`npm run build`) and be committed before moving to the next. Run the full codebase gap analysis first.
+
+**Step 0 — GAP ANALYSIS (do this first, before writing any code)**
+
+Read every file listed below and identify anything in the existing code that conflicts with or is missing from this plan. Look for:
+- Hardcoded generation calls that don't record provenance
+- API routes that modify canonical assets (headshot approval, scout approval, description edits, production notes save) but don't bump versions
+- Places where `cast_variations.image_url` is queried but not passed to image generation
+- The extraction prompt in `src/lib/extract.ts` — what does it ask for regarding locations? What's missing?
+- `generate-image.ts` — which functions accept multimodal references and which don't? What's the gap?
+- Every PATCH/PUT route — which ones modify canonical sources and would need version bumps?
+- Any bulk query that would need to join `asset_provenance` for staleness info
+
+Files to audit:
+```
+src/lib/extract.ts
+src/lib/generate-image.ts
+src/lib/types.ts
+src/app/api/projects/[id]/route.ts
+src/app/api/projects/[id]/cast/route.ts
+src/app/api/projects/[id]/posesheet/route.ts
+src/app/api/projects/[id]/locations/route.ts
+src/app/api/projects/[id]/scenes/route.ts
+src/app/api/projects/[id]/storyboard/route.ts
+src/app/api/projects/[id]/bible/route.ts
+src/app/projects/[id]/page.tsx
+src/app/projects/[id]/cast/page.tsx
+src/app/projects/[id]/lock/page.tsx
+src/app/projects/[id]/locations/page.tsx
+src/app/projects/[id]/scenes/page.tsx
+src/app/projects/[id]/storyboard/page.tsx
+src/app/projects/[id]/bible/page.tsx
+supabase/schema.sql
+```
+
+Write findings to the build log. Then proceed with implementation:
+
+**Step 1 — Schema + Types + Provenance Helper**
+- Add `version` columns to characters, locations, scenes, projects
+- Create `asset_provenance` table
+- Create `first_frames` table
+- Update `src/lib/types.ts` with new types
+- Create `src/lib/provenance.ts` with `recordProvenance()` and `bumpVersion()`
+- Run migration on Supabase
+
+**Step 2 — Version Bumping on All Mutation Routes**
+- Wire `bumpVersion()` into every API route that modifies a canonical source asset
+- Test: PATCH a character description → version should increment
+
+**Step 3 — BUG-16: Extraction Prompt + Location Descriptions**
+- Update extraction prompt to include physical location descriptions
+- Update extraction route to store LLM descriptions
+- Verify `buildLocationPrompt` uses the description field
+
+**Step 4 — BUG-17: Character Headshots in Storyboard Generation**
+- Add `characterReferences` parameter to `generateStoryboardPanel()`
+- Update storyboard route to look up and pass headshots via `toInlineData()`
+- Record provenance after each panel generation
+
+**Step 5 — Provenance Recording on All Generation Routes**
+- Wire `recordProvenance()` into posesheet, locations, scenes, storyboard routes
+- Each generation call records its sources + current versions
+
+**Step 6 — Staleness Detection API**
+- Build `GET /api/projects/:id/staleness` endpoint
+- Query provenance table, compare recorded versions vs current versions
+- Return stale asset summary
+
+**Step 7 — Cascade Regeneration API**
+- Build `POST /api/projects/:id/cascade-regenerate` endpoint
+- Dependency-ordered regeneration loop
+- Progress tracking
+
+**Step 8 — UI: Staleness Badges + Project Health**
+- `StaleBadge` component
+- Wire into all phase pages (bible, lock, locations, scenes, storyboard)
+- Project overview health card
+- "Regenerate Stale Assets" floating action
+
+**Step 9 — Phase 9: First Frames (build on top of brain infrastructure)**
+- `generateFirstFrame()` function with multi-reference multimodal input
+- API routes (generate, regenerate, approve, list, image)
+- UI page at `/projects/[id]/first-frames`
+- Readiness gate
+- Phase transition logic
+- Provenance recording for first frames
+
+**Step 10 — Verification**
+- On the WAYW Ep2 project: change a character's headshot → verify pose sheet + panels flagged stale → trigger cascade regen → verify all assets updated with new headshot → verify provenance records correct
+- Run `npm run build` — zero TypeScript errors
+- Push to main, verify Vercel deploy
+
+---
+
+### What's deferred (not in this plan)
+
+- **Per-scene wardrobe overrides** — character wardrobe changes per scene (e.g., Donna in sweatpants in scene 1, summer dress in scene 2). Currently wardrobe is in the text description. This would require a new `scene_character_wardrobe` table and wardrobe-specific image references. Ship after the brain is stable.
+- **Supabase database triggers for auto version-bumping** — right now version bumps are in application code. Could move to Postgres triggers for extra safety. Defer until the application-level approach proves unreliable.
+- **WebSocket/SSE for real-time cascade progress** — use polling initially, upgrade if UX demands it.
+- **Export: PDF storyboard / first-frames book** — build after first frames are generating correctly.
 

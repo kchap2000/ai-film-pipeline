@@ -425,7 +425,8 @@ export default function ProjectDetail() {
             phaseIndex === 3 ? "Character Lock" :
             phaseIndex === 4 ? "Location Scouting" :
             phaseIndex === 5 ? "Scene Scouting" :
-            phaseIndex === 6 ? "Storyboard" : null;
+            phaseIndex === 6 ? "Storyboard" :
+            phaseIndex === 7 ? "First Frames" : null;
 
           return [
             { show: hasExtracted,   href: `/projects/${project.id}/bible`,     label: "Film Bible",        sub: "Review and edit characters, scenes, structure, and metadata extracted from your documents" },
@@ -434,6 +435,7 @@ export default function ProjectDetail() {
             { show: phaseIndex >= 4, href: `/projects/${project.id}/locations`, label: "Location Scouting", sub: "Generate visual references for each location, approve and lock into the scene bible" },
             { show: phaseIndex >= 5, href: `/projects/${project.id}/scenes`,   label: "Scene Scouting",    sub: "Generate atmospheric mood images for each scene — approve the best visual reference per scene" },
             { show: phaseIndex >= 5, href: `/projects/${project.id}/storyboard`, label: "Storyboard",      sub: "Shot-by-shot panel generation using locked characters, locations, and approved scene references" },
+            { show: phaseIndex >= 6, href: `/projects/${project.id}/first-frames`, label: "First Frames",  sub: "Photorealistic shoot-day reference frames — identity-locked to approved headshots and scene scouts" },
           ].map(({ show, href, label, sub }) => {
             if (!show) return null;
             const isNextUp = label === nextStep;

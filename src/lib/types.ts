@@ -7,7 +7,8 @@ export type PhaseStatus =
   | "casting"
   | "lock"
   | "scene_bible"
-  | "storyboard";
+  | "storyboard"
+  | "first_frames";
 
 export const PHASE_LABELS: Record<PhaseStatus, string> = {
   ingestion: "Asset Ingestion",
@@ -17,6 +18,7 @@ export const PHASE_LABELS: Record<PhaseStatus, string> = {
   lock: "Character Lock",
   scene_bible: "Scene Bible",
   storyboard: "Storyboard",
+  first_frames: "First Frames",
 };
 
 export const PHASE_ORDER: PhaseStatus[] = [
@@ -27,6 +29,7 @@ export const PHASE_ORDER: PhaseStatus[] = [
   "lock",
   "scene_bible",
   "storyboard",
+  "first_frames",
 ];
 
 export interface Project {

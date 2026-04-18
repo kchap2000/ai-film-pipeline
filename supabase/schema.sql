@@ -293,6 +293,41 @@ alter table projects add column if not exists archived boolean not null default 
 create index if not exists idx_projects_archived on projects(archived);
 
 -- ============================================================
+-- Migration: Phase 9 — First Frames (2026-04-15)
+-- ============================================================
+-- Photorealistic first-frame images per storyboard panel. Gated behind
+-- storyboard completion; uses multimodal Gemini with scene-scout + per-
+-- character headshot references for identity-locked output.
+
+-- 1. New phase_status enum value (idempotent via exception handler)
+do $$ begin
+  alter type phase_status add value 'first_frames';
+exception when duplicate_object then null; end $$;
+
+-- 2. First frames table — one row per generated frame (keeps regen history
+-- via parent_frame_id; approved frame is pointed to from storyboard_panels)
+create table if not exists first_frames (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  panel_id uuid not null references storyboard_panels(id) on delete cascade,
+  image_url text not null,
+  prompt_used text not null,
+  model_used text not null default 'gemini-3.1-flash-image-preview',
+  aspect_ratio text not null default '16:9',
+  status text not null default 'pending', -- pending, approved, replaced
+  parent_frame_id uuid references first_frames(id) on delete set null,
+  created_at timestamp with time zone default now()
+);
+create index if not exists idx_first_frames_project on first_frames(project_id);
+create index if not exists idx_first_frames_panel on first_frames(panel_id);
+create index if not exists idx_first_frames_status on first_frames(status);
+
+-- 3. Approved-frame pointer on the panel so the UI knows which row to show.
+alter table storyboard_panels
+  add column if not exists approved_first_frame_id uuid
+  references first_frames(id) on delete set null;
+
+-- ============================================================
 -- Migration: Production notes / style directive (2026-04-14)
 -- ============================================================
 -- Freeform per-project directive injected into storyboard, scene-scout, and
