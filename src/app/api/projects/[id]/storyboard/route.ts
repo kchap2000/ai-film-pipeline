@@ -96,9 +96,11 @@ export async function POST(
 
   const [scenesRes, charsRes, locsRes, projectRes] = await Promise.all([
     scenesQuery,
+    // NOTE: we now also need approved_cast_id + voice_only so we can look up
+    // per-character approved headshot URLs for multimodal identity refs.
     supabase
       .from("characters")
-      .select("name, description")
+      .select("name, description, approved_cast_id, voice_only")
       .eq("project_id", id),
     supabase
       .from("locations")
@@ -116,6 +118,28 @@ export async function POST(
   const charDescMap: Record<string, string> = {};
   for (const c of charsRes.data || []) {
     charDescMap[c.name] = c.description || "";
+  }
+
+  // Build name → approved headshot URL lookup. Voice-only characters are
+  // excluded (they have no on-screen identity to anchor). Used to pass
+  // `characterReferences` into generateStoryboardPanel so panel art locks
+  // to cast the same way first-frame gen does.
+  const approvedCastIds = (charsRes.data || [])
+    .filter((c) => c.approved_cast_id && !c.voice_only)
+    .map((c) => c.approved_cast_id as string);
+  const headshotUrlByName: Record<string, string> = {};
+  if (approvedCastIds.length > 0) {
+    const { data: variations } = await supabase
+      .from("cast_variations")
+      .select("id, image_url")
+      .in("id", approvedCastIds);
+    const urlByCastId: Record<string, string> = {};
+    for (const v of variations || []) urlByCastId[v.id] = v.image_url;
+    for (const c of charsRes.data || []) {
+      if (c.approved_cast_id && !c.voice_only && urlByCastId[c.approved_cast_id]) {
+        headshotUrlByName[c.name] = urlByCastId[c.approved_cast_id];
+      }
+    }
   }
   const locMap: Record<string, { description: string; time_of_day: string; mood: string }> = {};
   for (const l of locsRes.data || []) {
@@ -214,6 +238,16 @@ Wardrobe: ${(scene.wardrobe || []).join(", ") || "None"}`,
       const shot = shots[i];
       const panelNumber = i + 1;
 
+      // Build per-shot identity refs: each character in the shot gets their
+      // approved headshot URL piped in as a multimodal ref. Unknown / voice-
+      // only names silently drop.
+      const characterReferences = (shot.characters_in_shot || [])
+        .map((name: string) => {
+          const imageUrl = headshotUrlByName[name];
+          return imageUrl ? { name, imageUrl } : null;
+        })
+        .filter((x): x is { name: string; imageUrl: string } => x !== null);
+
       try {
         const result = await generateStoryboardPanel({
           actionDescription: shot.action_description,
@@ -229,6 +263,7 @@ Wardrobe: ${(scene.wardrobe || []).join(", ") || "None"}`,
           panelNumber,
           sceneReferenceImageUrl: scene.approved_scout_image_url || null,
           productionNotes,
+          characterReferences,
         });
 
         await supabase.from("storyboard_panels").insert({

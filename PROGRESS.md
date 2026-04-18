@@ -866,21 +866,25 @@ WAYW Ep2 state after verification:
 
 ---
 
-## 🔄 Next Up: Backport multimodal identity refs into Storyboard (Phase 7)
+## ✅ COMPLETE: Storyboard panels now multimodal identity-locked (2026-04-18)
 
-Phase 9 now multimodal-references the scene scout + every in-shot character headshot, so first-frame identity is locked. Phase 7 (Storyboard panels) still only references the scene scout — character identity is prompt-text-only, which is why panel art sometimes drifts from the cast.
+Panel art used to reference only the scene scout image — character identity was prompt-text-only, so panels drifted from the approved cast. Now mirrors Phase 9 First Frames: every in-shot character's approved headshot gets piped in as a multimodal identity anchor.
 
-**Scope**
-- In `src/app/api/projects/[id]/storyboard/route.ts`, mirror the character-headshot lookup pattern used in `first-frames/route.ts` (already built): fetch approved headshot URL per name, assemble `characterReferences: {name, imageUrl}[]`.
-- Extend `generateStoryboardPanel()` in `src/lib/generate-image.ts` to accept `characterReferences` (same shape as `generateFirstFrame()`). Merge into the multimodal parts array: scene scout first → per-character identity refs → prompt text. Use `toInlineData()` — already shipped.
-- On `ReferenceImageUnreachableError`, fall back to text-only + log (don't error-out the whole batch like first-frames does — storyboard panels are faster-to-regen and already have a retry loop).
+**Changes**
+- `src/lib/generate-image.ts`: `generateStoryboardPanel()` now accepts `characterReferences: {name, imageUrl}[]`. Implementation rewritten to build a unified parts array — scene scout first (environment/color anchor), then per-character identity refs with "match face, hair, build exactly" preambles, then prompt text last. Uses `toInlineData()` (shipped earlier) so HTTPS + data URLs both work.
+  - Failure posture: unlike `generateFirstFrame()` which throws `ReferenceImageUnreachableError` on any missing ref, panel gen logs + skips the bad ref and keeps going. Panels are fast to regenerate and the route already has a retry loop — a flaky headshot fetch should degrade gracefully, not take down the whole scene.
+  - If the multimodal request itself throws or returns no image, falls back to `generateWithGemini(text-only)` on the same prompt.
+- `src/app/api/projects/[id]/storyboard/route.ts`: extends the characters SELECT with `approved_cast_id, voice_only`, fetches all approved `cast_variations.image_url`s in one query, builds a name→url lookup. Per shot, assembles `characterReferences` from `shot.characters_in_shot` (voice-only + unmapped names silently drop). Passes through.
 
-**Files**
-- `src/lib/generate-image.ts` — `generateStoryboardPanel()` sig + impl
-- `src/app/api/projects/[id]/storyboard/route.ts` — fetch cast headshots, pass to generator
-- `PROGRESS.md` — build log + mark complete
+**Why this matters**
+Closes roadmap action item #5. Combined with Phase 9, both panel art AND first frames now identity-lock by construction, not by prompt text wishful thinking. This is the same technique that fixed pose-sheet identity leaks — parts-order-aware multimodal refs.
 
-This closes roadmap action-item #5 ("Multimodal identity injection into storyboard / first-frame generation").
+**Files touched**
+- `src/lib/generate-image.ts`
+- `src/app/api/projects/[id]/storyboard/route.ts`
+- `PROGRESS.md`
+
+Build clean: `npm run build` passes with no TypeScript errors.
 
 ---
 

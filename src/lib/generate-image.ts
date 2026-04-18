@@ -332,6 +332,15 @@ export async function generateStoryboardPanel(opts: {
   panelNumber: number;
   sceneReferenceImageUrl?: string | null; // optional approved scout image
   productionNotes?: string;
+  /**
+   * Per-character identity refs (approved headshot URL). When present, each
+   * ref is injected into the multimodal parts array with a "match this face"
+   * preamble — same technique generateFirstFrame() uses. Missing refs are
+   * logged and skipped (we do NOT throw): storyboard panels are faster to
+   * regen and are covered by the retry loop in the API route, so a bad
+   * headshot URL should degrade gracefully rather than fail the whole scene.
+   */
+  characterReferences?: { name: string; imageUrl: string }[];
 }): Promise<GeneratedImage> {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   const prompt = buildStoryboardPrompt(opts);
@@ -341,39 +350,62 @@ export async function generateStoryboardPanel(opts: {
     return generatePlaceholder(label, prompt, opts.panelNumber);
   }
 
-  // If we have an approved scene scout reference image, use multimodal generation
+  // Assemble the multimodal parts array if we have ANY visual reference
+  // (scene scout or at least one successful character ref). Order matters —
+  // Gemini weights earlier parts more heavily, so scene anchor first, then
+  // identity anchors, then the prompt text last.
+  const parts: Array<{ inlineData?: { mimeType: string; data: string }; text?: string }> = [];
+
   if (opts.sceneReferenceImageUrl) {
-    const inline = await toInlineData(opts.sceneReferenceImageUrl);
-    if (inline) {
-      const ai = new GoogleGenAI({ apiKey });
-      try {
-        const response = await ai.models.generateContent({
-          model: "gemini-3.1-flash-image-preview",
-          contents: [
-            {
-              role: "user",
-              parts: [
-                { inlineData: { mimeType: inline.mimeType, data: inline.data } },
-                { text: `Use the above image as an atmospheric reference for color palette, lighting mood, and visual style.\n\n${prompt}` },
-              ],
-            },
-          ],
-          config: { responseModalities: [Modality.IMAGE, Modality.TEXT] },
-        });
-        const parts = response.candidates?.[0]?.content?.parts || [];
-        for (const part of parts) {
-          if (part.inlineData?.data) {
-            const outMime = part.inlineData.mimeType || "image/png";
-            return { url: `data:${outMime};base64,${part.inlineData.data}`, prompt };
-          }
-        }
-      } catch {
-        // Fall through to standard generation if multimodal fails
-      }
+    const sceneInline = await toInlineData(opts.sceneReferenceImageUrl);
+    if (sceneInline) {
+      parts.push({ text: `Environment / lighting / color reference — use as visual anchor:` });
+      parts.push({ inlineData: sceneInline });
     } else {
       console.error(
-        `generateStoryboardPanel: could not load scene reference ${opts.sceneReferenceImageUrl} — falling back to text-only`
+        `generateStoryboardPanel: could not load scene reference ${opts.sceneReferenceImageUrl}`
       );
+    }
+  }
+
+  for (const ref of opts.characterReferences || []) {
+    const inline = await toInlineData(ref.imageUrl);
+    if (inline) {
+      parts.push({ text: `Identity reference for ${ref.name} — match face, hair, build exactly:` });
+      parts.push({ inlineData: inline });
+    } else {
+      console.error(
+        `generateStoryboardPanel panel ${opts.panelNumber}: could not load headshot for ${ref.name} (${ref.imageUrl}) — skipping this ref`
+      );
+    }
+  }
+
+  // If we assembled at least one visual reference, use multimodal gen.
+  if (parts.length > 0) {
+    parts.push({ text: prompt });
+    const ai = new GoogleGenAI({ apiKey });
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3.1-flash-image-preview",
+        contents: [{ role: "user", parts }],
+        config: { responseModalities: [Modality.IMAGE, Modality.TEXT] },
+      });
+      const respParts = response.candidates?.[0]?.content?.parts || [];
+      for (const part of respParts) {
+        if (part.inlineData?.data) {
+          const outMime = part.inlineData.mimeType || "image/png";
+          return { url: `data:${outMime};base64,${part.inlineData.data}`, prompt };
+        }
+      }
+      console.error(
+        `generateStoryboardPanel panel ${opts.panelNumber}: multimodal returned no image, falling back to text-only`
+      );
+    } catch (err) {
+      console.error(
+        `generateStoryboardPanel panel ${opts.panelNumber}: multimodal threw, falling back to text-only`,
+        err instanceof Error ? err.message : err
+      );
+      // Fall through to standard generation
     }
   }
 
