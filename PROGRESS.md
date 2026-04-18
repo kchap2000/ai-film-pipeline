@@ -866,6 +866,15 @@ WAYW Ep2 state after verification:
 
 ---
 
+## ✅ COMPLETE: Edit Prompt on First Frames cards (2026-04-18)
+
+Closes the last missing Phase 9 card action from the original scoping doc (Approve · Regenerate · **Edit prompt** · Replace with Upload).
+
+- `PATCH /api/projects/[id]/storyboard` — new handler accepts `{ panel_id, action_description?, shot_type?, camera_angle?, camera_movement?, dialogue? }`. Edits the underlying `storyboard_panels` row — which is the source of truth, so both Phase 7 panel regen AND Phase 9 first-frame regen inherit the new description.
+- First Frames UI: "Edit Prompt" button on each card opens an inline textarea prefilled with the current action description. Two save options: **Save & Regenerate** (patch + immediately kick off a new frame) or **Save Only** (patch without regen — useful for batch-editing multiple panels then running Generate All). Cancel button backs out.
+
+---
+
 ## ✅ COMPLETE: Storyboard panels now multimodal identity-locked (2026-04-18)
 
 Panel art used to reference only the scene scout image — character identity was prompt-text-only, so panels drifted from the approved cast. Now mirrors Phase 9 First Frames: every in-shot character's approved headshot gets piped in as a multimodal identity anchor.

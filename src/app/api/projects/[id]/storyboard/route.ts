@@ -300,3 +300,47 @@ Wardrobe: ${(scene.wardrobe || []).join(", ") || "None"}`,
     scenesProcessed: scenes.length,
   });
 }
+
+// PATCH /api/projects/:id/storyboard
+// Body: { panel_id: string, action_description?: string, shot_type?: string,
+//         camera_angle?: string, camera_movement?: string }
+// Updates a storyboard panel's metadata. Used by the First Frames "Edit
+// Prompt" action — editing the panel is the source-of-truth change, so
+// subsequent regenerations in either Storyboard or First Frames inherit
+// the new description.
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const { id } = params;
+  const body = await req.json().catch(() => ({}));
+  const { panel_id } = body as { panel_id?: string };
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  if (!panel_id) {
+    return NextResponse.json({ error: "panel_id required" }, { status: 400 });
+  }
+
+  const allowed = ["action_description", "shot_type", "camera_angle", "camera_movement", "dialogue"];
+  const update: Record<string, unknown> = {};
+  for (const key of allowed) {
+    if (key in body) update[key] = body[key];
+  }
+  if (Object.keys(update).length === 0) {
+    return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
+  }
+
+  const { data, error } = await supabase
+    .from("storyboard_panels")
+    .update(update)
+    .eq("id", panel_id)
+    .eq("project_id", id)
+    .select()
+    .single();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+  return NextResponse.json({ success: true, panel: data });
+}

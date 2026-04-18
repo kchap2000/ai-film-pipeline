@@ -98,6 +98,9 @@ export default function FirstFramesPage() {
   const [imageCache, setImageCache] = useState<Record<string, string>>({});
   const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+  const [editingPanelId, setEditingPanelId] = useState<string | null>(null);
+  const [editAction, setEditAction] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadPanelIdRef = useRef<string | null>(null);
   const cancelRef = useRef(false);
@@ -240,6 +243,40 @@ export default function FirstFramesPage() {
   const triggerUpload = (panelId: string) => {
     uploadPanelIdRef.current = panelId;
     fileInputRef.current?.click();
+  };
+
+  const startEdit = (panel: PanelRow) => {
+    setEditingPanelId(panel.id);
+    setEditAction(panel.action_description || "");
+  };
+
+  /**
+   * Save the edited action description on the underlying storyboard_panel
+   * (source of truth) and optionally regenerate the frame. Editing the
+   * panel means both this phase AND Storyboard panel regens inherit the
+   * new description next time they run.
+   */
+  const saveEditAndRegen = async (panelId: string, regenAfter: boolean) => {
+    setSavingEdit(true);
+    setGenError(null);
+    try {
+      const patchRes = await fetch(`/api/projects/${id}/storyboard`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ panel_id: panelId, action_description: editAction }),
+      });
+      if (!patchRes.ok) {
+        const d = await patchRes.json().catch(() => ({}));
+        throw new Error(d.error || "Panel edit failed");
+      }
+      setEditingPanelId(null);
+      await fetchAll();
+      if (regenAfter) await regeneratePanel(panelId);
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingEdit(false);
+    }
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -458,40 +495,95 @@ export default function FirstFramesPage() {
                           </span>
                         )}
                       </div>
-                      <p className="text-xs mb-2" style={{ color: "var(--brand-white)" }}>
-                        {panel.action_description || <span style={{ opacity: 0.4 }}>No description</span>}
-                      </p>
-                      <p className="text-[10px] mb-3" style={{ color: "var(--brand-gray)" }}>
-                        {[panel.shot_type, panel.camera_angle, panel.camera_movement].filter(Boolean).join(" · ") || "—"}
-                      </p>
 
-                      <div className="flex gap-2 flex-wrap">
-                        {frame && !isApproved && (
-                          <button
-                            onClick={() => approveFrame(frame.id)}
-                            disabled={approving === frame.id}
-                            className="text-[10px] uppercase tracking-widest text-green-400 border border-green-800/50 px-3 py-1.5 hover:bg-green-950/30 transition-colors disabled:opacity-40"
-                          >
-                            {approving === frame.id ? "Approving…" : "Approve"}
-                          </button>
-                        )}
-                        <button
-                          onClick={() => regeneratePanel(panel.id)}
-                          disabled={isGenThis || generating}
-                          className="text-[10px] uppercase tracking-widest px-3 py-1.5 transition-colors disabled:opacity-40"
-                          style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
-                        >
-                          {isGenThis ? "Working…" : frame ? "Regenerate" : "Generate"}
-                        </button>
-                        <button
-                          onClick={() => triggerUpload(panel.id)}
-                          disabled={isUploading}
-                          className="text-[10px] uppercase tracking-widest px-3 py-1.5 transition-colors disabled:opacity-40"
-                          style={{ color: "var(--brand-gray)", border: "1px solid var(--brand-steel)" }}
-                        >
-                          {isUploading ? "Uploading…" : "Upload Replace"}
-                        </button>
-                      </div>
+                      {editingPanelId === panel.id ? (
+                        <div className="space-y-2 mb-3">
+                          <label className="text-[9px] uppercase tracking-widest block" style={{ color: "var(--brand-gray)" }}>
+                            Action description (edits the panel itself — source of truth)
+                          </label>
+                          <textarea
+                            value={editAction}
+                            onChange={(e) => setEditAction(e.target.value)}
+                            rows={4}
+                            className="w-full text-xs px-3 py-2 rounded-md outline-none resize-y"
+                            style={{
+                              background: "var(--brand-navy)",
+                              color: "var(--brand-white)",
+                              border: "1px solid var(--brand-steel)",
+                            }}
+                          />
+                          <div className="flex gap-2 flex-wrap">
+                            <button
+                              onClick={() => saveEditAndRegen(panel.id, true)}
+                              disabled={savingEdit}
+                              className="text-[10px] uppercase tracking-widest text-green-400 border border-green-800/50 px-3 py-1.5 hover:bg-green-950/30 disabled:opacity-40"
+                            >
+                              {savingEdit ? "Saving…" : "Save & Regenerate"}
+                            </button>
+                            <button
+                              onClick={() => saveEditAndRegen(panel.id, false)}
+                              disabled={savingEdit}
+                              className="text-[10px] uppercase tracking-widest px-3 py-1.5 disabled:opacity-40"
+                              style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+                            >
+                              Save Only
+                            </button>
+                            <button
+                              onClick={() => setEditingPanelId(null)}
+                              disabled={savingEdit}
+                              className="text-[10px] uppercase tracking-widest px-3 py-1.5 disabled:opacity-40"
+                              style={{ color: "var(--brand-gray)", border: "1px solid var(--brand-steel)" }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <p className="text-xs mb-2" style={{ color: "var(--brand-white)" }}>
+                            {panel.action_description || <span style={{ opacity: 0.4 }}>No description</span>}
+                          </p>
+                          <p className="text-[10px] mb-3" style={{ color: "var(--brand-gray)" }}>
+                            {[panel.shot_type, panel.camera_angle, panel.camera_movement].filter(Boolean).join(" · ") || "—"}
+                          </p>
+
+                          <div className="flex gap-2 flex-wrap">
+                            {frame && !isApproved && (
+                              <button
+                                onClick={() => approveFrame(frame.id)}
+                                disabled={approving === frame.id}
+                                className="text-[10px] uppercase tracking-widest text-green-400 border border-green-800/50 px-3 py-1.5 hover:bg-green-950/30 transition-colors disabled:opacity-40"
+                              >
+                                {approving === frame.id ? "Approving…" : "Approve"}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => regeneratePanel(panel.id)}
+                              disabled={isGenThis || generating}
+                              className="text-[10px] uppercase tracking-widest px-3 py-1.5 transition-colors disabled:opacity-40"
+                              style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+                            >
+                              {isGenThis ? "Working…" : frame ? "Regenerate" : "Generate"}
+                            </button>
+                            <button
+                              onClick={() => startEdit(panel)}
+                              disabled={isGenThis || generating}
+                              className="text-[10px] uppercase tracking-widest px-3 py-1.5 transition-colors disabled:opacity-40"
+                              style={{ color: "var(--brand-cyan)", border: "1px solid rgba(76,201,240,0.35)" }}
+                            >
+                              Edit Prompt
+                            </button>
+                            <button
+                              onClick={() => triggerUpload(panel.id)}
+                              disabled={isUploading}
+                              className="text-[10px] uppercase tracking-widest px-3 py-1.5 transition-colors disabled:opacity-40"
+                              style={{ color: "var(--brand-gray)", border: "1px solid var(--brand-steel)" }}
+                            >
+                              {isUploading ? "Uploading…" : "Upload Replace"}
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 );
