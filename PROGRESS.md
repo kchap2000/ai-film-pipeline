@@ -866,6 +866,32 @@ WAYW Ep2 state after verification:
 
 ---
 
+## ✅ COMPLETE: Polish pass — scene labels, print/export, readiness tile (2026-04-19)
+
+Three small quality-of-life fixes that round out the pipeline now that Phase 9 is live.
+
+**First Frames — scene labels on cards**
+- `GET /api/projects/[id]/first-frames` now also returns scene metadata per panel (scene_number, location, time_of_day, mood) and sorts panels by `(scene_number, panel_number)` so the grid reads in story order.
+- Each card header now shows `Scene N · Panel NN · Location` instead of just `Panel NN` — previously 30 panels across 5 scenes were indistinguishable at a glance.
+
+**First Frames — Print / Export PDF**
+- Storyboard page has had `window.print()` for a while; First Frames didn't. Added a matching cyan-border "Print / Export PDF" button in the header (appears once at least one frame is approved).
+- Print stylesheet (`@media print` in a styled-jsx global block) hides nav/buttons/readiness banner/error banner and stacks panels full-width with page-break-avoid on each card so cards don't split mid-frame when printing.
+
+**Project overview — Pipeline Readiness tile**
+- Overview page now fetches `/api/projects/[id]/readiness` and renders a compact tile between Production Notes and Phase Links.
+- Green "Ready to generate First Frames" variant with direct CTA when all 4 checks pass; neutral variant showing the 4 per-check `done/total` counters otherwise.
+- Only rendered once casting has begun (`phaseIndex >= 3`) to avoid noise on brand-new projects.
+
+**Files**
+- `src/app/api/projects/[id]/first-frames/route.ts`
+- `src/app/projects/[id]/first-frames/page.tsx`
+- `src/app/projects/[id]/page.tsx`
+
+Build clean: `npm run build` passes.
+
+---
+
 ## ✅ COMPLETE: Edit Prompt on First Frames cards (2026-04-18)
 
 Closes the last missing Phase 9 card action from the original scoping doc (Approve · Regenerate · **Edit prompt** · Replace with Upload).

@@ -22,7 +22,7 @@ export async function GET(
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const [panelsRes, framesRes] = await Promise.all([
+  const [panelsRes, framesRes, scenesRes] = await Promise.all([
     supabase
       .from("storyboard_panels")
       .select(
@@ -35,6 +35,12 @@ export async function GET(
       .select("id, panel_id, status, aspect_ratio, model_used, parent_frame_id, created_at")
       .eq("project_id", id)
       .order("created_at", { ascending: true }),
+    // Scene metadata so the UI can show "Scene N · Panel NN · Location" on
+    // each card — otherwise 30 panels across 5 scenes are indistinguishable.
+    supabase
+      .from("scenes")
+      .select("id, scene_number, location, time_of_day, mood")
+      .eq("project_id", id),
   ]);
 
   if (panelsRes.error) {
@@ -47,10 +53,32 @@ export async function GET(
     framesByPanel[f.panel_id]!.push(f);
   }
 
+  const sceneById: Record<
+    string,
+    { scene_number: number; location: string; time_of_day: string; mood: string }
+  > = {};
+  for (const s of scenesRes.data || []) {
+    sceneById[s.id] = {
+      scene_number: s.scene_number,
+      location: s.location || "",
+      time_of_day: s.time_of_day || "",
+      mood: s.mood || "",
+    };
+  }
+
   const panels = (panelsRes.data || []).map((p) => ({
     ...p,
     frames: framesByPanel[p.id] || [],
+    scene: sceneById[p.scene_id] || null,
   }));
+
+  // Sort panels: scene_number asc, then panel_number asc
+  panels.sort((a, b) => {
+    const sa = a.scene?.scene_number ?? 9999;
+    const sb = b.scene?.scene_number ?? 9999;
+    if (sa !== sb) return sa - sb;
+    return a.panel_number - b.panel_number;
+  });
 
   return NextResponse.json({ panels });
 }

@@ -31,6 +31,12 @@ interface PanelRow {
   duration_seconds: number;
   approved_first_frame_id: string | null;
   frames: Frame[];
+  scene: {
+    scene_number: number;
+    location: string;
+    time_of_day: string;
+    mood: string;
+  } | null;
 }
 
 interface ReadinessCheck {
@@ -368,7 +374,7 @@ export default function FirstFramesPage() {
                     onClick={() => {
                       cancelRef.current = true;
                     }}
-                    className="text-xs uppercase tracking-widest px-5 py-2.5 text-red-400 border border-red-800/50 hover:bg-red-950/30 transition-colors"
+                    className="text-xs uppercase tracking-widest px-5 py-2.5 text-red-400 border border-red-800/50 hover:bg-red-950/30 transition-colors no-print"
                   >
                     Cancel
                   </button>
@@ -376,7 +382,7 @@ export default function FirstFramesPage() {
                 <button
                   onClick={generateAll}
                   disabled={!ready || generating || totalPanels === 0}
-                  className="text-xs uppercase tracking-widest px-5 py-2.5 text-green-400 border border-green-800/50 hover:bg-green-950/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="text-xs uppercase tracking-widest px-5 py-2.5 text-green-400 border border-green-800/50 hover:bg-green-950/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed no-print"
                 >
                   {generating && genProgress
                     ? `Generating ${genProgress.done}/${genProgress.total}…`
@@ -384,14 +390,46 @@ export default function FirstFramesPage() {
                     ? `Generate First Frames${totalPanels > 0 ? ` (${totalPanels})` : ""}`
                     : `Generate First Frames (not ready)`}
                 </button>
+                {approvedCount > 0 && (
+                  <button
+                    onClick={() => window.print()}
+                    className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors no-print"
+                    style={{ color: "var(--brand-cyan)", border: "1px solid rgba(76,201,240,0.35)" }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(76,201,240,0.08)")}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                  >
+                    Print / Export PDF
+                  </button>
+                )}
               </div>
             </div>
           </header>
 
+          {/* Print stylesheet — when exporting, hide UI chrome (buttons, nav,
+              readiness banner, upload input) and stack panels full-width so
+              each prints cleanly on its own portion of the page. */}
+          <style jsx global>{`
+            @media print {
+              nav, .no-print { display: none !important; }
+              body { background: white !important; color: black !important; }
+              .first-frame-grid { display: block !important; }
+              .first-frame-card {
+                break-inside: avoid;
+                page-break-inside: avoid;
+                margin-bottom: 24px;
+                background: white !important;
+                border: 1px solid #ccc !important;
+                color: black !important;
+              }
+              .first-frame-card img { max-width: 100%; height: auto; }
+              .first-frame-card * { color: black !important; background: transparent !important; }
+            }
+          `}</style>
+
           {/* Readiness banner */}
           {readiness && !ready && (
             <div
-              className="rounded-xl p-5 mb-8"
+              className="rounded-xl p-5 mb-8 no-print"
               style={{
                 background: "rgba(255,138,42,0.04)",
                 border: "1px solid rgba(255,138,42,0.25)",
@@ -412,7 +450,7 @@ export default function FirstFramesPage() {
           {/* Error banner */}
           {genError && (
             <div
-              className="rounded-md px-4 py-3 mb-6 text-xs"
+              className="rounded-md px-4 py-3 mb-6 text-xs no-print"
               style={{
                 background: "rgba(239,68,68,0.08)",
                 border: "1px solid rgba(239,68,68,0.3)",
@@ -441,7 +479,7 @@ export default function FirstFramesPage() {
               </Link>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 first-frame-grid">
               {panels.map((panel) => {
                 const frame = displayFrameFor(panel);
                 const frameImg = frame ? imageCache[`frame-${frame.id}`] : null;
@@ -451,7 +489,7 @@ export default function FirstFramesPage() {
                 return (
                   <div
                     key={panel.id}
-                    className="rounded-xl overflow-hidden"
+                    className="rounded-xl overflow-hidden first-frame-card"
                     style={{
                       background: "var(--brand-mid)",
                       border: isApproved ? "1px solid rgba(34,197,94,0.4)" : "1px solid var(--brand-steel)",
@@ -482,15 +520,26 @@ export default function FirstFramesPage() {
 
                     {/* Metadata + actions */}
                     <div className="p-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span
-                          className="text-[10px] uppercase tracking-widest"
-                          style={{ color: "var(--brand-orange)" }}
-                        >
-                          Panel {String(panel.panel_number).padStart(2, "0")}
-                        </span>
+                      <div className="flex items-center justify-between mb-2 gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span
+                            className="text-[10px] uppercase tracking-widest flex-shrink-0"
+                            style={{ color: "var(--brand-orange)" }}
+                          >
+                            {panel.scene ? `Scene ${panel.scene.scene_number}` : "Scene ?"} · Panel {String(panel.panel_number).padStart(2, "0")}
+                          </span>
+                          {panel.scene?.location && (
+                            <span
+                              className="text-[10px] truncate"
+                              style={{ color: "var(--brand-gray)", opacity: 0.8 }}
+                              title={panel.scene.location}
+                            >
+                              · {panel.scene.location}
+                            </span>
+                          )}
+                        </div>
                         {isApproved && (
-                          <span className="text-[9px] uppercase tracking-widest text-green-400 border border-green-800/50 px-2 py-0.5">
+                          <span className="text-[9px] uppercase tracking-widest text-green-400 border border-green-800/50 px-2 py-0.5 flex-shrink-0">
                             Approved
                           </span>
                         )}
@@ -547,7 +596,7 @@ export default function FirstFramesPage() {
                             {[panel.shot_type, panel.camera_angle, panel.camera_movement].filter(Boolean).join(" · ") || "—"}
                           </p>
 
-                          <div className="flex gap-2 flex-wrap">
+                          <div className="flex gap-2 flex-wrap no-print">
                             {frame && !isApproved && (
                               <button
                                 onClick={() => approveFrame(frame.id)}

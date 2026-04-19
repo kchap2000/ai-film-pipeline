@@ -23,6 +23,16 @@ export default function ProjectDetail() {
   const [notesDirty, setNotesDirty] = useState(false);
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
+  const [readiness, setReadiness] = useState<{
+    ready_for_first_frames: boolean;
+    total_panels: number;
+    checks: {
+      characters_locked: { done: number; total: number; ok: boolean };
+      locations_approved: { done: number; total: number; ok: boolean };
+      scenes_scouted: { done: number; total: number; ok: boolean };
+      scenes_have_panels: { done: number; total: number; ok: boolean };
+    };
+  } | null>(null);
 
   const fetchProject = async () => {
     const res = await fetch(`/api/projects/${id}`);
@@ -58,6 +68,18 @@ export default function ProjectDetail() {
 
   useEffect(() => {
     fetchProject();
+  }, [id]);
+
+  // Load pipeline readiness once the project loads; shown as a compact tile
+  // so Khalil can see what's blocking the next phase without visiting each
+  // phase page. Silently no-ops if the endpoint 404s (old projects).
+  useEffect(() => {
+    fetch(`/api/projects/${id}/readiness`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && d.checks) setReadiness(d);
+      })
+      .catch(() => {});
   }, [id]);
 
   const runExtraction = async () => {
@@ -415,6 +437,76 @@ export default function ProjectDetail() {
             </div>
           </div>
         </section>
+
+        {/* Pipeline Readiness — only show once casting has begun, and
+            only for projects past the extraction phase. Gives Khalil an
+            at-a-glance view of what's blocking First Frames. */}
+        {readiness && phaseIndex >= 3 && (
+          <section className="mb-10">
+            <h2 className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
+              Pipeline Readiness
+            </h2>
+            <div
+              className="rounded-xl p-5"
+              style={{
+                background: readiness.ready_for_first_frames
+                  ? "rgba(34,197,94,0.05)"
+                  : "var(--brand-mid)",
+                border: readiness.ready_for_first_frames
+                  ? "1px solid rgba(34,197,94,0.35)"
+                  : "1px solid var(--brand-steel)",
+              }}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <span
+                  className="text-xs font-medium"
+                  style={{
+                    color: readiness.ready_for_first_frames ? "#4ade80" : "var(--brand-white)",
+                  }}
+                >
+                  {readiness.ready_for_first_frames
+                    ? "Ready to generate First Frames"
+                    : "Not yet ready for First Frames"}
+                </span>
+                {readiness.ready_for_first_frames && (
+                  <Link
+                    href={`/projects/${id}/first-frames`}
+                    className="text-[10px] uppercase tracking-widest text-green-400 border border-green-800/50 px-3 py-1.5 hover:bg-green-950/30 transition-colors"
+                  >
+                    Go to First Frames &rarr;
+                  </Link>
+                )}
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {[
+                  { label: "Characters Locked", c: readiness.checks.characters_locked },
+                  { label: "Locations Approved", c: readiness.checks.locations_approved },
+                  { label: "Scenes Scouted", c: readiness.checks.scenes_scouted },
+                  { label: "Scenes Have Panels", c: readiness.checks.scenes_have_panels },
+                ].map(({ label, c }) => (
+                  <div
+                    key={label}
+                    className="flex items-center justify-between px-3 py-2 rounded"
+                    style={{
+                      background: c.ok ? "rgba(34,197,94,0.06)" : "var(--brand-navy)",
+                      border: c.ok ? "1px solid rgba(34,197,94,0.25)" : "1px solid var(--brand-steel)",
+                    }}
+                  >
+                    <span className="text-[9px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                      {label}
+                    </span>
+                    <span
+                      className="text-xs font-medium"
+                      style={{ color: c.ok ? "#4ade80" : "var(--brand-gray)" }}
+                    >
+                      {c.done}/{c.total}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
 
         {/* Phase Links */}
         {(() => {
