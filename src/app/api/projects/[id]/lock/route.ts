@@ -1,4 +1,5 @@
 import { createRouteClient } from "@/lib/supabase-route";
+import { bumpVersion } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
 
 // GET /api/projects/:id/lock — get characters with their approved cast + pose sheet
@@ -62,6 +63,7 @@ export async function PATCH(
         .from("characters")
         .update({ locked: true })
         .eq("id", char.id);
+      await bumpVersion(supabase, "characters", char.id, id);
     }
 
     // Check if ALL cast characters are now locked — if so advance phase
@@ -89,6 +91,7 @@ export async function PATCH(
       .update({ locked: true })
       .eq("id", character_id)
       .eq("project_id", id);
+    await bumpVersion(supabase, "characters", character_id, id);
 
     // Check if all cast characters are now locked — if so, advance phase
     const { data: unlocked } = await supabase

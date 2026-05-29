@@ -34,7 +34,13 @@ Extract the following:
    - "wardrobe": object[] — { "character": string, "description": string } for wardrobe mentions
    - "characters_present": string[] — names of characters physically present (exclude V.O.-only characters)
 
-3. **structure**:
+3. **locations** — unique production locations derived from the scenes. For each:
+   - "name": string — clean location name, matching scene.location where possible
+   - "description": string — concrete visual production description using only evidence from the document: architecture, set dressing, geography, lighting cues, atmosphere, practical constraints. If the document gives no details, write exactly: "No visual location description provided in script — awaiting production notes."
+   - "time_of_day": string — best default time from scenes using this location
+   - "mood": string — dominant mood from scenes using this location
+
+4. **structure**:
    - "acts": array of { "act_number": number, "title": string|null, "description": string, "scene_range": [start, end] }
    - "episode_title": string | null
    - "genre": string
@@ -47,6 +53,7 @@ Output format:
 {
   "characters": [...],
   "scenes": [...],
+  "locations": [...],
   "structure": { "acts": [...], "episode_title": ..., "genre": ..., "logline": ..., "themes": [...] }
 }`;
 
@@ -75,6 +82,13 @@ export interface ExtractedScene {
   characters_present: string[];
 }
 
+export interface ExtractedLocation {
+  name: string;
+  description: string;
+  time_of_day: string;
+  mood: string;
+}
+
 export interface ExtractedStructure {
   acts: {
     act_number: number;
@@ -91,6 +105,7 @@ export interface ExtractedStructure {
 export interface ExtractionResult {
   characters: ExtractedCharacter[];
   scenes: ExtractedScene[];
+  locations?: ExtractedLocation[];
   structure: ExtractedStructure;
 }
 

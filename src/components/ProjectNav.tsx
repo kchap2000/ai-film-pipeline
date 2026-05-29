@@ -1,10 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { PhaseStatus, PHASE_ORDER } from "@/lib/types";
-import { createClient } from "@/lib/supabase-browser";
 
 // Each nav step: a phase enum value OR a custom step that slots between phases
 const NAV_STEPS: Array<
@@ -30,14 +29,7 @@ interface ProjectNavProps {
 
 export default function ProjectNav({ projectId, currentPhase: phaseProp }: ProjectNavProps) {
   const pathname = usePathname();
-  const router = useRouter();
   const [currentPhase, setCurrentPhase] = useState<PhaseStatus | null>(phaseProp ?? null);
-
-  const handleSignOut = async () => {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.push("/login");
-  };
 
   useEffect(() => {
     if (!phaseProp) {

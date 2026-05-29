@@ -1,5 +1,6 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateSceneScoutImage } from "@/lib/generate-image";
+import { bumpVersion, recordProvenance } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -118,14 +119,31 @@ export async function POST(
           productionNotes,
         });
 
-        await supabase.from("scene_variations").insert({
-          scene_id: scene.id,
-          project_id: id,
-          image_url: result.url,
-          prompt_used: result.prompt,
-          variation_number: i,
-          status: "pending",
-        });
+        const { data: inserted } = await supabase
+          .from("scene_variations")
+          .insert({
+            scene_id: scene.id,
+            project_id: id,
+            image_url: result.url,
+            prompt_used: result.prompt,
+            variation_number: i,
+            status: "pending",
+          })
+          .select("id")
+          .single();
+
+        if (inserted) {
+          await recordProvenance(supabase, {
+            projectId: id,
+            assetType: "scene_variation",
+            assetId: inserted.id,
+            sources: [
+              { sourceType: "scene", sourceId: scene.id, relationship: "scene_prompt" },
+              { sourceType: "project", sourceId: id, relationship: "production_notes" },
+            ],
+            metadata: { variation_number: i },
+          });
+        }
 
         totalGenerated++;
       } catch (err) {
@@ -182,6 +200,8 @@ export async function PATCH(
         .from("scenes")
         .update({ approved_scout_image_url: variation?.image_url || null })
         .eq("id", body.scene_id);
+
+      await bumpVersion(supabase, "scenes", body.scene_id, id);
     }
 
     return NextResponse.json({ success: true });
@@ -189,11 +209,21 @@ export async function PATCH(
 
   // Lock all scenes that have an approved scout image
   if (body.lock_all) {
+    const { data: lockedScenes } = await supabase
+      .from("scenes")
+      .select("id")
+      .eq("project_id", id)
+      .not("approved_scout_image_url", "is", null);
+
     await supabase
       .from("scenes")
       .update({ locked: true })
       .eq("project_id", id)
       .not("approved_scout_image_url", "is", null);
+
+    for (const scene of lockedScenes || []) {
+      await bumpVersion(supabase, "scenes", scene.id, id);
+    }
 
     // Advance phase to storyboard
     await supabase

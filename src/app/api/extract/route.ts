@@ -152,6 +152,21 @@ export async function POST(req: NextRequest) {
 
   // 7. Derive unique locations from scenes and insert FIRST (so we can FK-link scenes to them)
   //    Scene location_id is NOT NULL-able so we insert locations, then insert scenes with location_id set.
+  const extractedLocationByKey: Record<
+    string,
+    { name: string; description: string; time_of_day: string; mood: string }
+  > = {};
+  for (const loc of extraction.locations || []) {
+    const key = (loc.name || "").toLowerCase().trim();
+    if (!key) continue;
+    extractedLocationByKey[key] = {
+      name: loc.name,
+      description: loc.description || "",
+      time_of_day: loc.time_of_day || "",
+      mood: loc.mood || "",
+    };
+  }
+
   const locationMeta: Record<string, { time_of_day: string; mood: string }> = {};
   for (const s of extraction.scenes) {
     const key = (s.location || "").toLowerCase().trim();
@@ -176,9 +191,11 @@ export async function POST(req: NextRequest) {
         uniqueLocationNames.map((key) => ({
           project_id,
           name: firstCased[key] || key,
-          description: `${firstCased[key] || key} — ${locationMeta[key].time_of_day}`,
-          time_of_day: locationMeta[key].time_of_day,
-          mood: locationMeta[key].mood,
+          description:
+            extractedLocationByKey[key]?.description ||
+            "No visual location description provided in script — awaiting production notes.",
+          time_of_day: extractedLocationByKey[key]?.time_of_day || locationMeta[key].time_of_day,
+          mood: extractedLocationByKey[key]?.mood || locationMeta[key].mood,
         }))
       )
       .select("id, name");

@@ -1,4 +1,5 @@
 import { createRouteClient } from "@/lib/supabase-route";
+import { bumpVersion } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
 
 // B1 fix: prevent Next.js from caching this route so phase_status is always fresh
@@ -76,6 +77,10 @@ export async function PATCH(
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+
+  if ("production_notes" in update) {
+    await bumpVersion(supabase, "projects", id);
   }
 
   return NextResponse.json(data);

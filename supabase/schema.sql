@@ -336,6 +336,35 @@ alter table storyboard_panels
 alter table projects add column if not exists production_notes text not null default '';
 
 -- ============================================================
+-- Migration: Project Brain provenance + source versions (2026-05-29)
+-- ============================================================
+-- Version source-of-truth rows whenever canonical creative inputs change.
+-- Generated assets record which source versions they used so the app can
+-- identify stale downstream images after a character/location/scene edit.
+alter table projects add column if not exists version integer not null default 1;
+alter table characters add column if not exists version integer not null default 1;
+alter table locations add column if not exists version integer not null default 1;
+alter table scenes add column if not exists version integer not null default 1;
+alter table storyboard_panels add column if not exists version integer not null default 1;
+
+create table if not exists asset_provenance (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  asset_type text not null,
+  asset_id uuid not null,
+  source_type text not null,
+  source_id uuid not null,
+  source_version integer not null default 1,
+  relationship text,
+  metadata jsonb not null default '{}',
+  created_at timestamp with time zone default now()
+);
+
+create index if not exists idx_asset_provenance_project on asset_provenance(project_id);
+create index if not exists idx_asset_provenance_asset on asset_provenance(asset_type, asset_id);
+create index if not exists idx_asset_provenance_source on asset_provenance(source_type, source_id);
+
+-- ============================================================
 -- Migration: Make project-uploads bucket public (2026-04-14)
 -- ============================================================
 -- Headshot uploads use getPublicUrl(); the bucket must be public or rendered
