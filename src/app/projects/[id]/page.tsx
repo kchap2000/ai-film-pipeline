@@ -7,6 +7,23 @@ import { Project, ProjectFile, PHASE_LABELS, PHASE_ORDER } from "@/lib/types";
 import PhaseIndicator from "@/components/PhaseIndicator";
 import FileUpload from "@/components/FileUpload";
 
+interface ProjectReadiness {
+  ready_for_first_frames: boolean;
+  total_panels: number;
+  checks: {
+    characters_locked: { done: number; total: number; ok: boolean };
+    locations_approved: { done: number; total: number; ok: boolean };
+    scenes_scouted: { done: number; total: number; ok: boolean };
+    scenes_have_panels: { done: number; total: number; ok: boolean };
+  };
+}
+
+interface ProjectStaleness {
+  available: boolean;
+  summary: { stale_count: number; checked_count: number };
+  by_asset_type: Record<string, unknown[]>;
+}
+
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
   const [project, setProject] = useState<Project | null>(null);
@@ -23,16 +40,8 @@ export default function ProjectDetail() {
   const [notesDirty, setNotesDirty] = useState(false);
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
-  const [readiness, setReadiness] = useState<{
-    ready_for_first_frames: boolean;
-    total_panels: number;
-    checks: {
-      characters_locked: { done: number; total: number; ok: boolean };
-      locations_approved: { done: number; total: number; ok: boolean };
-      scenes_scouted: { done: number; total: number; ok: boolean };
-      scenes_have_panels: { done: number; total: number; ok: boolean };
-    };
-  } | null>(null);
+  const [readiness, setReadiness] = useState<ProjectReadiness | null>(null);
+  const [staleness, setStaleness] = useState<ProjectStaleness | null>(null);
 
   const fetchProject = async () => {
     const res = await fetch(`/api/projects/${id}`);
@@ -74,10 +83,13 @@ export default function ProjectDetail() {
   // so Khalil can see what's blocking the next phase without visiting each
   // phase page. Silently no-ops if the endpoint 404s (old projects).
   useEffect(() => {
-    fetch(`/api/projects/${id}/readiness`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d && d.checks) setReadiness(d);
+    Promise.all([
+      fetch(`/api/projects/${id}/readiness`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/projects/${id}/staleness`).then((r) => (r.ok ? r.json() : null)),
+    ])
+      .then(([readinessData, stalenessData]) => {
+        if (readinessData && readinessData.checks) setReadiness(readinessData);
+        if (stalenessData && stalenessData.summary) setStaleness(stalenessData);
       })
       .catch(() => {});
   }, [id]);
@@ -504,6 +516,74 @@ export default function ProjectDetail() {
                   </div>
                 ))}
               </div>
+            </div>
+          </section>
+        )}
+
+        {/* Project Brain — provenance-backed stale asset detector. */}
+        {staleness && phaseIndex >= 5 && (
+          <section className="mb-10">
+            <h2 className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
+              Project Brain
+            </h2>
+            <div
+              className="rounded-xl p-5"
+              style={{
+                background:
+                  staleness.summary.stale_count > 0
+                    ? "rgba(255,138,42,0.06)"
+                    : "var(--brand-mid)",
+                border:
+                  staleness.summary.stale_count > 0
+                    ? "1px solid rgba(255,138,42,0.35)"
+                    : "1px solid var(--brand-steel)",
+              }}
+            >
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium" style={{ color: "var(--brand-white)" }}>
+                    {staleness.available
+                      ? staleness.summary.stale_count > 0
+                        ? `${staleness.summary.stale_count} generated asset references changed sources`
+                        : "Generated assets are current"
+                      : "Project Brain schema pending"}
+                  </p>
+                  <p className="text-xs mt-1" style={{ color: "var(--brand-gray)" }}>
+                    {staleness.available
+                      ? `${staleness.summary.checked_count} source links tracked across storyboard, scout, cast, and first-frame assets.`
+                      : "Apply the Project Brain migration before relying on stale-asset tracking."}
+                  </p>
+                </div>
+                {staleness.summary.stale_count > 0 && (
+                  <span
+                    className="text-[10px] uppercase tracking-widest px-3 py-1.5 rounded-full whitespace-nowrap"
+                    style={{
+                      color: "var(--brand-orange)",
+                      border: "1px solid rgba(255,138,42,0.45)",
+                    }}
+                  >
+                    Review regenerations
+                  </span>
+                )}
+              </div>
+              {staleness.summary.stale_count > 0 && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-4">
+                  {Object.entries(staleness.by_asset_type).map(([assetType, items]) => (
+                    <div
+                      key={assetType}
+                      className="px-3 py-2 rounded"
+                      style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)" }}
+                    >
+                      <p className="text-[9px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                        {assetType.replace(/_/g, " ")}
+                      </p>
+                      <p className="text-sm mt-1" style={{ color: "var(--brand-orange)" }}>
+                        {items.length}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </section>
         )}

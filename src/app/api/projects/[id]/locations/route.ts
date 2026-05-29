@@ -1,5 +1,6 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateLocationImage } from "@/lib/generate-image";
+import { bumpVersion, recordProvenance } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -177,7 +178,7 @@ export async function POST(
         uniqueLocations.map((loc) => ({
           project_id: id,
           name: loc.name,
-          description: `${loc.name} — ${loc.time_of_day}`,
+          description: "No visual location description provided in script — awaiting production notes.",
           time_of_day: loc.time_of_day,
           mood: loc.mood,
         }))
@@ -215,14 +216,31 @@ export async function POST(
           productionNotes
         );
 
-        await supabase.from("location_variations").insert({
-          location_id: loc.id,
-          project_id: id,
-          image_url: result.url,
-          prompt_used: result.prompt,
-          variation_number: i,
-          status: "pending",
-        });
+        const { data: inserted } = await supabase
+          .from("location_variations")
+          .insert({
+            location_id: loc.id,
+            project_id: id,
+            image_url: result.url,
+            prompt_used: result.prompt,
+            variation_number: i,
+            status: "pending",
+          })
+          .select("id")
+          .single();
+
+        if (inserted) {
+          await recordProvenance(supabase, {
+            projectId: id,
+            assetType: "location_variation",
+            assetId: inserted.id,
+            sources: [
+              { sourceType: "location", sourceId: loc.id, relationship: "location_prompt" },
+              { sourceType: "project", sourceId: id, relationship: "production_notes" },
+            ],
+            metadata: { variation_number: i },
+          });
+        }
 
         totalGenerated++;
       } catch (err) {
@@ -291,6 +309,8 @@ export async function PATCH(
         .from("locations")
         .update({ approved_image_url: variation?.image_url || null })
         .eq("id", body.location_id);
+
+      await bumpVersion(supabase, "locations", body.location_id, id);
     }
 
     return NextResponse.json({ success: true });
@@ -302,17 +322,28 @@ export async function PATCH(
       .from("locations")
       .update({ locked: true })
       .eq("id", body.location_id);
+    await bumpVersion(supabase, "locations", body.location_id, id);
 
     return NextResponse.json({ success: true });
   }
 
   // Lock all locations that have an approved image
   if (body.lock_all) {
+    const { data: lockedLocs } = await supabase
+      .from("locations")
+      .select("id")
+      .eq("project_id", id)
+      .not("approved_image_url", "is", null);
+
     await supabase
       .from("locations")
       .update({ locked: true })
       .eq("project_id", id)
       .not("approved_image_url", "is", null);
+
+    for (const loc of lockedLocs || []) {
+      await bumpVersion(supabase, "locations", loc.id, id);
+    }
 
     // Check if all are locked
     const { data: unlocked } = await supabase

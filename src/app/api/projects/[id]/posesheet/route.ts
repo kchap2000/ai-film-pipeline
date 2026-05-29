@@ -4,6 +4,7 @@ import {
   generateWithGemini,
   ReferenceImageUnreachableError,
 } from "@/lib/generate-image";
+import { recordProvenance } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -167,6 +168,14 @@ export async function POST(
       return NextResponse.json({ error: updateErr.message }, { status: 500 });
     }
 
+    await recordProvenance(supabase, {
+      projectId: id,
+      assetType: "pose_sheet",
+      assetId: character_id,
+      sources: [{ sourceType: "character", sourceId: character_id, relationship: "approved_headshot" }],
+      metadata: { generated: true },
+    });
+
     return NextResponse.json({
       success: true,
       character_id,
@@ -227,6 +236,14 @@ export async function PUT(
     if (updateErr) {
       return NextResponse.json({ error: updateErr.message }, { status: 500 });
     }
+
+    await recordProvenance(supabase, {
+      projectId: id,
+      assetType: "pose_sheet",
+      assetId: characterId,
+      sources: [{ sourceType: "character", sourceId: characterId, relationship: "uploaded_pose_sheet" }],
+      metadata: { storage_path: storagePath },
+    });
 
     return NextResponse.json({
       success: true,

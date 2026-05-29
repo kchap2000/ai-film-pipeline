@@ -1,5 +1,6 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateCastingImage } from "@/lib/generate-image";
+import { bumpVersion, recordProvenance } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
 
 // Vercel-compatible: each call generates exactly ONE image, fitting within 60s limit.
@@ -146,6 +147,14 @@ export async function POST(
     );
   }
 
+  await recordProvenance(supabase, {
+    projectId: id,
+    assetType: "cast_variation",
+    assetId: variation.id,
+    sources: [{ sourceType: "character", sourceId: character_id, relationship: "casting_prompt" }],
+    metadata: { variation_number: variationNum },
+  });
+
   // Advance phase to casting if not already there
   await supabase
     .from("projects")
@@ -206,6 +215,8 @@ export async function PATCH(
         .from("characters")
         .update({ approved_cast_id: variation_id })
         .eq("id", character_id);
+
+      await bumpVersion(supabase, "characters", character_id, params.id);
     }
 
     return NextResponse.json({ success: true });
@@ -284,6 +295,14 @@ export async function PUT(
       );
     }
 
+    await recordProvenance(supabase, {
+      projectId: id,
+      assetType: "cast_variation",
+      assetId: variation.id,
+      sources: [{ sourceType: "character", sourceId: characterId, relationship: "uploaded_headshot" }],
+      metadata: { storage_path: storagePath, variation_number: variationNumber },
+    });
+
     // Reject any other pending variations for this character
     await supabase
       .from("cast_variations")
@@ -297,6 +316,8 @@ export async function PUT(
       .from("characters")
       .update({ approved_cast_id: variation.id })
       .eq("id", characterId);
+
+    await bumpVersion(supabase, "characters", characterId, id);
 
     // Advance phase to casting if needed
     await supabase

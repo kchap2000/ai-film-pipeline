@@ -1,4 +1,5 @@
 import { createRouteClient } from "@/lib/supabase-route";
+import { bumpVersion } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -111,6 +112,7 @@ export async function PATCH(
       .single();
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    await bumpVersion(supabase, "characters", character_id, id);
     return NextResponse.json({ success: true, character: data });
   }
 
@@ -137,6 +139,7 @@ export async function PATCH(
       .single();
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+    await bumpVersion(supabase, "scenes", scene_id, id);
     return NextResponse.json({ success: true, scene: data });
   }
 

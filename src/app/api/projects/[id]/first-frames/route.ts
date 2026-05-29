@@ -3,10 +3,19 @@ import {
   generateFirstFrame,
   ReferenceImageUnreachableError,
 } from "@/lib/generate-image";
+import { recordProvenance, type ProvenanceSource } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
+
+interface FirstFrameSceneContext {
+  id: string;
+  location: string | null;
+  time_of_day: string | null;
+  mood: string | null;
+  approved_scout_image_url: string | null;
+}
 
 // ──────────────────────────────────────────────────────────────
 // GET /api/projects/:id/first-frames
@@ -129,21 +138,21 @@ export async function POST(
     .from("scenes")
     .select("id, location, time_of_day, mood, approved_scout_image_url")
     .in("id", sceneIds);
-  const sceneById: Record<string, (typeof scenes extends Array<infer T> ? T : never)> = {};
-  for (const s of scenes || []) sceneById[s.id] = s;
+  const sceneById: Record<string, FirstFrameSceneContext> = {};
+  for (const s of (scenes || []) as FirstFrameSceneContext[]) sceneById[s.id] = s;
 
   // Characters (name → approved headshot URL). Only used for characters in any shot.
   const allCharNames = new Set<string>();
   for (const p of panels) for (const name of p.characters_in_shot || []) allCharNames.add(name);
 
   const headshotByName: Record<string, string | null> = {};
+  const charsByName: Record<string, { id: string; approved_cast_id: string | null; voice_only: boolean }> = {};
   if (allCharNames.size > 0) {
     // We need each character's approved cast variation image_url
     const { data: chars } = await supabase
       .from("characters")
       .select("id, name, approved_cast_id, voice_only")
       .eq("project_id", id);
-    const charsByName: Record<string, { id: string; approved_cast_id: string | null; voice_only: boolean }> = {};
     for (const c of chars || []) charsByName[c.name] = c;
 
     const castIds = (chars || [])
@@ -157,7 +166,7 @@ export async function POST(
         .in("id", castIds);
       const urlByCastId: Record<string, string> = {};
       for (const v of variations || []) urlByCastId[v.id] = v.image_url;
-      for (const name of allCharNames) {
+      for (const name of Array.from(allCharNames)) {
         const c = charsByName[name];
         if (c && c.approved_cast_id && !c.voice_only) {
           headshotByName[name] = urlByCastId[c.approved_cast_id] || null;
@@ -181,12 +190,11 @@ export async function POST(
       continue;
     }
 
-    const characterReferences = (panel.characters_in_shot || [])
-      .map((name: string) => {
-        const url = headshotByName[name];
-        return url ? { name, imageUrl: url } : null;
-      })
-      .filter((x): x is { name: string; imageUrl: string } => x !== null);
+    const characterReferences: { name: string; imageUrl: string }[] = [];
+    for (const name of panel.characters_in_shot || []) {
+      const url = headshotByName[name];
+      if (url) characterReferences.push({ name, imageUrl: url });
+    }
 
     try {
       const result = await generateFirstFrame({
@@ -223,6 +231,24 @@ export async function POST(
       }
 
       framesGenerated++;
+      const sources: ProvenanceSource[] = [
+        { sourceType: "storyboard_panel", sourceId: panel.id, relationship: "panel_prompt" },
+        { sourceType: "scene", sourceId: panel.scene_id, relationship: "scene_context" },
+        { sourceType: "project", sourceId: id, relationship: "production_notes" },
+      ];
+      for (const name of panel.characters_in_shot || []) {
+        const charId = charsByName[name]?.id;
+        if (charId) {
+          sources.push({ sourceType: "character", sourceId: charId, relationship: "character_identity" });
+        }
+      }
+      await recordProvenance(supabase, {
+        projectId: id,
+        assetType: "first_frame",
+        assetId: inserted.id,
+        sources,
+        metadata: { panel_number: panel.panel_number, aspect_ratio: "16:9" },
+      });
     } catch (err) {
       const msg =
         err instanceof ReferenceImageUnreachableError
@@ -351,6 +377,14 @@ export async function PUT(
   if (insertErr || !inserted) {
     return NextResponse.json({ error: insertErr?.message || "Insert failed" }, { status: 500 });
   }
+
+  await recordProvenance(supabase, {
+    projectId: id,
+    assetType: "first_frame",
+    assetId: inserted.id,
+    sources: [{ sourceType: "storyboard_panel", sourceId: panel_id, relationship: "uploaded_replacement" }],
+    metadata: { storage_path },
+  });
 
   // Flip any prior approved to replaced
   await supabase

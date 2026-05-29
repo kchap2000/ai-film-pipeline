@@ -1,5 +1,6 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateStoryboardPanel } from "@/lib/generate-image";
+import { bumpVersion, recordProvenance, type ProvenanceSource } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -100,11 +101,11 @@ export async function POST(
     // per-character approved headshot URLs for multimodal identity refs.
     supabase
       .from("characters")
-      .select("name, description, approved_cast_id, voice_only")
+      .select("id, name, description, approved_cast_id, voice_only")
       .eq("project_id", id),
     supabase
       .from("locations")
-      .select("name, description, time_of_day, mood")
+      .select("id, name, description, time_of_day, mood")
       .eq("project_id", id),
     supabase
       .from("projects")
@@ -116,8 +117,10 @@ export async function POST(
 
   const scenes = scenesRes.data || [];
   const charDescMap: Record<string, string> = {};
+  const charIdByName: Record<string, string> = {};
   for (const c of charsRes.data || []) {
     charDescMap[c.name] = c.description || "";
+    charIdByName[c.name] = c.id;
   }
 
   // Build name → approved headshot URL lookup. Voice-only characters are
@@ -141,9 +144,10 @@ export async function POST(
       }
     }
   }
-  const locMap: Record<string, { description: string; time_of_day: string; mood: string }> = {};
+  const locMap: Record<string, { id: string; description: string; time_of_day: string; mood: string }> = {};
   for (const l of locsRes.data || []) {
     locMap[l.name.toLowerCase().trim()] = {
+      id: l.id,
       description: l.description || "",
       time_of_day: l.time_of_day || "",
       mood: l.mood || "",
@@ -229,6 +233,7 @@ Wardrobe: ${(scene.wardrobe || []).join(", ") || "None"}`,
     // Generate panel images and save
     const locKey = (scene.location || "").toLowerCase().trim();
     const locInfo = locMap[locKey] || {
+      id: scene.location_id || "",
       description: scene.location || "",
       time_of_day: scene.time_of_day || "",
       mood: scene.mood || "",
@@ -266,20 +271,48 @@ Wardrobe: ${(scene.wardrobe || []).join(", ") || "None"}`,
           characterReferences,
         });
 
-        await supabase.from("storyboard_panels").insert({
-          project_id: id,
-          scene_id: scene.id,
-          panel_number: panelNumber,
-          shot_type: shot.shot_type,
-          camera_angle: shot.camera_angle,
-          camera_movement: shot.camera_movement,
-          action_description: shot.action_description,
-          dialogue: shot.dialogue || "",
-          characters_in_shot: shot.characters_in_shot || [],
-          image_url: result.url,
-          prompt_used: result.prompt,
-          duration_seconds: shot.duration_seconds || 3.0,
-        });
+        const { data: inserted } = await supabase
+          .from("storyboard_panels")
+          .insert({
+            project_id: id,
+            scene_id: scene.id,
+            panel_number: panelNumber,
+            shot_type: shot.shot_type,
+            camera_angle: shot.camera_angle,
+            camera_movement: shot.camera_movement,
+            action_description: shot.action_description,
+            dialogue: shot.dialogue || "",
+            characters_in_shot: shot.characters_in_shot || [],
+            image_url: result.url,
+            prompt_used: result.prompt,
+            duration_seconds: shot.duration_seconds || 3.0,
+          })
+          .select("id")
+          .single();
+
+        if (inserted) {
+          const sources: ProvenanceSource[] = [
+            { sourceType: "scene", sourceId: scene.id, relationship: "shot_breakdown" },
+            { sourceType: "project", sourceId: id, relationship: "production_notes" },
+          ];
+          if (locInfo.id) {
+            sources.push({ sourceType: "location", sourceId: locInfo.id, relationship: "location_context" });
+          }
+          for (const name of shot.characters_in_shot || []) {
+            const charId = charIdByName[name];
+            if (charId) {
+              sources.push({ sourceType: "character", sourceId: charId, relationship: "character_identity" });
+            }
+          }
+
+          await recordProvenance(supabase, {
+            projectId: id,
+            assetType: "storyboard_panel",
+            assetId: inserted.id,
+            sources,
+            metadata: { scene_number: scene.scene_number, panel_number: panelNumber },
+          });
+        }
 
         totalPanels++;
       } catch (err) {
@@ -342,5 +375,6 @@ export async function PATCH(
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
+  await bumpVersion(supabase, "storyboard_panels", panel_id, id);
   return NextResponse.json({ success: true, panel: data });
 }
