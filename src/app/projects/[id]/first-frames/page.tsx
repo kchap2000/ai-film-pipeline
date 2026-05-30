@@ -190,8 +190,9 @@ export default function FirstFramesPage() {
     setGenError(null);
     cancelRef.current = false;
 
-    // Target panels without an approved frame
-    const targets = panels.filter((p) => !p.approved_first_frame_id);
+    // Target panels without any active generated frame. Existing pending
+    // frames should not be duplicated by a bulk run.
+    const targets = panels.filter((p) => !displayFrameFor(p));
     setGenProgress({ done: 0, total: targets.length });
     const failures: string[] = [];
 
@@ -353,7 +354,8 @@ export default function FirstFramesPage() {
   const approvedCount = panels.filter((p) => p.approved_first_frame_id).length;
   const ready = readiness?.ready_for_first_frames ?? false;
   const totalPanels = panels.length;
-  const generatedCount = panels.filter((p) => p.frames.length > 0).length;
+  const generatedCount = panels.filter((p) => displayFrameFor(p)).length;
+  const missingCount = Math.max(totalPanels - generatedCount, 0);
   const displayAspectLabel = aspectRatioLabel(projectAspectRatio);
 
   return (
@@ -403,13 +405,15 @@ export default function FirstFramesPage() {
                 )}
                 <button
                   onClick={generateAll}
-                  disabled={!ready || generating || totalPanels === 0}
+                  disabled={!ready || generating || missingCount === 0}
                   className="text-xs uppercase tracking-widest px-5 py-2.5 text-green-400 border border-green-800/50 hover:bg-green-950/30 transition-colors disabled:opacity-30 disabled:cursor-not-allowed no-print"
                 >
                   {generating && genProgress
                     ? `Generating ${genProgress.done}/${genProgress.total}…`
                     : ready
-                    ? `Generate First Frames${totalPanels > 0 ? ` (${totalPanels})` : ""}`
+                    ? missingCount > 0
+                      ? `Generate Missing Frames (${missingCount})`
+                      : "All Frames Generated"
                     : `Generate First Frames (not ready)`}
                 </button>
                 {approvedCount > 0 && (

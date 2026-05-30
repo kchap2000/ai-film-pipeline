@@ -144,6 +144,19 @@ export async function POST(
     return NextResponse.json({ error: "No storyboard panels found" }, { status: 400 });
   }
 
+  const existingFramePanelIds = new Set<string>();
+  if (!singlePanelId) {
+    const { data: existingFrames } = await supabase
+      .from("first_frames")
+      .select("panel_id, status")
+      .eq("project_id", id)
+      .neq("status", "replaced");
+
+    for (const frame of existingFrames || []) {
+      if (frame.panel_id) existingFramePanelIds.add(frame.panel_id);
+    }
+  }
+
   // Scenes (for location/time_of_day/mood + approved_scout_image_url)
   const sceneIds = Array.from(new Set(panels.map((p) => p.scene_id)));
   const { data: scenes } = await supabase
@@ -193,8 +206,9 @@ export async function POST(
   const errors: string[] = [];
 
   for (const panel of panels) {
-    // Skip panels that already have an approved frame when running bulk
-    if (!singlePanelId && panel.approved_first_frame_id) continue;
+    // Skip panels that already have an active frame when running bulk.
+    // Individual panel regeneration intentionally still creates a new candidate.
+    if (!singlePanelId && existingFramePanelIds.has(panel.id)) continue;
 
     const scene = sceneById[panel.scene_id];
     if (!scene) {
