@@ -1,6 +1,7 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateLocationImage } from "@/lib/generate-image";
 import { bumpVersion, recordProvenance } from "@/lib/provenance";
+import { normalizeProjectAspectRatio } from "@/lib/types";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +18,7 @@ export async function GET(
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const [locsRes, varsRes, scenesRes] = await Promise.all([
+  const [locsRes, varsRes, scenesRes, projectRes] = await Promise.all([
     supabase
       .from("locations")
       .select("id, project_id, name, description, time_of_day, mood, locked")
@@ -25,7 +26,7 @@ export async function GET(
       .order("name", { ascending: true }),
     supabase
       .from("location_variations")
-      .select("id, location_id, variation_number, status, prompt_used, rejection_note, created_at")
+      .select("id, location_id, variation_number, status, prompt_used, rejection_note, created_at, aspect_ratio")
       .eq("project_id", id)
       .order("variation_number", { ascending: true }),
     supabase
@@ -33,6 +34,11 @@ export async function GET(
       .select("id, scene_number, location, time_of_day, mood, action_summary, characters_present")
       .eq("project_id", id)
       .order("scene_number", { ascending: true }),
+    supabase
+      .from("projects")
+      .select("aspect_ratio")
+      .eq("id", id)
+      .single(),
   ]);
 
   const varsByLocation: Record<string, typeof varsRes.data> = {};
@@ -59,7 +65,13 @@ export async function GET(
     scenes: scenesByLocation[loc.name.toLowerCase().trim()] || [],
   }));
 
-  return NextResponse.json({ locations, allScenes: scenesRes.data || [] });
+  return NextResponse.json({
+    locations,
+    allScenes: scenesRes.data || [],
+    project: {
+      aspect_ratio: normalizeProjectAspectRatio(projectRes.data?.aspect_ratio),
+    },
+  });
 }
 
 // POST /api/projects/:id/locations — extract unique locations from scenes + generate images
@@ -76,10 +88,11 @@ export async function POST(
   // Fetch per-project production directive once so every variation honors it
   const { data: projectRow } = await supabase
     .from("projects")
-    .select("production_notes")
+    .select("production_notes, aspect_ratio")
     .eq("id", id)
     .single();
   const productionNotes: string = projectRow?.production_notes || "";
+  const aspectRatio = normalizeProjectAspectRatio(projectRow?.aspect_ratio);
 
   // If no locations exist yet, extract them from scenes
   const { data: existingLocs } = await supabase
@@ -213,7 +226,8 @@ export async function POST(
           loc.time_of_day,
           loc.mood,
           i,
-          productionNotes
+          productionNotes,
+          aspectRatio
         );
 
         const { data: inserted } = await supabase
@@ -223,6 +237,7 @@ export async function POST(
             project_id: id,
             image_url: result.url,
             prompt_used: result.prompt,
+            aspect_ratio: aspectRatio,
             variation_number: i,
             status: "pending",
           })
@@ -238,7 +253,7 @@ export async function POST(
               { sourceType: "location", sourceId: loc.id, relationship: "location_prompt" },
               { sourceType: "project", sourceId: id, relationship: "production_notes" },
             ],
-            metadata: { variation_number: i },
+            metadata: { variation_number: i, aspect_ratio: aspectRatio },
           });
         }
 

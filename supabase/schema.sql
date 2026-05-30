@@ -336,6 +336,48 @@ alter table storyboard_panels
 alter table projects add column if not exists production_notes text not null default '';
 
 -- ============================================================
+-- Migration: Project delivery aspect ratio (2026-05-30)
+-- ============================================================
+-- Project-level output format for downstream visual assets. Existing projects
+-- default to the legacy widescreen format; new projects can choose 9:16,
+-- 16:9, 2.39:1, or 1:1 before any generations are created.
+alter table projects add column if not exists aspect_ratio text not null default '16:9';
+alter table location_variations add column if not exists aspect_ratio text not null default '16:9';
+alter table scene_variations add column if not exists aspect_ratio text not null default '16:9';
+alter table storyboard_panels add column if not exists aspect_ratio text not null default '16:9';
+alter table first_frames add column if not exists aspect_ratio text not null default '16:9';
+
+do $$ begin
+  alter table projects
+    add constraint projects_aspect_ratio_check
+    check (aspect_ratio in ('9:16', '16:9', '2.39:1', '1:1'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table location_variations
+    add constraint location_variations_aspect_ratio_check
+    check (aspect_ratio in ('9:16', '16:9', '2.39:1', '1:1'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table scene_variations
+    add constraint scene_variations_aspect_ratio_check
+    check (aspect_ratio in ('9:16', '16:9', '2.39:1', '1:1'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table storyboard_panels
+    add constraint storyboard_panels_aspect_ratio_check
+    check (aspect_ratio in ('9:16', '16:9', '2.39:1', '1:1'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table first_frames
+    add constraint first_frames_aspect_ratio_check
+    check (aspect_ratio in ('9:16', '16:9', '2.39:1', '1:1'));
+exception when duplicate_object then null; end $$;
+
+-- ============================================================
 -- Migration: Project Brain provenance + source versions (2026-05-29)
 -- ============================================================
 -- Version source-of-truth rows whenever canonical creative inputs change.

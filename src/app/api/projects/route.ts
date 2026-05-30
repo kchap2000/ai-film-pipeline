@@ -1,4 +1,5 @@
 import { createRouteClient } from "@/lib/supabase-route";
+import { normalizeProjectAspectRatio } from "@/lib/types";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -38,6 +39,7 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
   const { title, type, client_name } = body;
+  const aspectRatio = normalizeProjectAspectRatio(body.aspect_ratio, "9:16");
 
   if (!title || !type) {
     return NextResponse.json(
@@ -52,6 +54,7 @@ export async function POST(req: NextRequest) {
       title,
       type,
       client_name: type === "client" ? client_name : null,
+      aspect_ratio: aspectRatio,
       phase_status: "ingestion",
     })
     .select()

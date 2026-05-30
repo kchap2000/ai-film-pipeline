@@ -4,12 +4,19 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import ProjectNav from "@/components/ProjectNav";
+import {
+  aspectRatioLabel,
+  aspectRatioToCss,
+  normalizeProjectAspectRatio,
+  type ProjectAspectRatio,
+} from "@/lib/types";
 
 interface SceneVariation {
   id: string;
   scene_id: string;
   status: "pending" | "approved" | "rejected";
   variation_number: number;
+  aspect_ratio: ProjectAspectRatio;
 }
 
 interface ScoutScene {
@@ -36,6 +43,7 @@ const SCENE_TYPE_COLORS: Record<string, string> = {
 export default function SceneScoutingPage() {
   const { id } = useParams<{ id: string }>();
   const [scenes, setScenes] = useState<ScoutScene[]>([]);
+  const [projectAspectRatio, setProjectAspectRatio] = useState<ProjectAspectRatio>("16:9");
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [genScene, setGenScene] = useState<string | null>(null);
@@ -53,6 +61,7 @@ export default function SceneScoutingPage() {
       const data = await res.json();
       const s: ScoutScene[] = data.scenes || [];
       setScenes(s);
+      setProjectAspectRatio(normalizeProjectAspectRatio(data.project?.aspect_ratio));
       if (!selectedScene && s.length > 0) {
         setSelectedScene(s[0].id);
       }
@@ -184,6 +193,9 @@ export default function SceneScoutingPage() {
                 </h1>
                 <p className="text-xs mt-2" style={{ color: "var(--brand-gray)" }}>
                   {scenes.length} scenes &middot; 3 atmospheric reference images each &middot; approve the best visual for each scene
+                </p>
+                <p className="text-[10px] uppercase tracking-widest mt-3" style={{ color: "var(--brand-orange)" }}>
+                  Output format: {aspectRatioLabel(projectAspectRatio)}
                 </p>
               </div>
               <div className="flex gap-3">
@@ -413,7 +425,13 @@ export default function SceneScoutingPage() {
                             }}
                           >
                             {/* Image */}
-                            <div className="aspect-video relative overflow-hidden" style={{ background: "var(--brand-navy)" }}>
+                            <div
+                              className="aspect-video relative overflow-hidden"
+                              style={{
+                                background: "var(--brand-navy)",
+                                aspectRatio: aspectRatioToCss(v.aspect_ratio || projectAspectRatio),
+                              }}
+                            >
                               {imageCache[v.id] ? (
                                 <img
                                   src={imageCache[v.id]}

@@ -1,6 +1,7 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateSceneScoutImage } from "@/lib/generate-image";
 import { bumpVersion, recordProvenance } from "@/lib/provenance";
+import { normalizeProjectAspectRatio } from "@/lib/types";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -17,7 +18,7 @@ export async function GET(
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const [scenesRes, varsRes] = await Promise.all([
+  const [scenesRes, varsRes, projectRes] = await Promise.all([
     supabase
       .from("scenes")
       .select("id, project_id, scene_number, location, time_of_day, mood, action_summary, characters_present, props, wardrobe, locked, scene_type")
@@ -25,9 +26,14 @@ export async function GET(
       .order("scene_number", { ascending: true }),
     supabase
       .from("scene_variations")
-      .select("id, scene_id, variation_number, status, prompt_used, created_at")
+      .select("id, scene_id, variation_number, status, prompt_used, created_at, aspect_ratio")
       .eq("project_id", id)
       .order("variation_number", { ascending: true }),
+    supabase
+      .from("projects")
+      .select("aspect_ratio")
+      .eq("id", id)
+      .single(),
   ]);
 
   const varsByScene: Record<string, typeof varsRes.data> = {};
@@ -41,7 +47,12 @@ export async function GET(
     variations: varsByScene[scene.id] || [],
   }));
 
-  return NextResponse.json({ scenes });
+  return NextResponse.json({
+    scenes,
+    project: {
+      aspect_ratio: normalizeProjectAspectRatio(projectRes.data?.aspect_ratio),
+    },
+  });
 }
 
 // POST /api/projects/:id/scenes — generate scout images for all scenes (or one)
@@ -74,10 +85,11 @@ export async function POST(
   // Fetch per-project production directive once so every variation honors it
   const { data: projectRow } = await supabase
     .from("projects")
-    .select("production_notes")
+    .select("production_notes, aspect_ratio")
     .eq("id", id)
     .single();
   const productionNotes: string = projectRow?.production_notes || "";
+  const aspectRatio = normalizeProjectAspectRatio(projectRow?.aspect_ratio);
 
   // Fetch all characters so we can include descriptions in prompts
   const { data: characters } = await supabase
@@ -117,6 +129,7 @@ export async function POST(
           characterDescriptions: charDescriptions,
           variationNumber: i,
           productionNotes,
+          aspectRatio,
         });
 
         const { data: inserted } = await supabase
@@ -126,6 +139,7 @@ export async function POST(
             project_id: id,
             image_url: result.url,
             prompt_used: result.prompt,
+            aspect_ratio: aspectRatio,
             variation_number: i,
             status: "pending",
           })
@@ -141,7 +155,7 @@ export async function POST(
               { sourceType: "scene", sourceId: scene.id, relationship: "scene_prompt" },
               { sourceType: "project", sourceId: id, relationship: "production_notes" },
             ],
-            metadata: { variation_number: i },
+            metadata: { variation_number: i, aspect_ratio: aspectRatio },
           });
         }
 

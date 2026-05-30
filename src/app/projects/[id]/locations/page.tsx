@@ -4,6 +4,12 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import ProjectNav from "@/components/ProjectNav";
+import {
+  aspectRatioLabel,
+  aspectRatioToCss,
+  normalizeProjectAspectRatio,
+  type ProjectAspectRatio,
+} from "@/lib/types";
 
 interface LocationVariation {
   id: string;
@@ -11,6 +17,7 @@ interface LocationVariation {
   status: "pending" | "approved" | "rejected";
   rejection_note: string | null;
   variation_number: number;
+  aspect_ratio: ProjectAspectRatio;
 }
 
 interface LocationScene {
@@ -36,6 +43,7 @@ interface Location {
 export default function LocationBiblePage() {
   const { id } = useParams<{ id: string }>();
   const [locations, setLocations] = useState<Location[]>([]);
+  const [projectAspectRatio, setProjectAspectRatio] = useState<ProjectAspectRatio>("16:9");
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
@@ -51,6 +59,7 @@ export default function LocationBiblePage() {
     if (res.ok) {
       const data = await res.json();
       setLocations(data.locations || []);
+      setProjectAspectRatio(normalizeProjectAspectRatio(data.project?.aspect_ratio));
       if (!selectedLoc && data.locations?.length > 0) {
         setSelectedLoc(data.locations[0].id);
       }
@@ -214,6 +223,9 @@ export default function LocationBiblePage() {
             </h1>
             <p className="text-xs mt-2" style={{ color: "var(--brand-gray)" }}>
               {locations.length} locations &middot; 5 variations each
+            </p>
+            <p className="text-[10px] uppercase tracking-widest mt-3" style={{ color: "var(--brand-orange)" }}>
+              Output format: {aspectRatioLabel(projectAspectRatio)}
             </p>
           </div>
           <div className="flex gap-3">
@@ -389,7 +401,13 @@ export default function LocationBiblePage() {
                           opacity: v.status === "rejected" ? 0.4 : 1,
                         }}
                       >
-                        <div className="aspect-[4/3] relative" style={{ background: "var(--brand-navy)" }}>
+                        <div
+                          className="aspect-[4/3] relative"
+                          style={{
+                            background: "var(--brand-navy)",
+                            aspectRatio: aspectRatioToCss(v.aspect_ratio || projectAspectRatio),
+                          }}
+                        >
                           {imageCache[v.id] ? (
                             <img
                               src={imageCache[v.id]}

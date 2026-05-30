@@ -5,6 +5,12 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import ProjectNav from "@/components/ProjectNav";
 import { createClient } from "@/lib/supabase-browser";
+import {
+  aspectRatioLabel,
+  aspectRatioToCss,
+  normalizeProjectAspectRatio,
+  type ProjectAspectRatio,
+} from "@/lib/types";
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -29,6 +35,7 @@ interface PanelRow {
   dialogue: string;
   characters_in_shot: string[];
   duration_seconds: number;
+  aspect_ratio: ProjectAspectRatio;
   approved_first_frame_id: string | null;
   frames: Frame[];
   scene: {
@@ -94,6 +101,7 @@ async function compressImage(file: File, maxPx = 1920, quality = 0.92): Promise<
 export default function FirstFramesPage() {
   const { id } = useParams<{ id: string }>();
   const [panels, setPanels] = useState<PanelRow[]>([]);
+  const [projectAspectRatio, setProjectAspectRatio] = useState<ProjectAspectRatio>("16:9");
   const [readiness, setReadiness] = useState<Readiness | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -119,6 +127,7 @@ export default function FirstFramesPage() {
     if (framesRes.ok) {
       const data = await framesRes.json();
       setPanels(data.panels || []);
+      setProjectAspectRatio(normalizeProjectAspectRatio(data.project?.aspect_ratio));
     }
     if (readinessRes.ok) {
       const data = await readinessRes.json();
@@ -184,6 +193,7 @@ export default function FirstFramesPage() {
     // Target panels without an approved frame
     const targets = panels.filter((p) => !p.approved_first_frame_id);
     setGenProgress({ done: 0, total: targets.length });
+    const failures: string[] = [];
 
     outer: for (let i = 0; i < targets.length; i++) {
       if (cancelRef.current) {
@@ -200,9 +210,13 @@ export default function FirstFramesPage() {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || `Panel ${panel.panel_number} failed`);
+        if (Array.isArray(data.errors) && data.errors.length > 0) {
+          throw new Error(data.errors.join("; "));
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`Panel ${panel.panel_number}:`, msg);
+        failures.push(`Panel ${panel.panel_number}: ${msg}`);
       }
       setGenProgress({ done: i + 1, total: targets.length });
       // Refresh list so thumbnails appear live between panels
@@ -211,6 +225,9 @@ export default function FirstFramesPage() {
     setGeneratingPanel(null);
     setGenerating(false);
     setGenProgress(null);
+    if (failures.length > 0) {
+      setGenError(`Some frames did not generate: ${failures.slice(0, 4).join("; ")}${failures.length > 4 ? "..." : ""}`);
+    }
   };
 
   const regeneratePanel = async (panelId: string) => {
@@ -336,6 +353,8 @@ export default function FirstFramesPage() {
   const approvedCount = panels.filter((p) => p.approved_first_frame_id).length;
   const ready = readiness?.ready_for_first_frames ?? false;
   const totalPanels = panels.length;
+  const generatedCount = panels.filter((p) => p.frames.length > 0).length;
+  const displayAspectLabel = aspectRatioLabel(projectAspectRatio);
 
   return (
     <>
@@ -365,7 +384,10 @@ export default function FirstFramesPage() {
                 </h1>
                 <p className="text-xs mt-2" style={{ color: "var(--brand-gray)" }}>
                   Photorealistic shoot-day reference frames, identity-locked to approved headshots and scene scouts.
-                  {totalPanels > 0 && ` · ${approvedCount}/${totalPanels} approved`}
+                  {totalPanels > 0 && ` · ${generatedCount}/${totalPanels} generated · ${approvedCount}/${totalPanels} approved`}
+                </p>
+                <p className="text-[10px] uppercase tracking-widest mt-3" style={{ color: "var(--brand-orange)" }}>
+                  Output format: {displayAspectLabel}
                 </p>
               </div>
               <div className="flex items-center gap-3">
@@ -447,6 +469,24 @@ export default function FirstFramesPage() {
             </div>
           )}
 
+          {ready && generatedCount < totalPanels && (
+            <div
+              className="rounded-xl p-5 mb-8 no-print"
+              style={{
+                background: "rgba(76,201,240,0.05)",
+                border: "1px solid rgba(76,201,240,0.25)",
+              }}
+            >
+              <p className="text-xs uppercase tracking-widest mb-2" style={{ color: "var(--brand-cyan)" }}>
+                First Frames are ready to generate
+              </p>
+              <p className="text-sm leading-relaxed" style={{ color: "var(--brand-white)" }}>
+                Empty slots are storyboard panels that do not have a generated first frame yet. Use
+                Generate First Frames to fill every missing {displayAspectLabel} frame, or use Generate on a single panel.
+              </p>
+            </div>
+          )}
+
           {/* Error banner */}
           {genError && (
             <div
@@ -483,6 +523,7 @@ export default function FirstFramesPage() {
               {panels.map((panel) => {
                 const frame = displayFrameFor(panel);
                 const frameImg = frame ? imageCache[`frame-${frame.id}`] : null;
+                const cardAspectRatio = aspectRatioToCss(frame?.aspect_ratio || projectAspectRatio);
                 const isApproved = !!panel.approved_first_frame_id;
                 const isGenThis = generatingPanel === panel.id;
                 const isUploading = uploadingFor === panel.id;
@@ -498,7 +539,7 @@ export default function FirstFramesPage() {
                     {/* Frame image / placeholder */}
                     <div
                       className="aspect-video flex items-center justify-center"
-                      style={{ background: "var(--brand-navy)" }}
+                      style={{ background: "var(--brand-navy)", aspectRatio: cardAspectRatio }}
                     >
                       {frameImg ? (
                         // eslint-disable-next-line @next/next/no-img-element
@@ -512,8 +553,13 @@ export default function FirstFramesPage() {
                           Generating…
                         </div>
                       ) : (
-                        <div className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
-                          Not generated yet
+                        <div className="text-center px-4">
+                          <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                            Frame not generated yet
+                          </p>
+                          <p className="text-[11px] mt-2 leading-relaxed max-w-xs" style={{ color: "var(--brand-gray)", opacity: 0.75 }}>
+                            Click Generate to create this {displayAspectLabel} shoot-day frame.
+                          </p>
                         </div>
                       )}
                     </div>

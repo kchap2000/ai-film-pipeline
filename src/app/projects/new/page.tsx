@@ -3,12 +3,20 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import type { ProjectType } from "@/lib/types";
+import {
+  DEFAULT_NEW_PROJECT_ASPECT_RATIO,
+  PROJECT_ASPECT_RATIO_OPTIONS,
+  type ProjectAspectRatio,
+  type ProjectType,
+} from "@/lib/types";
 
 export default function NewProject() {
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [type, setType] = useState<ProjectType>("personal");
+  const [aspectRatio, setAspectRatio] = useState<ProjectAspectRatio>(
+    DEFAULT_NEW_PROJECT_ASPECT_RATIO
+  );
   const [clientName, setClientName] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,6 +35,7 @@ export default function NewProject() {
         body: JSON.stringify({
           title: title.trim(),
           type,
+          aspect_ratio: aspectRatio,
           client_name: type === "client" ? clientName.trim() : null,
         }),
       });
@@ -132,6 +141,46 @@ export default function NewProject() {
               />
             </div>
           )}
+
+          {/* Aspect Ratio */}
+          <div>
+            <label className="block text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
+              Delivery Format
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {PROJECT_ASPECT_RATIO_OPTIONS.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setAspectRatio(option.value)}
+                  className="text-left px-4 py-3 transition-colors"
+                  style={{
+                    border:
+                      aspectRatio === option.value
+                        ? "1px solid var(--brand-orange)"
+                        : "1px solid var(--brand-steel)",
+                    background:
+                      aspectRatio === option.value
+                        ? "rgba(255,138,42,0.08)"
+                        : "var(--brand-mid)",
+                  }}
+                >
+                  <span
+                    className="block text-xs font-semibold"
+                    style={{ color: aspectRatio === option.value ? "var(--brand-orange)" : "var(--brand-white)" }}
+                  >
+                    {option.label}
+                  </span>
+                  <span className="block text-[11px] mt-1 leading-relaxed" style={{ color: "var(--brand-gray)" }}>
+                    {option.description}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="text-xs mt-3 leading-relaxed" style={{ color: "var(--brand-gray)" }}>
+              This controls scene scouts, storyboard panels, and first frames so generated assets match the final edit.
+            </p>
+          </div>
 
           {/* Error */}
           {error && (
