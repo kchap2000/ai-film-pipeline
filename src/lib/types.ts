@@ -1,5 +1,62 @@
 export type ProjectType = "client" | "personal";
 
+export const PROJECT_ASPECT_RATIO_OPTIONS = [
+  {
+    value: "9:16",
+    label: "9:16 Vertical",
+    shortLabel: "9:16",
+    description: "Microdramas, Reels, TikTok, Shorts",
+    css: "9 / 16",
+  },
+  {
+    value: "16:9",
+    label: "16:9 Widescreen",
+    shortLabel: "16:9",
+    description: "YouTube, web, standard horizontal film",
+    css: "16 / 9",
+  },
+  {
+    value: "2.39:1",
+    label: "2.39:1 Cinematic",
+    shortLabel: "2.39",
+    description: "Anamorphic and theatrical widescreen",
+    css: "2.39 / 1",
+  },
+  {
+    value: "1:1",
+    label: "1:1 Square",
+    shortLabel: "1:1",
+    description: "Square social and pitch-board exports",
+    css: "1 / 1",
+  },
+] as const;
+
+export type ProjectAspectRatio = typeof PROJECT_ASPECT_RATIO_OPTIONS[number]["value"];
+
+export const LEGACY_PROJECT_ASPECT_RATIO: ProjectAspectRatio = "16:9";
+export const DEFAULT_NEW_PROJECT_ASPECT_RATIO: ProjectAspectRatio = "9:16";
+
+export function isProjectAspectRatio(value: unknown): value is ProjectAspectRatio {
+  return PROJECT_ASPECT_RATIO_OPTIONS.some((option) => option.value === value);
+}
+
+export function normalizeProjectAspectRatio(
+  value: unknown,
+  fallback: ProjectAspectRatio = LEGACY_PROJECT_ASPECT_RATIO
+): ProjectAspectRatio {
+  return isProjectAspectRatio(value) ? value : fallback;
+}
+
+export function aspectRatioToCss(value: unknown): string {
+  const ratio = normalizeProjectAspectRatio(value);
+  return PROJECT_ASPECT_RATIO_OPTIONS.find((option) => option.value === ratio)?.css || "16 / 9";
+}
+
+export function aspectRatioLabel(value: unknown): string {
+  const ratio = normalizeProjectAspectRatio(value);
+  return PROJECT_ASPECT_RATIO_OPTIONS.find((option) => option.value === ratio)?.label || "16:9 Widescreen";
+}
+
 export type PhaseStatus =
   | "ingestion"
   | "extraction"
@@ -39,6 +96,7 @@ export interface Project {
   client_name: string | null;
   phase_status: PhaseStatus;
   archived: boolean;
+  aspect_ratio: ProjectAspectRatio;
   production_notes: string;
   version: number;
   created_at: string;

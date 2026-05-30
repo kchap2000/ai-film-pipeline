@@ -4,6 +4,7 @@ import {
   ReferenceImageUnreachableError,
 } from "@/lib/generate-image";
 import { recordProvenance, type ProvenanceSource } from "@/lib/provenance";
+import { normalizeProjectAspectRatio } from "@/lib/types";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -31,11 +32,11 @@ export async function GET(
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const [panelsRes, framesRes, scenesRes] = await Promise.all([
+  const [panelsRes, framesRes, scenesRes, projectRes] = await Promise.all([
     supabase
       .from("storyboard_panels")
       .select(
-        "id, scene_id, panel_number, shot_type, camera_angle, camera_movement, action_description, dialogue, characters_in_shot, duration_seconds, approved_first_frame_id"
+        "id, scene_id, panel_number, shot_type, camera_angle, camera_movement, action_description, dialogue, characters_in_shot, duration_seconds, approved_first_frame_id, aspect_ratio"
       )
       .eq("project_id", id)
       .order("panel_number", { ascending: true }),
@@ -50,6 +51,11 @@ export async function GET(
       .from("scenes")
       .select("id, scene_number, location, time_of_day, mood")
       .eq("project_id", id),
+    supabase
+      .from("projects")
+      .select("aspect_ratio")
+      .eq("id", id)
+      .single(),
   ]);
 
   if (panelsRes.error) {
@@ -89,7 +95,12 @@ export async function GET(
     return a.panel_number - b.panel_number;
   });
 
-  return NextResponse.json({ panels });
+  return NextResponse.json({
+    panels,
+    project: {
+      aspect_ratio: normalizeProjectAspectRatio(projectRes.data?.aspect_ratio),
+    },
+  });
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -111,10 +122,11 @@ export async function POST(
   // Project-level context (production notes + phase advance)
   const { data: projectRow } = await supabase
     .from("projects")
-    .select("production_notes, phase_status")
+    .select("production_notes, phase_status, aspect_ratio")
     .eq("id", id)
     .single();
   const productionNotes: string = projectRow?.production_notes || "";
+  const aspectRatio = normalizeProjectAspectRatio(projectRow?.aspect_ratio);
 
   // Pull panels to generate for
   let panelsQuery = supabase
@@ -209,7 +221,7 @@ export async function POST(
         timeOfDay: scene.time_of_day || "",
         mood: scene.mood || "",
         productionNotes,
-        aspectRatio: "16:9",
+        aspectRatio,
       });
 
       const { data: inserted, error: insertErr } = await supabase
@@ -219,7 +231,7 @@ export async function POST(
           panel_id: panel.id,
           image_url: result.url,
           prompt_used: result.prompt,
-          aspect_ratio: "16:9",
+          aspect_ratio: aspectRatio,
           status: "pending",
         })
         .select("id")
@@ -247,7 +259,7 @@ export async function POST(
         assetType: "first_frame",
         assetId: inserted.id,
         sources,
-        metadata: { panel_number: panel.panel_number, aspect_ratio: "16:9" },
+        metadata: { panel_number: panel.panel_number, aspect_ratio: aspectRatio },
       });
     } catch (err) {
       const msg =
@@ -269,12 +281,16 @@ export async function POST(
       .eq("id", id);
   }
 
-  return NextResponse.json({
-    success: true,
-    framesGenerated,
-    panelsProcessed: panels.length,
-    errors,
-  });
+  const failedCompletely = framesGenerated === 0 && errors.length > 0;
+  return NextResponse.json(
+    {
+      success: !failedCompletely,
+      framesGenerated,
+      panelsProcessed: panels.length,
+      errors,
+    },
+    { status: failedCompletely ? 500 : 200 }
+  );
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -353,6 +369,13 @@ export async function PUT(
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const { data: projectRow } = await supabase
+    .from("projects")
+    .select("aspect_ratio")
+    .eq("id", id)
+    .single();
+  const aspectRatio = normalizeProjectAspectRatio(projectRow?.aspect_ratio);
+
   if (!panel_id || !image_url || !storage_path) {
     return NextResponse.json(
       { error: "panel_id, image_url, storage_path required" },
@@ -368,7 +391,7 @@ export async function PUT(
       image_url,
       prompt_used: `[uploaded by user] ${storage_path}`,
       model_used: "user-upload",
-      aspect_ratio: "16:9",
+      aspect_ratio: aspectRatio,
       status: "approved",
     })
     .select("id")
@@ -383,7 +406,7 @@ export async function PUT(
     assetType: "first_frame",
     assetId: inserted.id,
     sources: [{ sourceType: "storyboard_panel", sourceId: panel_id, relationship: "uploaded_replacement" }],
-    metadata: { storage_path },
+    metadata: { storage_path, aspect_ratio: aspectRatio },
   });
 
   // Flip any prior approved to replaced

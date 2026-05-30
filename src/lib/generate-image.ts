@@ -1,4 +1,5 @@
 import { GoogleGenAI, Modality } from "@google/genai";
+import { normalizeProjectAspectRatio, type ProjectAspectRatio } from "@/lib/types";
 
 /**
  * Image generation via Gemini 2.5 Flash (native image output).
@@ -109,11 +110,20 @@ export async function generateLocationImage(
   timeOfDay: string,
   mood: string,
   variationNumber: number,
-  productionNotes?: string
+  productionNotes?: string,
+  aspectRatio?: ProjectAspectRatio
 ): Promise<GeneratedImage> {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
 
-  const prompt = buildLocationPrompt(locationName, description, timeOfDay, mood, variationNumber, productionNotes);
+  const prompt = buildLocationPrompt(
+    locationName,
+    description,
+    timeOfDay,
+    mood,
+    variationNumber,
+    productionNotes,
+    aspectRatio
+  );
 
   if (!apiKey || apiKey === "your-key-here") {
     return generatePlaceholder(locationName, prompt, variationNumber);
@@ -139,8 +149,10 @@ function buildLocationPrompt(
   timeOfDay: string,
   mood: string,
   variation: number,
-  productionNotes?: string
+  productionNotes?: string,
+  aspectRatio?: ProjectAspectRatio
 ): string {
+  const aspect = normalizeProjectAspectRatio(aspectRatio);
   const styles = [
     "wide establishing shot",
     "medium shot showing key details",
@@ -158,6 +170,7 @@ function buildLocationPrompt(
     timeOfDay ? `Time of day: ${timeOfDay}.` : "",
     mood ? `Mood/atmosphere: ${mood}.` : "",
     `Camera: ${style}.`,
+    `Aspect ratio: ${aspect}. Compose for the final ${aspect} frame with no letterboxing, pillarboxing, or unused borders.`,
     `Style: Film production location scout photo, cinematic color grading,`,
     `photorealistic, high resolution, production-ready reference image.`,
     `Variation ${variation} — show a distinctly different angle or lighting condition.`,
@@ -179,6 +192,7 @@ export async function generateSceneScoutImage(opts: {
   characterDescriptions: Record<string, string>;
   variationNumber: number;
   productionNotes?: string;
+  aspectRatio?: ProjectAspectRatio;
 }): Promise<GeneratedImage> {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   const prompt = buildSceneScoutPrompt(opts);
@@ -202,7 +216,9 @@ function buildSceneScoutPrompt(opts: {
   characterDescriptions: Record<string, string>;
   variationNumber: number;
   productionNotes?: string;
+  aspectRatio?: ProjectAspectRatio;
 }): string {
+  const aspect = normalizeProjectAspectRatio(opts.aspectRatio);
   const charDetails = opts.charactersPresent
     .map((name) => {
       const desc = opts.characterDescriptions[name];
@@ -231,6 +247,7 @@ function buildSceneScoutPrompt(opts: {
     sceneTypeNote,
     charDetails ? `Characters present: ${charDetails}.` : "",
     `Composition style: ${style}.`,
+    `Aspect ratio: ${aspect}. Compose for the final ${aspect} frame with no letterboxing, pillarboxing, or unused borders.`,
     `Style: Cinematic film production reference, photorealistic, professional color grading,`,
     `evocative and mood-driven. This is a scouting/mood board image — not a storyboard panel.`,
   ].filter(Boolean).join(" ");
@@ -332,6 +349,7 @@ export async function generateStoryboardPanel(opts: {
   panelNumber: number;
   sceneReferenceImageUrl?: string | null; // optional approved scout image
   productionNotes?: string;
+  aspectRatio?: ProjectAspectRatio;
   /**
    * Per-character identity refs (approved headshot URL). When present, each
    * ref is injected into the multimodal parts array with a "match this face"
@@ -425,7 +443,9 @@ function buildStoryboardPrompt(opts: {
   mood: string;
   panelNumber: number;
   productionNotes?: string;
+  aspectRatio?: ProjectAspectRatio;
 }): string {
+  const aspect = normalizeProjectAspectRatio(opts.aspectRatio);
   const charDetails = opts.charactersInShot
     .map((name) => {
       const desc = opts.characterDescriptions[name];
@@ -445,6 +465,7 @@ function buildStoryboardPrompt(opts: {
     opts.locationDescription ? `Setting: ${opts.locationDescription}.` : "",
     opts.timeOfDay ? `Time of day: ${opts.timeOfDay}.` : "",
     opts.mood ? `Mood: ${opts.mood}.` : "",
+    `Aspect ratio: ${aspect}. Compose for the final ${aspect} panel with no letterboxing, pillarboxing, or unused borders.`,
     `Style: Professional storyboard illustration with cinematic framing,`,
     `dramatic lighting, film-quality composition, photorealistic.`,
     `This is panel ${opts.panelNumber} in the sequence.`,
@@ -491,10 +512,10 @@ export async function generateFirstFrame(opts: {
   timeOfDay: string;
   mood: string;
   productionNotes?: string;
-  aspectRatio?: "16:9" | "2.39:1";
+  aspectRatio?: ProjectAspectRatio;
 }): Promise<GeneratedImage> {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
-  const aspect = opts.aspectRatio || "16:9";
+  const aspect = normalizeProjectAspectRatio(opts.aspectRatio);
 
   const charDetails = opts.characterReferences
     .map((c) => c.name)
@@ -514,7 +535,7 @@ export async function generateFirstFrame(opts: {
     `Location: ${opts.locationName}.`,
     opts.timeOfDay ? `Time of day: ${opts.timeOfDay}.` : "",
     opts.mood ? `Mood/atmosphere: ${opts.mood}.` : "",
-    `Aspect ratio: ${aspect}.`,
+    `Aspect ratio: ${aspect}. Compose for the final ${aspect} frame with no letterboxing, pillarboxing, or unused borders.`,
     `Style: photorealistic cinematic frame, natural film grain, shallow depth of field where appropriate, production-quality color grading, NOT illustrated or animated.`,
     `Panel ${opts.panelNumber} of the sequence.`,
   ].filter(Boolean).join(" ");

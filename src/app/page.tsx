@@ -96,6 +96,9 @@ export default function Dashboard() {
               Create Project
             </Link>
           </div>
+          <p className="text-sm max-w-2xl mt-5 leading-relaxed" style={{ color: "var(--brand-gray)" }}>
+            Start a project, choose the delivery format, upload the source document, then follow each project card&apos;s next action through casting, scouting, storyboard, and first frames.
+          </p>
         </header>
 
         {/* Active projects grid */}

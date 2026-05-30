@@ -1,6 +1,7 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateStoryboardPanel } from "@/lib/generate-image";
 import { bumpVersion, recordProvenance, type ProvenanceSource } from "@/lib/provenance";
+import { normalizeProjectAspectRatio } from "@/lib/types";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +16,7 @@ export async function GET(
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const [scenesRes, panelsRes, charsRes, locsRes, castsRes] = await Promise.all([
+  const [scenesRes, panelsRes, charsRes, locsRes, castsRes, projectRes] = await Promise.all([
     supabase
       .from("scenes")
       .select("id, scene_number, location, time_of_day, mood, action_summary, characters_present, props, wardrobe, locked")
@@ -23,7 +24,7 @@ export async function GET(
       .order("scene_number", { ascending: true }),
     supabase
       .from("storyboard_panels")
-      .select("id, scene_id, panel_number, shot_type, camera_angle, camera_movement, action_description, dialogue, characters_in_shot, duration_seconds, prompt_used")
+      .select("id, scene_id, panel_number, shot_type, camera_angle, camera_movement, action_description, dialogue, characters_in_shot, duration_seconds, prompt_used, aspect_ratio")
       .eq("project_id", id)
       .order("panel_number", { ascending: true }),
     supabase
@@ -39,6 +40,11 @@ export async function GET(
       .select("id, character_id, variation_number, status")
       .eq("project_id", id)
       .eq("status", "approved"),
+    supabase
+      .from("projects")
+      .select("aspect_ratio")
+      .eq("id", id)
+      .single(),
   ]);
 
   // Map approved variation IDs to characters (images lazy-loaded by UI)
@@ -71,6 +77,9 @@ export async function GET(
     characters,
     locations: locsRes.data || [],
     totalPanels: (panelsRes.data || []).length,
+    project: {
+      aspect_ratio: normalizeProjectAspectRatio(projectRes.data?.aspect_ratio),
+    },
   });
 }
 
@@ -109,11 +118,12 @@ export async function POST(
       .eq("project_id", id),
     supabase
       .from("projects")
-      .select("production_notes")
+      .select("production_notes, aspect_ratio")
       .eq("id", id)
       .single(),
   ]);
   const productionNotes: string = projectRes.data?.production_notes || "";
+  const aspectRatio = normalizeProjectAspectRatio(projectRes.data?.aspect_ratio);
 
   const scenes = scenesRes.data || [];
   const charDescMap: Record<string, string> = {};
@@ -268,6 +278,7 @@ Wardrobe: ${(scene.wardrobe || []).join(", ") || "None"}`,
           panelNumber,
           sceneReferenceImageUrl: scene.approved_scout_image_url || null,
           productionNotes,
+          aspectRatio,
           characterReferences,
         });
 
@@ -285,6 +296,7 @@ Wardrobe: ${(scene.wardrobe || []).join(", ") || "None"}`,
             characters_in_shot: shot.characters_in_shot || [],
             image_url: result.url,
             prompt_used: result.prompt,
+            aspect_ratio: aspectRatio,
             duration_seconds: shot.duration_seconds || 3.0,
           })
           .select("id")
@@ -310,7 +322,7 @@ Wardrobe: ${(scene.wardrobe || []).join(", ") || "None"}`,
             assetType: "storyboard_panel",
             assetId: inserted.id,
             sources,
-            metadata: { scene_number: scene.scene_number, panel_number: panelNumber },
+            metadata: { scene_number: scene.scene_number, panel_number: panelNumber, aspect_ratio: aspectRatio },
           });
         }
 

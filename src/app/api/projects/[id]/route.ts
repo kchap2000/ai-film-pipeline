@@ -1,5 +1,6 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { bumpVersion } from "@/lib/provenance";
+import { normalizeProjectAspectRatio } from "@/lib/types";
 import { NextRequest, NextResponse } from "next/server";
 
 // B1 fix: prevent Next.js from caching this route so phase_status is always fresh
@@ -58,10 +59,13 @@ export async function PATCH(
   const body = await req.json();
 
   // Only allow safe fields to be patched this way
-  const allowed = ["archived", "title", "client_name", "phase_status", "production_notes"];
+  const allowed = ["archived", "title", "client_name", "phase_status", "production_notes", "aspect_ratio"];
   const update: Record<string, unknown> = {};
   for (const key of allowed) {
     if (key in body) update[key] = body[key];
+  }
+  if ("aspect_ratio" in update) {
+    update.aspect_ratio = normalizeProjectAspectRatio(update.aspect_ratio);
   }
 
   if (Object.keys(update).length === 0) {
@@ -79,7 +83,7 @@ export async function PATCH(
     return NextResponse.json({ error: error.message }, { status: 400 });
   }
 
-  if ("production_notes" in update) {
+  if ("production_notes" in update || "aspect_ratio" in update) {
     await bumpVersion(supabase, "projects", id);
   }
 

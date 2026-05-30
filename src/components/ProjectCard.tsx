@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Project, PHASE_LABELS, PHASE_ORDER } from "@/lib/types";
+import { Project, PHASE_LABELS, PHASE_ORDER, aspectRatioLabel } from "@/lib/types";
 import PhaseIndicator from "./PhaseIndicator";
 
 function ProjectIcon({ type }: { type: string }) {
@@ -44,8 +44,23 @@ export default function ProjectCard({ project, onArchive, onUnarchive, onDelete 
 
   const currentIndex = PHASE_ORDER.indexOf(project.phase_status);
   const pct = Math.round(((currentIndex + 1) / PHASE_ORDER.length) * 100);
-  const isComplete = project.phase_status === "storyboard";
+  const isComplete = project.phase_status === "first_frames";
   const isClient = project.type === "client";
+  const nextAction = project.phase_status === "ingestion"
+    ? "Next: upload script"
+    : project.phase_status === "extraction"
+    ? "Next: review bible"
+    : project.phase_status === "bible"
+    ? "Next: casting"
+    : project.phase_status === "casting"
+    ? "Next: lock characters"
+    : project.phase_status === "lock"
+    ? "Next: scout locations"
+    : project.phase_status === "scene_bible"
+    ? "Next: storyboard"
+    : project.phase_status === "storyboard"
+    ? "Next: first frames"
+    : "Ready for review";
 
   async function handleArchive(e: React.MouseEvent) {
     e.preventDefault();
@@ -145,6 +160,17 @@ export default function ProjectCard({ project, onArchive, onUnarchive, onDelete 
               >
                 {project.type}
               </span>
+              <span
+                className="text-[10px] uppercase tracking-widest px-2.5 py-1 rounded-full font-medium"
+                style={{
+                  background: "rgba(255,255,255,0.04)",
+                  color: "var(--brand-gray)",
+                  border: "1px solid rgba(255,255,255,0.08)",
+                }}
+                title={aspectRatioLabel(project.aspect_ratio)}
+              >
+                {project.aspect_ratio || "16:9"}
+              </span>
 
               {/* ⋯ menu button — always rendered, visible on hover or when open */}
               <button
@@ -178,6 +204,9 @@ export default function ProjectCard({ project, onArchive, onUnarchive, onDelete 
             {project.type === "client" && project.client_name
               ? `Client: ${project.client_name}`
               : "Personal Project"}
+          </p>
+          <p className="text-[10px] uppercase tracking-widest mb-5" style={{ color: "var(--brand-orange)", opacity: 0.8 }}>
+            {nextAction}
           </p>
 
           {/* Phase + progress */}

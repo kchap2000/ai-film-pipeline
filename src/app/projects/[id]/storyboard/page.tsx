@@ -4,6 +4,12 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import ProjectNav from "@/components/ProjectNav";
+import {
+  aspectRatioLabel,
+  aspectRatioToCss,
+  normalizeProjectAspectRatio,
+  type ProjectAspectRatio,
+} from "@/lib/types";
 
 interface Panel {
   id: string;
@@ -16,6 +22,7 @@ interface Panel {
   dialogue: string;
   characters_in_shot: string[];
   duration_seconds: number;
+  aspect_ratio: ProjectAspectRatio;
 }
 
 interface Scene {
@@ -41,6 +48,7 @@ export default function StoryboardPage() {
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [characters, setCharacters] = useState<Character[]>([]);
   const [totalPanels, setTotalPanels] = useState(0);
+  const [projectAspectRatio, setProjectAspectRatio] = useState<ProjectAspectRatio>("16:9");
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
@@ -59,6 +67,7 @@ export default function StoryboardPage() {
       setScenes(data.scenes || []);
       setCharacters(data.characters || []);
       setTotalPanels(data.totalPanels || 0);
+      setProjectAspectRatio(normalizeProjectAspectRatio(data.project?.aspect_ratio));
       if (!expandedScene && data.scenes?.length > 0) {
         setExpandedScene(data.scenes[0].id);
       }
@@ -248,6 +257,9 @@ export default function StoryboardPage() {
             <p className="text-xs mt-2" style={{ color: "var(--brand-gray)" }}>
               {scenes.length} scenes &middot; {totalPanels} panels &middot;{" "}
               {Math.round(totalDuration)}s estimated runtime
+            </p>
+            <p className="text-[10px] uppercase tracking-widest mt-3" style={{ color: "var(--brand-orange)" }}>
+              Output format: {aspectRatioLabel(projectAspectRatio)}
             </p>
           </div>
           <div className="flex gap-3">
@@ -471,7 +483,13 @@ export default function StoryboardPage() {
                             style={{ border: "1px solid var(--brand-steel)" }}
                           >
                             {/* Panel image */}
-                            <div className="aspect-video relative overflow-hidden" style={{ background: "var(--brand-navy)" }}>
+                            <div
+                              className="aspect-video relative overflow-hidden"
+                              style={{
+                                background: "var(--brand-navy)",
+                                aspectRatio: aspectRatioToCss(panel.aspect_ratio || projectAspectRatio),
+                              }}
+                            >
                               {panelImages[panel.id] ? (
                                 <img
                                   src={panelImages[panel.id]}

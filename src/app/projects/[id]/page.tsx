@@ -1,9 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Project, ProjectFile, PHASE_LABELS, PHASE_ORDER } from "@/lib/types";
+import {
+  Project,
+  ProjectFile,
+  PHASE_LABELS,
+  PHASE_ORDER,
+  PROJECT_ASPECT_RATIO_OPTIONS,
+  aspectRatioLabel,
+  normalizeProjectAspectRatio,
+  type ProjectAspectRatio,
+} from "@/lib/types";
 import PhaseIndicator from "@/components/PhaseIndicator";
 import FileUpload from "@/components/FileUpload";
 
@@ -40,10 +49,11 @@ export default function ProjectDetail() {
   const [notesDirty, setNotesDirty] = useState(false);
   const [savingNotes, setSavingNotes] = useState(false);
   const [notesSaved, setNotesSaved] = useState(false);
+  const [savingAspectRatio, setSavingAspectRatio] = useState(false);
   const [readiness, setReadiness] = useState<ProjectReadiness | null>(null);
   const [staleness, setStaleness] = useState<ProjectStaleness | null>(null);
 
-  const fetchProject = async () => {
+  const fetchProject = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}`);
     if (res.ok) {
       const data = await res.json();
@@ -53,7 +63,7 @@ export default function ProjectDetail() {
       setNotesDirty(false);
     }
     setLoading(false);
-  };
+  }, [id]);
 
   const saveNotes = async () => {
     if (!notesDirty || savingNotes) return;
@@ -75,9 +85,35 @@ export default function ProjectDetail() {
     }
   };
 
+  const saveAspectRatio = async (aspectRatio: ProjectAspectRatio) => {
+    if (!project || project.aspect_ratio === aspectRatio || savingAspectRatio) return;
+    setSavingAspectRatio(true);
+    try {
+      const res = await fetch(`/api/projects/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ aspect_ratio: aspectRatio }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setProject((prev) =>
+          prev
+            ? {
+                ...prev,
+                aspect_ratio: normalizeProjectAspectRatio(updated.aspect_ratio, aspectRatio),
+                version: updated.version ?? prev.version,
+              }
+            : prev
+        );
+      }
+    } finally {
+      setSavingAspectRatio(false);
+    }
+  };
+
   useEffect(() => {
     fetchProject();
-  }, [id]);
+  }, [fetchProject]);
 
   // Load pipeline readiness once the project loads; shown as a compact tile
   // so Khalil can see what's blocking the next phase without visiting each
@@ -189,6 +225,69 @@ export default function ProjectDetail() {
   const canExtract = files.length > 0;
   const hasExtracted = phaseIndex >= 1;
   const isClient = project.type === "client";
+  const selectedAspectRatio = normalizeProjectAspectRatio(project.aspect_ratio);
+  const nextGuidance =
+    files.length === 0
+      ? {
+          label: "Upload your script or treatment",
+          detail: "Start by adding a PDF, DOCX, or TXT file. The app will use it to extract characters, locations, and scenes.",
+          href: null,
+        }
+      : !hasExtracted
+      ? {
+          label: "Run extraction",
+          detail: "Claude will read the uploaded documents and build the first film bible draft.",
+          href: null,
+        }
+      : phaseIndex === 1
+      ? {
+          label: "Review the Film Bible",
+          detail: "Clean up characters, scenes, structure, and production details before generating visuals.",
+          href: `/projects/${project.id}/bible`,
+        }
+      : phaseIndex === 2
+      ? {
+          label: "Generate and approve casting",
+          detail: "Choose approved headshots so downstream storyboards and first frames can lock identities.",
+          href: `/projects/${project.id}/cast`,
+        }
+      : phaseIndex === 3
+      ? {
+          label: "Lock character references",
+          detail: "Approve pose sheets so every later visual has a consistent identity source.",
+          href: `/projects/${project.id}/lock`,
+        }
+      : phaseIndex === 4
+      ? {
+          label: "Scout and approve locations",
+          detail: "Generate location references that become visual anchors for scene scouting and storyboard panels.",
+          href: `/projects/${project.id}/locations`,
+        }
+      : phaseIndex === 5
+      ? {
+          label: "Scout scenes and build storyboards",
+          detail: "Approve scene looks, then generate shot-by-shot storyboard panels in the selected delivery format.",
+          href: `/projects/${project.id}/scenes`,
+        }
+      : phaseIndex === 6
+      ? readiness === null
+        ? {
+            label: "Checking readiness",
+            detail: "Reviewing locked characters, approved scouts, and storyboard panels before recommending the next step.",
+            href: null,
+          }
+        : {
+            label: readiness.ready_for_first_frames ? "Generate First Frames" : "Finish readiness checks",
+            detail: readiness.ready_for_first_frames
+              ? "Every required upstream asset is ready; generate final shoot-day reference frames next."
+              : "First Frames need locked characters, approved locations, approved scene scouts, and storyboard panels.",
+            href: readiness.ready_for_first_frames ? `/projects/${project.id}/first-frames` : `/projects/${project.id}/storyboard`,
+          }
+      : {
+          label: "Approve final First Frames",
+          detail: "Review generated frames, replace any weak shots, and approve the shoot-day reference deck.",
+          href: `/projects/${project.id}/first-frames`,
+        };
 
   return (
     <div className="min-h-screen" style={{ background: "var(--brand-navy)" }}>
@@ -246,10 +345,102 @@ export default function ProjectDetail() {
                 {PHASE_LABELS[project.phase_status]}
               </span>
               <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
-                Phase {PHASE_ORDER.indexOf(project.phase_status) + 1} of 7
+                Phase {PHASE_ORDER.indexOf(project.phase_status) + 1} of {PHASE_ORDER.length}
               </span>
             </div>
             <PhaseIndicator status={project.phase_status} />
+          </div>
+        </section>
+
+        {/* Project Setup */}
+        <section className="mb-10">
+          <h2 className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
+            Project Setup
+          </h2>
+          <div
+            className="rounded-xl p-6 space-y-5"
+            style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}
+          >
+            <div>
+              <div className="flex items-center justify-between gap-4 mb-3">
+                <div>
+                  <p className="text-sm font-medium" style={{ color: "var(--brand-white)" }}>
+                    Delivery format: {aspectRatioLabel(selectedAspectRatio)}
+                  </p>
+                  <p className="text-xs mt-1 leading-relaxed" style={{ color: "var(--brand-gray)" }}>
+                    Scene scouts, storyboard panels, and first frames use this ratio. Changing it later marks generated assets stale so you know what needs regeneration.
+                  </p>
+                </div>
+                {savingAspectRatio && (
+                  <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-orange)" }}>
+                    Saving...
+                  </span>
+                )}
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {PROJECT_ASPECT_RATIO_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => saveAspectRatio(option.value)}
+                    disabled={savingAspectRatio}
+                    className="px-3 py-2 text-left transition-colors disabled:opacity-50"
+                    style={{
+                      background:
+                        selectedAspectRatio === option.value
+                          ? "rgba(255,138,42,0.08)"
+                          : "var(--brand-navy)",
+                      border:
+                        selectedAspectRatio === option.value
+                          ? "1px solid rgba(255,138,42,0.45)"
+                          : "1px solid var(--brand-steel)",
+                    }}
+                  >
+                    <span
+                      className="block text-xs font-medium"
+                      style={{
+                        color:
+                          selectedAspectRatio === option.value
+                            ? "var(--brand-orange)"
+                            : "var(--brand-white)",
+                      }}
+                    >
+                      {option.shortLabel}
+                    </span>
+                    <span className="block text-[10px] mt-1" style={{ color: "var(--brand-gray)" }}>
+                      {option.description}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div
+              className="p-4"
+              style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)" }}
+            >
+              <p className="text-[10px] uppercase tracking-widest mb-2" style={{ color: "var(--brand-orange)" }}>
+                Next best action
+              </p>
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium" style={{ color: "var(--brand-white)" }}>
+                    {nextGuidance.label}
+                  </p>
+                  <p className="text-xs mt-1 leading-relaxed" style={{ color: "var(--brand-gray)" }}>
+                    {nextGuidance.detail}
+                  </p>
+                </div>
+                {nextGuidance.href && (
+                  <Link
+                    href={nextGuidance.href}
+                    className="text-[10px] uppercase tracking-widest px-3 py-2 whitespace-nowrap"
+                    style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+                  >
+                    Open
+                  </Link>
+                )}
+              </div>
+            </div>
           </div>
         </section>
 
