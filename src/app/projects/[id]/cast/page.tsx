@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import BrainTargetButton from "@/components/BrainTargetButton";
 import ProjectNav from "@/components/ProjectNav";
 import { createClient } from "@/lib/supabase-browser";
 
@@ -588,6 +589,13 @@ export default function CastingPage() {
                 {/* Action buttons — only for non-voice characters */}
                 {!activeChar.voice_only && (
                   <div className="flex items-center gap-2 flex-shrink-0">
+                    <BrainTargetButton
+                      targetType="character"
+                      targetId={activeChar.id}
+                      targetLabel={activeChar.name}
+                      phase="casting"
+                      category="identity"
+                    />
                     {/* Upload headshot */}
                     <button
                       onClick={() => triggerUpload(activeChar.id)}
@@ -670,6 +678,18 @@ export default function CastingPage() {
                             Approved
                           </span>
                         )}
+                      </div>
+
+                      <div className="p-2" style={{ borderTop: "1px solid var(--brand-steel)" }}>
+                        <BrainTargetButton
+                          label="Note"
+                          targetType="cast_variation"
+                          targetId={v.id}
+                          targetLabel={`${activeChar.name} variation ${v.variation_number}`}
+                          phase="casting"
+                          category="identity"
+                          className="w-full"
+                        />
                       </div>
 
                       {v.status === "pending" && (

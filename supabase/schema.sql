@@ -532,6 +532,140 @@ create policy "Preview can create activity"
   with check (true);
 
 -- ============================================================
+-- Migration: Project Brain feedback and continuity rules
+-- ============================================================
+create table if not exists project_feedback (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  target_type text not null default 'project',
+  target_id uuid,
+  target_label text not null default 'Whole Project',
+  phase text,
+  intent text not null default 'feedback',
+  priority text not null default 'important',
+  status text not null default 'open',
+  body text not null,
+  transcript_source text not null default 'typed',
+  created_by uuid references auth.users(id) on delete set null,
+  created_by_email text,
+  metadata jsonb not null default '{}',
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+create index if not exists idx_project_feedback_project_created
+  on project_feedback(project_id, created_at desc);
+create index if not exists idx_project_feedback_target
+  on project_feedback(project_id, target_type, target_id);
+create index if not exists idx_project_feedback_status
+  on project_feedback(project_id, status);
+
+do $$ begin
+  alter table project_feedback
+    add constraint project_feedback_target_type_check
+    check (target_type in ('project', 'character', 'cast_variation', 'pose_sheet', 'location', 'location_variation', 'scene', 'scene_variation', 'storyboard_panel', 'first_frame', 'prop', 'outfit'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table project_feedback
+    add constraint project_feedback_intent_check
+    check (intent in ('feedback', 'regenerate', 'continuity_rule', 'client_comment', 'approval_blocker'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table project_feedback
+    add constraint project_feedback_priority_check
+    check (priority in ('minor', 'important', 'must_follow'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table project_feedback
+    add constraint project_feedback_status_check
+    check (status in ('open', 'applied', 'ignored', 'resolved'));
+exception when duplicate_object then null; end $$;
+
+create table if not exists project_continuity_rules (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  scope_type text not null default 'project',
+  scope_id uuid,
+  scope_label text not null default 'Whole Project',
+  category text not null default 'continuity',
+  rule_text text not null,
+  strength text not null default 'important',
+  status text not null default 'active',
+  source_feedback_id uuid references project_feedback(id) on delete set null,
+  created_by uuid references auth.users(id) on delete set null,
+  created_by_email text,
+  metadata jsonb not null default '{}',
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+create index if not exists idx_project_continuity_project_created
+  on project_continuity_rules(project_id, created_at desc);
+create index if not exists idx_project_continuity_scope
+  on project_continuity_rules(project_id, scope_type, scope_id);
+create index if not exists idx_project_continuity_status
+  on project_continuity_rules(project_id, status);
+
+do $$ begin
+  alter table project_continuity_rules
+    add constraint project_continuity_scope_type_check
+    check (scope_type in ('project', 'character', 'cast_variation', 'pose_sheet', 'location', 'location_variation', 'scene', 'scene_variation', 'storyboard_panel', 'first_frame', 'prop', 'outfit'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table project_continuity_rules
+    add constraint project_continuity_category_check
+    check (category in ('vision', 'identity', 'wardrobe', 'props', 'location', 'lighting', 'camera', 'composition', 'performance', 'tone', 'continuity'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table project_continuity_rules
+    add constraint project_continuity_strength_check
+    check (strength in ('minor', 'important', 'must_follow'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table project_continuity_rules
+    add constraint project_continuity_status_check
+    check (status in ('active', 'superseded', 'archived'));
+exception when duplicate_object then null; end $$;
+
+alter table project_feedback enable row level security;
+alter table project_continuity_rules enable row level security;
+
+grant select, insert, update on project_feedback to anon, authenticated, service_role;
+grant select, insert, update on project_continuity_rules to anon, authenticated, service_role;
+
+create policy "Preview can read project feedback"
+  on project_feedback for select
+  using (true);
+
+create policy "Preview can create project feedback"
+  on project_feedback for insert
+  with check (true);
+
+create policy "Preview can update project feedback"
+  on project_feedback for update
+  using (true)
+  with check (true);
+
+create policy "Preview can read continuity rules"
+  on project_continuity_rules for select
+  using (true);
+
+create policy "Preview can create continuity rules"
+  on project_continuity_rules for insert
+  with check (true);
+
+create policy "Preview can update continuity rules"
+  on project_continuity_rules for update
+  using (true)
+  with check (true);
+
+-- ============================================================
 -- Migration: Make project-uploads bucket public (2026-04-14)
 -- ============================================================
 -- Headshot uploads use getPublicUrl(); the bucket must be public or rendered

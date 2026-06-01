@@ -1,6 +1,7 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateCastingImage } from "@/lib/generate-image";
 import { bumpVersion, recordProvenance } from "@/lib/provenance";
+import { getProjectBrainPrompt } from "@/lib/project-brain";
 import { evaluateProjectAutomation, recordProjectDecision } from "@/lib/workflow";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -118,7 +119,13 @@ export async function POST(
   // Generate the image
   let result;
   try {
-    result = await generateCastingImage(char.name, char.description, variationNum);
+    const brainPrompt = await getProjectBrainPrompt(supabase, id, {
+      targetType: "character",
+      targetId: char.id,
+      characterNames: [char.name],
+    });
+    const descriptionWithBrain = [char.description, brainPrompt].filter(Boolean).join("\n\n");
+    result = await generateCastingImage(char.name, descriptionWithBrain, variationNum);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json(

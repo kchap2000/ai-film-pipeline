@@ -4,6 +4,7 @@ import {
   ReferenceImageUnreachableError,
 } from "@/lib/generate-image";
 import { recordProvenance, type ProvenanceSource } from "@/lib/provenance";
+import { getProjectBrainPrompt } from "@/lib/project-brain";
 import { normalizeProjectAspectRatio } from "@/lib/types";
 import { evaluateProjectAutomation, recordProjectDecision } from "@/lib/workflow";
 import { NextRequest, NextResponse } from "next/server";
@@ -222,6 +223,13 @@ export async function POST(
       const url = headshotByName[name];
       if (url) characterReferences.push({ name, imageUrl: url });
     }
+    const brainPrompt = await getProjectBrainPrompt(supabase, id, {
+      targetType: "storyboard_panel",
+      targetId: panel.id,
+      sceneId: panel.scene_id,
+      characterNames: panel.characters_in_shot || [],
+    });
+    const notesWithBrain = [productionNotes, brainPrompt].filter(Boolean).join("\n\n");
 
     try {
       const result = await generateFirstFrame({
@@ -235,7 +243,7 @@ export async function POST(
         locationName: scene.location || "",
         timeOfDay: scene.time_of_day || "",
         mood: scene.mood || "",
-        productionNotes,
+        productionNotes: notesWithBrain,
         aspectRatio,
       });
 

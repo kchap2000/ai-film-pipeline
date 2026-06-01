@@ -1,6 +1,7 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateSceneScoutImage } from "@/lib/generate-image";
 import { bumpVersion, recordProvenance } from "@/lib/provenance";
+import { getProjectBrainPrompt } from "@/lib/project-brain";
 import { normalizeProjectAspectRatio } from "@/lib/types";
 import { evaluateProjectAutomation, recordProjectDecision } from "@/lib/workflow";
 import { NextRequest, NextResponse } from "next/server";
@@ -116,6 +117,12 @@ export async function POST(
     const existing = count || 0;
     const needed = VARIATIONS_PER_SCENE - existing;
     if (needed <= 0) continue;
+    const brainPrompt = await getProjectBrainPrompt(supabase, id, {
+      targetType: "scene",
+      targetId: scene.id,
+      characterNames: scene.characters_present || [],
+    });
+    const notesWithBrain = [productionNotes, brainPrompt].filter(Boolean).join("\n\n");
 
     for (let i = existing + 1; i <= VARIATIONS_PER_SCENE; i++) {
       try {
@@ -129,7 +136,7 @@ export async function POST(
           charactersPresent: scene.characters_present || [],
           characterDescriptions: charDescriptions,
           variationNumber: i,
-          productionNotes,
+          productionNotes: notesWithBrain,
           aspectRatio,
         });
 

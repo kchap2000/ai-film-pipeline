@@ -1,6 +1,7 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateStoryboardPanel } from "@/lib/generate-image";
 import { bumpVersion, recordProvenance, type ProvenanceSource } from "@/lib/provenance";
+import { getProjectBrainPrompt } from "@/lib/project-brain";
 import { normalizeProjectAspectRatio } from "@/lib/types";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -262,6 +263,12 @@ Wardrobe: ${(scene.wardrobe || []).join(", ") || "None"}`,
           return imageUrl ? { name, imageUrl } : null;
         })
         .filter((x): x is { name: string; imageUrl: string } => x !== null);
+      const brainPrompt = await getProjectBrainPrompt(supabase, id, {
+        targetType: "scene",
+        targetId: scene.id,
+        characterNames: shot.characters_in_shot || [],
+      });
+      const notesWithBrain = [productionNotes, brainPrompt].filter(Boolean).join("\n\n");
 
       try {
         const result = await generateStoryboardPanel({
@@ -277,7 +284,7 @@ Wardrobe: ${(scene.wardrobe || []).join(", ") || "None"}`,
           mood: locInfo.mood,
           panelNumber,
           sceneReferenceImageUrl: scene.approved_scout_image_url || null,
-          productionNotes,
+          productionNotes: notesWithBrain,
           aspectRatio,
           characterReferences,
         });
