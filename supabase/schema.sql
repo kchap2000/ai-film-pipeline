@@ -407,6 +407,131 @@ create index if not exists idx_asset_provenance_asset on asset_provenance(asset_
 create index if not exists idx_asset_provenance_source on asset_provenance(source_type, source_id);
 
 -- ============================================================
+-- Migration: Backfill project ownership column for collaboration
+-- ============================================================
+-- Existing preview data was created before auth-owned projects were enforced.
+-- Keep the column nullable so anonymous/internal preview flows continue to work.
+alter table projects
+  add column if not exists user_id uuid references auth.users(id) on delete set null;
+
+create index if not exists idx_projects_user_id on projects(user_id);
+
+-- ============================================================
+-- Migration: Collaborators, review decisions, and workflow activity
+-- ============================================================
+-- Project collaborators support client/reviewer portals before strict RLS is
+-- fully enforced in the app. Invitations are tokenized rows; once a user logs
+-- in with the invited email, the row can be marked active and linked to them.
+create table if not exists project_collaborators (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete set null,
+  email text not null,
+  role text not null default 'reviewer',
+  status text not null default 'pending',
+  invite_token text not null default uuid_generate_v4()::text,
+  invited_by uuid references auth.users(id) on delete set null,
+  invited_at timestamp with time zone default now(),
+  accepted_at timestamp with time zone,
+  last_accessed_at timestamp with time zone,
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+create unique index if not exists idx_project_collaborators_project_email
+  on project_collaborators(project_id, email);
+create index if not exists idx_project_collaborators_project on project_collaborators(project_id);
+create index if not exists idx_project_collaborators_user on project_collaborators(user_id);
+create index if not exists idx_project_collaborators_token on project_collaborators(invite_token);
+
+do $$ begin
+  alter table project_collaborators
+    add constraint project_collaborators_role_check
+    check (role in ('owner', 'producer', 'client', 'reviewer'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table project_collaborators
+    add constraint project_collaborators_status_check
+    check (status in ('pending', 'active', 'removed'));
+exception when duplicate_object then null; end $$;
+
+create table if not exists project_decisions (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  decision_type text not null,
+  subject_type text not null,
+  subject_id uuid not null,
+  status text not null default 'approved',
+  notes text,
+  decided_by uuid references auth.users(id) on delete set null,
+  decided_by_email text,
+  metadata jsonb not null default '{}',
+  created_at timestamp with time zone default now()
+);
+
+create index if not exists idx_project_decisions_project on project_decisions(project_id);
+create index if not exists idx_project_decisions_subject on project_decisions(subject_type, subject_id);
+create index if not exists idx_project_decisions_type on project_decisions(project_id, decision_type);
+
+do $$ begin
+  alter table project_decisions
+    add constraint project_decisions_status_check
+    check (status in ('approved', 'rejected', 'needs_changes', 'commented'));
+exception when duplicate_object then null; end $$;
+
+create table if not exists project_activity (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  activity_type text not null,
+  title text not null,
+  body text,
+  actor_user_id uuid references auth.users(id) on delete set null,
+  actor_email text,
+  metadata jsonb not null default '{}',
+  created_at timestamp with time zone default now()
+);
+
+create index if not exists idx_project_activity_project_created
+  on project_activity(project_id, created_at desc);
+
+alter table project_collaborators enable row level security;
+alter table project_decisions enable row level security;
+alter table project_activity enable row level security;
+
+-- Preview-mode policies for the current public/internal app. Route handlers
+-- still enforce the intended workflow permissions; these keep anon-key route
+-- writes working until strict authenticated access is required.
+create policy "Preview can read collaborators"
+  on project_collaborators for select
+  using (true);
+
+create policy "Preview can create collaborators"
+  on project_collaborators for insert
+  with check (true);
+
+create policy "Preview can update collaborators"
+  on project_collaborators for update
+  using (true)
+  with check (true);
+
+create policy "Preview can read decisions"
+  on project_decisions for select
+  using (true);
+
+create policy "Preview can create decisions"
+  on project_decisions for insert
+  with check (true);
+
+create policy "Preview can read activity"
+  on project_activity for select
+  using (true);
+
+create policy "Preview can create activity"
+  on project_activity for insert
+  with check (true);
+
+-- ============================================================
 -- Migration: Make project-uploads bucket public (2026-04-14)
 -- ============================================================
 -- Headshot uploads use getPublicUrl(); the bucket must be public or rendered

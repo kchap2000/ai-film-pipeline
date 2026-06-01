@@ -1,18 +1,33 @@
 import { getSupabase } from "@/lib/supabase";
+import { createClient as createServerSupabaseClient } from "@/lib/supabase-server";
+import type { RouteUser } from "@/lib/project-access";
 
 /**
  * Auth-aware Supabase client for Route Handlers (app/api/).
- * Returns the client and the authenticated user (or a stub).
- *
- * Auth is not wired up yet — returns a placeholder user so existing
- * if (!user) 401 guards pass through. Once Google OAuth is enabled,
- * this will check the real session via @supabase/ssr.
+ * Returns the app data client and current user context for Route Handlers.
+ * The data client intentionally remains the existing shared Supabase client so
+ * current routes keep working while auth/collaborators are rolled in. We still
+ * read the real Supabase session when present so project access can distinguish
+ * owner/collaborator/client roles.
  */
 export async function createRouteClient() {
   const supabase = getSupabase();
 
-  // Stub user until auth is wired up — routes stay functional
-  const user = { id: "anonymous", email: null } as { id: string; email: string | null };
+  let user: RouteUser = { id: "anonymous", email: null, isAnonymous: true };
+  try {
+    const authClient = await createServerSupabaseClient();
+    const { data } = await authClient.auth.getUser();
+    if (data.user) {
+      user = {
+        id: data.user.id,
+        email: data.user.email ?? null,
+        isAnonymous: false,
+      };
+    }
+  } catch {
+    // Keep current internal/public preview flows alive if auth cookies are absent
+    // or the auth client cannot initialize in a route context.
+  }
 
   return { supabase, user };
 }

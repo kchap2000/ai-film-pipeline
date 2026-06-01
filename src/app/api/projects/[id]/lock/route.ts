@@ -1,5 +1,6 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { bumpVersion } from "@/lib/provenance";
+import { evaluateProjectAutomation, recordProjectDecision } from "@/lib/workflow";
 import { NextRequest, NextResponse } from "next/server";
 
 // GET /api/projects/:id/lock — get characters with their approved cast + pose sheet
@@ -64,6 +65,15 @@ export async function PATCH(
         .update({ locked: true })
         .eq("id", char.id);
       await bumpVersion(supabase, "characters", char.id, id);
+      await recordProjectDecision(supabase, {
+        projectId: id,
+        decisionType: "character_lock",
+        subjectType: "character",
+        subjectId: char.id,
+        status: "approved",
+        metadata: { lock_all: true },
+        user,
+      });
     }
 
     // Check if ALL cast characters are now locked — if so advance phase
@@ -80,6 +90,7 @@ export async function PATCH(
         .update({ phase_status: "lock" })
         .eq("id", id);
     }
+    await evaluateProjectAutomation(supabase, id);
 
     return NextResponse.json({ success: true });
   }
@@ -92,6 +103,14 @@ export async function PATCH(
       .eq("id", character_id)
       .eq("project_id", id);
     await bumpVersion(supabase, "characters", character_id, id);
+    await recordProjectDecision(supabase, {
+      projectId: id,
+      decisionType: "character_lock",
+      subjectType: "character",
+      subjectId: character_id,
+      status: "approved",
+      user,
+    });
 
     // Check if all cast characters are now locked — if so, advance phase
     const { data: unlocked } = await supabase
@@ -107,6 +126,7 @@ export async function PATCH(
         .update({ phase_status: "lock" })
         .eq("id", id);
     }
+    await evaluateProjectAutomation(supabase, id);
 
     return NextResponse.json({ success: true });
   }

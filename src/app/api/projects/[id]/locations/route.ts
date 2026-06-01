@@ -2,6 +2,7 @@ import { createRouteClient } from "@/lib/supabase-route";
 import { generateLocationImage } from "@/lib/generate-image";
 import { bumpVersion, recordProvenance } from "@/lib/provenance";
 import { normalizeProjectAspectRatio } from "@/lib/types";
+import { evaluateProjectAutomation, recordProjectDecision } from "@/lib/workflow";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -326,6 +327,16 @@ export async function PATCH(
         .eq("id", body.location_id);
 
       await bumpVersion(supabase, "locations", body.location_id, id);
+      await recordProjectDecision(supabase, {
+        projectId: id,
+        decisionType: "location",
+        subjectType: "location",
+        subjectId: body.location_id,
+        status: "approved",
+        metadata: { variation_id: body.variation_id },
+        user,
+      });
+      await evaluateProjectAutomation(supabase, id);
     }
 
     return NextResponse.json({ success: true });
@@ -338,6 +349,7 @@ export async function PATCH(
       .update({ locked: true })
       .eq("id", body.location_id);
     await bumpVersion(supabase, "locations", body.location_id, id);
+    await evaluateProjectAutomation(supabase, id);
 
     return NextResponse.json({ success: true });
   }
@@ -373,6 +385,7 @@ export async function PATCH(
         .update({ phase_status: "scene_bible" })
         .eq("id", id);
     }
+    await evaluateProjectAutomation(supabase, id);
 
     return NextResponse.json({ success: true });
   }

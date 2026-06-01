@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   Project,
@@ -33,8 +33,34 @@ interface ProjectStaleness {
   by_asset_type: Record<string, unknown[]>;
 }
 
+interface ProjectAutomation {
+  phase: string | null;
+  targetPhase: string | null;
+  checks: Record<string, { done: number; total: number; ok: boolean }>;
+}
+
+interface ProjectCollaborator {
+  id: string;
+  email: string;
+  role: string;
+  role_label: string;
+  status: string;
+  invite_url: string | null;
+  created_at: string;
+}
+
+interface ProjectActivity {
+  id: string;
+  activity_type: string;
+  title: string;
+  body: string | null;
+  actor_email: string | null;
+  created_at: string;
+}
+
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const [project, setProject] = useState<Project | null>(null);
   const [files, setFiles] = useState<ProjectFile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -52,6 +78,14 @@ export default function ProjectDetail() {
   const [savingAspectRatio, setSavingAspectRatio] = useState(false);
   const [readiness, setReadiness] = useState<ProjectReadiness | null>(null);
   const [staleness, setStaleness] = useState<ProjectStaleness | null>(null);
+  const [automation, setAutomation] = useState<ProjectAutomation | null>(null);
+  const [collaborators, setCollaborators] = useState<ProjectCollaborator[]>([]);
+  const [activity, setActivity] = useState<ProjectActivity[]>([]);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("client");
+  const [inviteResult, setInviteResult] = useState<string | null>(null);
+  const [inviting, setInviting] = useState(false);
+  const [inviteStatus, setInviteStatus] = useState<string | null>(null);
 
   const fetchProject = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}`);
@@ -115,6 +149,45 @@ export default function ProjectDetail() {
     fetchProject();
   }, [fetchProject]);
 
+  const fetchWorkspace = useCallback(async () => {
+    const [collaboratorsRes, activityRes, automationRes] = await Promise.all([
+      fetch(`/api/projects/${id}/collaborators`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/projects/${id}/activity`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/projects/${id}/automation`).then((r) => (r.ok ? r.json() : null)),
+    ]);
+    setCollaborators(collaboratorsRes?.collaborators || []);
+    setActivity(activityRes?.activity || []);
+    if (automationRes?.automation) setAutomation(automationRes.automation);
+  }, [id]);
+
+  useEffect(() => {
+    fetchWorkspace().catch(() => {});
+  }, [fetchWorkspace]);
+
+  useEffect(() => {
+    const token = searchParams.get("invite");
+    if (!token) return;
+    let cancelled = false;
+    fetch(`/api/projects/${id}/collaborators/accept`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    })
+      .then(async (res) => {
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled) {
+          setInviteStatus(res.ok ? "Invite accepted for this project." : data.error || "Invite could not be accepted.");
+          fetchWorkspace().catch(() => {});
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setInviteStatus("Invite could not be accepted.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchWorkspace, id, searchParams]);
+
   // Load pipeline readiness once the project loads; shown as a compact tile
   // so Khalil can see what's blocking the next phase without visiting each
   // phase page. Silently no-ops if the endpoint 404s (old projects).
@@ -172,6 +245,28 @@ export default function ProjectDetail() {
     }
   };
 
+  const inviteCollaborator = async () => {
+    if (!inviteEmail.trim() || inviting) return;
+    setInviting(true);
+    setInviteResult(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/collaborators`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Invite failed");
+      setInviteResult(data.collaborator?.invite_url || "Invite created.");
+      setInviteEmail("");
+      await fetchWorkspace();
+    } catch (err) {
+      setInviteResult(err instanceof Error ? err.message : "Invite failed");
+    } finally {
+      setInviting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div
@@ -226,6 +321,15 @@ export default function ProjectDetail() {
   const hasExtracted = phaseIndex >= 1;
   const isClient = project.type === "client";
   const selectedAspectRatio = normalizeProjectAspectRatio(project.aspect_ratio);
+  const currentPhaseLabel = PHASE_LABELS[project.phase_status];
+  const automationChecks = automation?.checks ? Object.entries(automation.checks) : [];
+  const blockedChecks = automationChecks.filter(([, check]) => !check.ok);
+  const topBlockedCheck = blockedChecks[0];
+  const clientDecisionLabel = topBlockedCheck
+    ? topBlockedCheck[0].replace(/_/g, " ")
+    : project.phase_status === "first_frames"
+    ? "Review and approve final first frames"
+    : "Ready for the next automated step";
   const nextGuidance =
     files.length === 0
       ? {
@@ -291,7 +395,7 @@ export default function ProjectDetail() {
 
   return (
     <div className="min-h-screen" style={{ background: "var(--brand-navy)" }}>
-      <div className="max-w-4xl mx-auto px-6 py-12">
+      <div className="max-w-6xl mx-auto px-6 py-12">
         {/* Header */}
         <header className="pb-8 mb-10" style={{ borderBottom: "1px solid var(--brand-steel)" }}>
           <Link
@@ -351,6 +455,195 @@ export default function ProjectDetail() {
             <PhaseIndicator status={project.phase_status} />
           </div>
         </section>
+
+        {/* Client-facing command center */}
+        <section className="mb-10">
+          <div
+            className="p-6 md:p-8"
+            style={{
+              background: "linear-gradient(135deg, rgba(76,201,240,0.10), rgba(255,138,42,0.08)), var(--brand-mid)",
+              border: "1px solid var(--brand-steel)",
+            }}
+          >
+            <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_0.7fr] gap-8">
+              <div>
+                <p className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-orange)" }}>
+                  Project Command Center
+                </p>
+                <h2 className="text-2xl font-semibold tracking-tight" style={{ color: "var(--brand-white)" }}>
+                  {currentPhaseLabel}
+                </h2>
+                <p className="text-sm mt-3 max-w-2xl leading-relaxed" style={{ color: "var(--brand-gray)" }}>
+                  This workspace is now structured around decisions: invite collaborators, collect approvals, and let the pipeline move forward when every required choice is complete.
+                </p>
+
+                {inviteStatus && (
+                  <div
+                    className="mt-5 px-4 py-3 text-xs"
+                    style={{ color: "var(--brand-cyan)", border: "1px solid rgba(76,201,240,0.3)", background: "rgba(76,201,240,0.06)" }}
+                  >
+                    {inviteStatus}
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-6">
+                  <div className="p-4" style={{ background: "rgba(11,28,45,0.7)", border: "1px solid var(--brand-steel)" }}>
+                    <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                      Decision Needed
+                    </p>
+                    <p className="text-sm mt-2 capitalize" style={{ color: "var(--brand-white)" }}>
+                      {clientDecisionLabel}
+                    </p>
+                  </div>
+                  <div className="p-4" style={{ background: "rgba(11,28,45,0.7)", border: "1px solid var(--brand-steel)" }}>
+                    <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                      Collaborators
+                    </p>
+                    <p className="text-sm mt-2" style={{ color: "var(--brand-white)" }}>
+                      {collaborators.length} invited
+                    </p>
+                  </div>
+                  <div className="p-4" style={{ background: "rgba(11,28,45,0.7)", border: "1px solid var(--brand-steel)" }}>
+                    <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                      Automation
+                    </p>
+                    <p className="text-sm mt-2" style={{ color: "var(--brand-white)" }}>
+                      {automation?.targetPhase ? `Target: ${automation.targetPhase.replace("_", " ")}` : "Monitoring approvals"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                  Invite Reviewer
+                </p>
+                <input
+                  value={inviteEmail}
+                  onChange={(e) => setInviteEmail(e.target.value)}
+                  placeholder="client@example.com"
+                  className="w-full px-3 py-2 text-sm outline-none"
+                  style={{ background: "var(--brand-navy)", color: "var(--brand-white)", border: "1px solid var(--brand-steel)" }}
+                />
+                <select
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value)}
+                  className="w-full px-3 py-2 text-sm outline-none"
+                  style={{ background: "var(--brand-navy)", color: "var(--brand-white)", border: "1px solid var(--brand-steel)" }}
+                >
+                  <option value="client">Client</option>
+                  <option value="reviewer">Reviewer</option>
+                  <option value="producer">Producer</option>
+                </select>
+                <button
+                  onClick={inviteCollaborator}
+                  disabled={inviting || !inviteEmail.trim()}
+                  className="w-full text-xs uppercase tracking-widest px-4 py-2.5 disabled:opacity-40"
+                  style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+                >
+                  {inviting ? "Creating Invite..." : "Create Invite Link"}
+                </button>
+                {inviteResult && (
+                  <textarea
+                    readOnly
+                    value={inviteResult}
+                    rows={3}
+                    className="w-full px-3 py-2 text-xs outline-none resize-none"
+                    style={{ background: "var(--brand-navy)", color: "var(--brand-cyan)", border: "1px solid rgba(76,201,240,0.25)" }}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
+          <div className="p-5" style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>
+            <h2 className="text-[10px] uppercase tracking-widest mb-4" style={{ color: "var(--brand-gray)" }}>
+              Collaborators
+            </h2>
+            {collaborators.length === 0 ? (
+              <p className="text-sm" style={{ color: "var(--brand-gray)" }}>
+                No collaborators invited yet. Create an invite link above for a client or reviewer.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {collaborators.map((collaborator) => (
+                  <div key={collaborator.id} className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="text-sm truncate" style={{ color: "var(--brand-white)" }}>
+                        {collaborator.email}
+                      </p>
+                      <p className="text-[10px] uppercase tracking-widest mt-1" style={{ color: "var(--brand-gray)" }}>
+                        {collaborator.role_label} · {collaborator.status}
+                      </p>
+                    </div>
+                    {collaborator.invite_url && (
+                      <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-cyan)" }}>
+                        Link Ready
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="p-5" style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>
+            <h2 className="text-[10px] uppercase tracking-widest mb-4" style={{ color: "var(--brand-gray)" }}>
+              Automation Checks
+            </h2>
+            {automationChecks.length === 0 ? (
+              <p className="text-sm" style={{ color: "var(--brand-gray)" }}>
+                Loading automation status...
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {automationChecks.map(([key, check]) => (
+                  <div key={key} className="flex items-center justify-between gap-4 text-xs">
+                    <span className="capitalize" style={{ color: check.ok ? "var(--brand-white)" : "var(--brand-gray)" }}>
+                      {key.replace(/_/g, " ")}
+                    </span>
+                    <span style={{ color: check.ok ? "#4ade80" : "var(--brand-orange)" }}>
+                      {check.done}/{check.total}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+
+        {activity.length > 0 && (
+          <section className="mb-10">
+            <h2 className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
+              Recent Activity
+            </h2>
+            <div className="space-y-2">
+              {activity.slice(0, 5).map((item) => (
+                <div
+                  key={item.id}
+                  className="flex items-start justify-between gap-4 px-4 py-3"
+                  style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}
+                >
+                  <div>
+                    <p className="text-sm" style={{ color: "var(--brand-white)" }}>
+                      {item.title}
+                    </p>
+                    {item.body && (
+                      <p className="text-xs mt-1" style={{ color: "var(--brand-gray)" }}>
+                        {item.body}
+                      </p>
+                    )}
+                  </div>
+                  <span className="text-[10px] whitespace-nowrap" style={{ color: "var(--brand-gray)" }}>
+                    {new Date(item.created_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Project Setup */}
         <section className="mb-10">
