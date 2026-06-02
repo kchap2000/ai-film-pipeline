@@ -4,7 +4,9 @@ import {
   ReferenceImageUnreachableError,
 } from "@/lib/generate-image";
 import { recordProvenance, type ProvenanceSource } from "@/lib/provenance";
+import { getProjectBrainPrompt } from "@/lib/project-brain";
 import { normalizeProjectAspectRatio } from "@/lib/types";
+import { evaluateProjectAutomation, recordProjectDecision } from "@/lib/workflow";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -221,6 +223,13 @@ export async function POST(
       const url = headshotByName[name];
       if (url) characterReferences.push({ name, imageUrl: url });
     }
+    const brainPrompt = await getProjectBrainPrompt(supabase, id, {
+      targetType: "storyboard_panel",
+      targetId: panel.id,
+      sceneId: panel.scene_id,
+      characterNames: panel.characters_in_shot || [],
+    });
+    const notesWithBrain = [productionNotes, brainPrompt].filter(Boolean).join("\n\n");
 
     try {
       const result = await generateFirstFrame({
@@ -234,7 +243,7 @@ export async function POST(
         locationName: scene.location || "",
         timeOfDay: scene.time_of_day || "",
         mood: scene.mood || "",
-        productionNotes,
+        productionNotes: notesWithBrain,
         aspectRatio,
       });
 
@@ -360,7 +369,18 @@ export async function PATCH(
     .update({ approved_first_frame_id: frame_id })
     .eq("id", frame.panel_id);
 
-  return NextResponse.json({ success: true, frame_id, panel_id: frame.panel_id });
+  await recordProjectDecision(supabase, {
+    projectId: id,
+    decisionType: "first_frame",
+    subjectType: "storyboard_panel",
+    subjectId: frame.panel_id,
+    status: "approved",
+    metadata: { frame_id },
+    user,
+  });
+  const automation = await evaluateProjectAutomation(supabase, id);
+
+  return NextResponse.json({ success: true, frame_id, panel_id: frame.panel_id, automation });
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -437,5 +457,16 @@ export async function PUT(
     .update({ approved_first_frame_id: inserted.id })
     .eq("id", panel_id);
 
-  return NextResponse.json({ success: true, frame_id: inserted.id, panel_id });
+  await recordProjectDecision(supabase, {
+    projectId: id,
+    decisionType: "first_frame",
+    subjectType: "storyboard_panel",
+    subjectId: panel_id,
+    status: "approved",
+    metadata: { frame_id: inserted.id, source: "uploaded_replacement" },
+    user,
+  });
+  const automation = await evaluateProjectAutomation(supabase, id);
+
+  return NextResponse.json({ success: true, frame_id: inserted.id, panel_id, automation });
 }

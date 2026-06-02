@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import BrainTargetButton from "@/components/BrainTargetButton";
 import ProjectNav from "@/components/ProjectNav";
 import {
   aspectRatioLabel,
@@ -390,6 +391,13 @@ export default function SceneScoutingPage() {
 
                       {/* Actions */}
                       <div className="flex-shrink-0 flex gap-2">
+                        <BrainTargetButton
+                          targetType="scene"
+                          targetId={activeScene.id}
+                          targetLabel={`Scene ${activeScene.scene_number}`}
+                          phase="scene_scout"
+                          category="continuity"
+                        />
                         {activeScene.variations.length === 0 && (
                           <button
                             onClick={() => generateVariations(activeScene.id)}
@@ -449,6 +457,18 @@ export default function SceneScoutingPage() {
                                   Approved
                                 </span>
                               )}
+                            </div>
+
+                            <div className="p-3" style={{ borderTop: "1px solid var(--brand-steel)" }}>
+                              <BrainTargetButton
+                                label="Note"
+                                targetType="scene_variation"
+                                targetId={v.id}
+                                targetLabel={`Scene ${activeScene.scene_number} variation ${v.variation_number}`}
+                                phase="scene_scout"
+                                category="composition"
+                                className="w-full"
+                              />
                             </div>
 
                             {/* Approve / reject */}

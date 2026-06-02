@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import BrainTargetButton from "@/components/BrainTargetButton";
 import ProjectNav from "@/components/ProjectNav";
 import { createClient } from "@/lib/supabase-browser";
 
@@ -396,6 +397,14 @@ export default function CharacterLockPage() {
                         )}
                       </div>
 
+                      <div className="flex items-center gap-2">
+                      <BrainTargetButton
+                        targetType="character"
+                        targetId={char.id}
+                        targetLabel={char.name}
+                        phase="character_lock"
+                        category="wardrobe"
+                      />
                       {!char.locked && (
                         <button
                           onClick={() => lockCharacter(char.id)}
@@ -405,6 +414,7 @@ export default function CharacterLockPage() {
                           {locking === char.id ? "Locking..." : "Lock Character"}
                         </button>
                       )}
+                      </div>
                     </div>
 
                     {/* Headshot + Reference Sheet */}

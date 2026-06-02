@@ -1,7 +1,9 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateLocationImage } from "@/lib/generate-image";
 import { bumpVersion, recordProvenance } from "@/lib/provenance";
+import { getProjectBrainPrompt } from "@/lib/project-brain";
 import { normalizeProjectAspectRatio } from "@/lib/types";
+import { evaluateProjectAutomation, recordProjectDecision } from "@/lib/workflow";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -217,6 +219,11 @@ export async function POST(
     const existing = count || 0;
     const needed = VARIATIONS_PER_LOCATION - existing;
     if (needed <= 0) continue;
+    const brainPrompt = await getProjectBrainPrompt(supabase, id, {
+      targetType: "location",
+      targetId: loc.id,
+    });
+    const notesWithBrain = [productionNotes, brainPrompt].filter(Boolean).join("\n\n");
 
     for (let i = existing + 1; i <= VARIATIONS_PER_LOCATION; i++) {
       try {
@@ -226,7 +233,7 @@ export async function POST(
           loc.time_of_day,
           loc.mood,
           i,
-          productionNotes,
+          notesWithBrain,
           aspectRatio
         );
 
@@ -326,6 +333,16 @@ export async function PATCH(
         .eq("id", body.location_id);
 
       await bumpVersion(supabase, "locations", body.location_id, id);
+      await recordProjectDecision(supabase, {
+        projectId: id,
+        decisionType: "location",
+        subjectType: "location",
+        subjectId: body.location_id,
+        status: "approved",
+        metadata: { variation_id: body.variation_id },
+        user,
+      });
+      await evaluateProjectAutomation(supabase, id);
     }
 
     return NextResponse.json({ success: true });
@@ -338,6 +355,7 @@ export async function PATCH(
       .update({ locked: true })
       .eq("id", body.location_id);
     await bumpVersion(supabase, "locations", body.location_id, id);
+    await evaluateProjectAutomation(supabase, id);
 
     return NextResponse.json({ success: true });
   }
@@ -373,6 +391,7 @@ export async function PATCH(
         .update({ phase_status: "scene_bible" })
         .eq("id", id);
     }
+    await evaluateProjectAutomation(supabase, id);
 
     return NextResponse.json({ success: true });
   }

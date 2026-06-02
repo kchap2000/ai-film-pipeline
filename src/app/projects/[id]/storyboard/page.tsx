@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import BrainTargetButton from "@/components/BrainTargetButton";
 import ProjectNav from "@/components/ProjectNav";
 import {
   aspectRatioLabel,
@@ -531,6 +532,18 @@ export default function StoryboardPage() {
 
                             {/* Panel details */}
                             <div className="p-2" style={{ background: "var(--brand-mid)" }}>
+                              <div className="mb-2">
+                                <BrainTargetButton
+                                  label="Note"
+                                  targetType="storyboard_panel"
+                                  targetId={panel.id}
+                                  targetLabel={`Scene ${scene.scene_number} panel ${panel.panel_number}`}
+                                  phase="storyboard"
+                                  category="composition"
+                                  intent="regenerate"
+                                  className="w-full"
+                                />
+                              </div>
                               <p className="text-[10px] line-clamp-2 leading-relaxed" style={{ color: "var(--brand-gray)" }}>
                                 {panel.action_description}
                               </p>

@@ -407,6 +407,265 @@ create index if not exists idx_asset_provenance_asset on asset_provenance(asset_
 create index if not exists idx_asset_provenance_source on asset_provenance(source_type, source_id);
 
 -- ============================================================
+-- Migration: Backfill project ownership column for collaboration
+-- ============================================================
+-- Existing preview data was created before auth-owned projects were enforced.
+-- Keep the column nullable so anonymous/internal preview flows continue to work.
+alter table projects
+  add column if not exists user_id uuid references auth.users(id) on delete set null;
+
+create index if not exists idx_projects_user_id on projects(user_id);
+
+-- ============================================================
+-- Migration: Collaborators, review decisions, and workflow activity
+-- ============================================================
+-- Project collaborators support client/reviewer portals before strict RLS is
+-- fully enforced in the app. Invitations are tokenized rows; once a user logs
+-- in with the invited email, the row can be marked active and linked to them.
+create table if not exists project_collaborators (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  user_id uuid references auth.users(id) on delete set null,
+  email text not null,
+  role text not null default 'reviewer',
+  status text not null default 'pending',
+  invite_token text not null default uuid_generate_v4()::text,
+  invited_by uuid references auth.users(id) on delete set null,
+  invited_at timestamp with time zone default now(),
+  accepted_at timestamp with time zone,
+  last_accessed_at timestamp with time zone,
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+create unique index if not exists idx_project_collaborators_project_email
+  on project_collaborators(project_id, email);
+create index if not exists idx_project_collaborators_project on project_collaborators(project_id);
+create index if not exists idx_project_collaborators_user on project_collaborators(user_id);
+create index if not exists idx_project_collaborators_token on project_collaborators(invite_token);
+
+do $$ begin
+  alter table project_collaborators
+    add constraint project_collaborators_role_check
+    check (role in ('owner', 'producer', 'client', 'reviewer'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table project_collaborators
+    add constraint project_collaborators_status_check
+    check (status in ('pending', 'active', 'removed'));
+exception when duplicate_object then null; end $$;
+
+create table if not exists project_decisions (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  decision_type text not null,
+  subject_type text not null,
+  subject_id uuid not null,
+  status text not null default 'approved',
+  notes text,
+  decided_by uuid references auth.users(id) on delete set null,
+  decided_by_email text,
+  metadata jsonb not null default '{}',
+  created_at timestamp with time zone default now()
+);
+
+create index if not exists idx_project_decisions_project on project_decisions(project_id);
+create index if not exists idx_project_decisions_subject on project_decisions(subject_type, subject_id);
+create index if not exists idx_project_decisions_type on project_decisions(project_id, decision_type);
+
+do $$ begin
+  alter table project_decisions
+    add constraint project_decisions_status_check
+    check (status in ('approved', 'rejected', 'needs_changes', 'commented'));
+exception when duplicate_object then null; end $$;
+
+create table if not exists project_activity (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  activity_type text not null,
+  title text not null,
+  body text,
+  actor_user_id uuid references auth.users(id) on delete set null,
+  actor_email text,
+  metadata jsonb not null default '{}',
+  created_at timestamp with time zone default now()
+);
+
+create index if not exists idx_project_activity_project_created
+  on project_activity(project_id, created_at desc);
+
+alter table project_collaborators enable row level security;
+alter table project_decisions enable row level security;
+alter table project_activity enable row level security;
+
+-- Preview-mode policies for the current public/internal app. Route handlers
+-- still enforce the intended workflow permissions; these keep anon-key route
+-- writes working until strict authenticated access is required.
+create policy "Preview can read collaborators"
+  on project_collaborators for select
+  using (true);
+
+create policy "Preview can create collaborators"
+  on project_collaborators for insert
+  with check (true);
+
+create policy "Preview can update collaborators"
+  on project_collaborators for update
+  using (true)
+  with check (true);
+
+create policy "Preview can read decisions"
+  on project_decisions for select
+  using (true);
+
+create policy "Preview can create decisions"
+  on project_decisions for insert
+  with check (true);
+
+create policy "Preview can read activity"
+  on project_activity for select
+  using (true);
+
+create policy "Preview can create activity"
+  on project_activity for insert
+  with check (true);
+
+-- ============================================================
+-- Migration: Project Brain feedback and continuity rules
+-- ============================================================
+create table if not exists project_feedback (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  target_type text not null default 'project',
+  target_id uuid,
+  target_label text not null default 'Whole Project',
+  phase text,
+  intent text not null default 'feedback',
+  priority text not null default 'important',
+  status text not null default 'open',
+  body text not null,
+  transcript_source text not null default 'typed',
+  created_by uuid references auth.users(id) on delete set null,
+  created_by_email text,
+  metadata jsonb not null default '{}',
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+create index if not exists idx_project_feedback_project_created
+  on project_feedback(project_id, created_at desc);
+create index if not exists idx_project_feedback_target
+  on project_feedback(project_id, target_type, target_id);
+create index if not exists idx_project_feedback_status
+  on project_feedback(project_id, status);
+
+do $$ begin
+  alter table project_feedback
+    add constraint project_feedback_target_type_check
+    check (target_type in ('project', 'character', 'cast_variation', 'pose_sheet', 'location', 'location_variation', 'scene', 'scene_variation', 'storyboard_panel', 'first_frame', 'prop', 'outfit'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table project_feedback
+    add constraint project_feedback_intent_check
+    check (intent in ('feedback', 'regenerate', 'continuity_rule', 'client_comment', 'approval_blocker'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table project_feedback
+    add constraint project_feedback_priority_check
+    check (priority in ('minor', 'important', 'must_follow'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table project_feedback
+    add constraint project_feedback_status_check
+    check (status in ('open', 'applied', 'ignored', 'resolved'));
+exception when duplicate_object then null; end $$;
+
+create table if not exists project_continuity_rules (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  scope_type text not null default 'project',
+  scope_id uuid,
+  scope_label text not null default 'Whole Project',
+  category text not null default 'continuity',
+  rule_text text not null,
+  strength text not null default 'important',
+  status text not null default 'active',
+  source_feedback_id uuid references project_feedback(id) on delete set null,
+  created_by uuid references auth.users(id) on delete set null,
+  created_by_email text,
+  metadata jsonb not null default '{}',
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+create index if not exists idx_project_continuity_project_created
+  on project_continuity_rules(project_id, created_at desc);
+create index if not exists idx_project_continuity_scope
+  on project_continuity_rules(project_id, scope_type, scope_id);
+create index if not exists idx_project_continuity_status
+  on project_continuity_rules(project_id, status);
+
+do $$ begin
+  alter table project_continuity_rules
+    add constraint project_continuity_scope_type_check
+    check (scope_type in ('project', 'character', 'cast_variation', 'pose_sheet', 'location', 'location_variation', 'scene', 'scene_variation', 'storyboard_panel', 'first_frame', 'prop', 'outfit'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table project_continuity_rules
+    add constraint project_continuity_category_check
+    check (category in ('vision', 'identity', 'wardrobe', 'props', 'location', 'lighting', 'camera', 'composition', 'performance', 'tone', 'continuity'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table project_continuity_rules
+    add constraint project_continuity_strength_check
+    check (strength in ('minor', 'important', 'must_follow'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table project_continuity_rules
+    add constraint project_continuity_status_check
+    check (status in ('active', 'superseded', 'archived'));
+exception when duplicate_object then null; end $$;
+
+alter table project_feedback enable row level security;
+alter table project_continuity_rules enable row level security;
+
+grant select, insert, update on project_feedback to anon, authenticated, service_role;
+grant select, insert, update on project_continuity_rules to anon, authenticated, service_role;
+
+create policy "Preview can read project feedback"
+  on project_feedback for select
+  using (true);
+
+create policy "Preview can create project feedback"
+  on project_feedback for insert
+  with check (true);
+
+create policy "Preview can update project feedback"
+  on project_feedback for update
+  using (true)
+  with check (true);
+
+create policy "Preview can read continuity rules"
+  on project_continuity_rules for select
+  using (true);
+
+create policy "Preview can create continuity rules"
+  on project_continuity_rules for insert
+  with check (true);
+
+create policy "Preview can update continuity rules"
+  on project_continuity_rules for update
+  using (true)
+  with check (true);
+
+-- ============================================================
 -- Migration: Make project-uploads bucket public (2026-04-14)
 -- ============================================================
 -- Headshot uploads use getPublicUrl(); the bucket must be public or rendered

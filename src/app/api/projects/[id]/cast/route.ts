@@ -1,6 +1,8 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateCastingImage } from "@/lib/generate-image";
 import { bumpVersion, recordProvenance } from "@/lib/provenance";
+import { getProjectBrainPrompt } from "@/lib/project-brain";
+import { evaluateProjectAutomation, recordProjectDecision } from "@/lib/workflow";
 import { NextRequest, NextResponse } from "next/server";
 
 // Vercel-compatible: each call generates exactly ONE image, fitting within 60s limit.
@@ -117,7 +119,13 @@ export async function POST(
   // Generate the image
   let result;
   try {
-    result = await generateCastingImage(char.name, char.description, variationNum);
+    const brainPrompt = await getProjectBrainPrompt(supabase, id, {
+      targetType: "character",
+      targetId: char.id,
+      characterNames: [char.name],
+    });
+    const descriptionWithBrain = [char.description, brainPrompt].filter(Boolean).join("\n\n");
+    result = await generateCastingImage(char.name, descriptionWithBrain, variationNum);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return NextResponse.json(
@@ -217,6 +225,16 @@ export async function PATCH(
         .eq("id", character_id);
 
       await bumpVersion(supabase, "characters", character_id, params.id);
+      await recordProjectDecision(supabase, {
+        projectId: params.id,
+        decisionType: "casting",
+        subjectType: "character",
+        subjectId: character_id,
+        status: "approved",
+        metadata: { variation_id },
+        user,
+      });
+      await evaluateProjectAutomation(supabase, params.id);
     }
 
     return NextResponse.json({ success: true });
@@ -318,6 +336,15 @@ export async function PUT(
       .eq("id", characterId);
 
     await bumpVersion(supabase, "characters", characterId, id);
+    await recordProjectDecision(supabase, {
+      projectId: id,
+      decisionType: "casting",
+      subjectType: "character",
+      subjectId: characterId,
+      status: "approved",
+      metadata: { variation_id: variation.id, source: "uploaded_headshot" },
+      user,
+    });
 
     // Advance phase to casting if needed
     await supabase
@@ -325,6 +352,7 @@ export async function PUT(
       .update({ phase_status: "casting" })
       .eq("id", id)
       .in("phase_status", ["ingestion", "extraction", "bible"]);
+    await evaluateProjectAutomation(supabase, id);
 
     return NextResponse.json({ success: true, variation });
   } catch (err) {

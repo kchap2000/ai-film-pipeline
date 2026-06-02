@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import BrainTargetButton from "@/components/BrainTargetButton";
 import ProjectNav from "@/components/ProjectNav";
 import {
   aspectRatioLabel,
@@ -370,6 +371,14 @@ export default function LocationBiblePage() {
                       )}
                     </div>
                   </div>
+                  <div className="flex items-center gap-2">
+                    <BrainTargetButton
+                      targetType="location"
+                      targetId={activeLoc.id}
+                      targetLabel={activeLoc.name}
+                      phase="locations"
+                      category="location"
+                    />
                   {activeLoc.variations.length === 0 && (
                     <button
                       onClick={() => generateVariations(activeLoc.id)}
@@ -382,6 +391,7 @@ export default function LocationBiblePage() {
                       {generating ? "Generating..." : "Generate"}
                     </button>
                   )}
+                  </div>
                 </div>
 
                 {/* Variation Grid */}
@@ -425,6 +435,18 @@ export default function LocationBiblePage() {
                               Approved
                             </span>
                           )}
+                        </div>
+
+                        <div className="p-2" style={{ borderTop: "1px solid var(--brand-steel)" }}>
+                          <BrainTargetButton
+                            label="Note"
+                            targetType="location_variation"
+                            targetId={v.id}
+                            targetLabel={`${activeLoc.name} variation ${v.variation_number}`}
+                            phase="locations"
+                            category="location"
+                            className="w-full"
+                          />
                         </div>
 
                         {v.status === "pending" && (

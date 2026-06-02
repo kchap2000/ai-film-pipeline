@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import BrainTargetButton from "@/components/BrainTargetButton";
 import ProjectNav from "@/components/ProjectNav";
 import { createClient } from "@/lib/supabase-browser";
 import {
@@ -647,6 +648,15 @@ export default function FirstFramesPage() {
                           </p>
 
                           <div className="flex gap-2 flex-wrap no-print">
+                            <BrainTargetButton
+                              label="Brain Note"
+                              targetType={frame ? "first_frame" : "storyboard_panel"}
+                              targetId={frame?.id || panel.id}
+                              targetLabel={`${panel.scene ? `Scene ${panel.scene.scene_number}` : "Scene"} panel ${panel.panel_number}`}
+                              phase="first_frames"
+                              category="composition"
+                              intent="regenerate"
+                            />
                             {frame && !isApproved && (
                               <button
                                 onClick={() => approveFrame(frame.id)}
