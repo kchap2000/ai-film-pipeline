@@ -1,4 +1,5 @@
 import { createRouteClient } from "@/lib/supabase-route";
+import { generateProjectFirstFrames } from "@/lib/first-frame-generation";
 import { getProjectAccess } from "@/lib/project-access";
 import {
   brainTargetLabel,
@@ -15,6 +16,53 @@ export const dynamic = "force-dynamic";
 function nullableUuid(value: unknown) {
   const text = typeof value === "string" ? value.trim() : "";
   return text.length > 0 ? text : null;
+}
+
+async function resolveRegenerationPanels(
+  supabase: Awaited<ReturnType<typeof createRouteClient>>["supabase"],
+  projectId: string,
+  targetType: ReturnType<typeof normalizeBrainTargetType>,
+  targetId: string | null
+) {
+  if (!targetId) {
+    return { panelIds: [], supported: false, reason: "Select a scene, storyboard panel, or first frame to regenerate." };
+  }
+
+  if (targetType === "storyboard_panel") {
+    return { panelIds: [targetId], supported: true, reason: null };
+  }
+
+  if (targetType === "first_frame") {
+    const { data, error } = await supabase
+      .from("first_frames")
+      .select("panel_id")
+      .eq("id", targetId)
+      .eq("project_id", projectId)
+      .single();
+    if (error || !data?.panel_id) {
+      return { panelIds: [], supported: false, reason: "Could not find the source storyboard panel for this first frame." };
+    }
+    return { panelIds: [data.panel_id], supported: true, reason: null };
+  }
+
+  if (targetType === "scene") {
+    const { data, error } = await supabase
+      .from("storyboard_panels")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("scene_id", targetId)
+      .order("panel_number", { ascending: true });
+    if (error || !data?.length) {
+      return { panelIds: [], supported: false, reason: "This scene does not have storyboard panels to regenerate yet." };
+    }
+    return { panelIds: data.map((panel) => panel.id), supported: true, reason: null };
+  }
+
+  return {
+    panelIds: [],
+    supported: false,
+    reason: "Regeneration from Project Brain is currently wired for scenes, storyboard panels, and first frames.",
+  };
 }
 
 export async function GET(
@@ -159,7 +207,79 @@ export async function POST(
     metadata: { feedback_id: feedback.id, rule_id: continuityRule?.id ?? null, target_type: targetType, target_id: targetId },
   });
 
-  return NextResponse.json({ feedback, continuity_rule: continuityRule }, { status: 201 });
+  let regeneration = null;
+  const shouldRegenerate = intent === "regenerate" || body.action === "queue_regeneration";
+  if (shouldRegenerate) {
+    const resolved = await resolveRegenerationPanels(supabase, id, targetType, targetId);
+    if (!resolved.supported) {
+      regeneration = {
+        supported: false,
+        queued: true,
+        executed: false,
+        reason: resolved.reason,
+      };
+      await supabase
+        .from("project_feedback")
+        .update({
+          metadata: {
+            ...(feedback.metadata || {}),
+            regeneration,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", feedback.id)
+        .eq("project_id", id);
+    } else {
+      const result = await generateProjectFirstFrames(supabase, id, {
+        panelIds: resolved.panelIds,
+        feedbackNote: text,
+        feedbackId: feedback.id,
+      });
+      regeneration = {
+        supported: true,
+        queued: true,
+        executed: result.success,
+        frames_generated: result.framesGenerated,
+        panels_processed: result.panelsProcessed,
+        frame_ids: result.frameIds,
+        errors: result.errors,
+      };
+      const nextStatus = result.framesGenerated > 0 ? "applied" : "open";
+      await supabase
+        .from("project_feedback")
+        .update({
+          status: nextStatus,
+          metadata: {
+            ...(feedback.metadata || {}),
+            regeneration,
+          },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", feedback.id)
+        .eq("project_id", id);
+
+      await recordProjectActivity(supabase, {
+        projectId: id,
+        activityType: result.framesGenerated > 0 ? "brain_regeneration_applied" : "brain_regeneration_failed",
+        title:
+          result.framesGenerated > 0
+            ? `Generated ${result.framesGenerated} frame${result.framesGenerated === 1 ? "" : "s"} from Project Brain`
+            : `Project Brain regeneration did not complete for ${targetLabel}`,
+        body: text.slice(0, 180),
+        actorUserId: user && !user.isAnonymous ? user.id : null,
+        actorEmail: user?.email ?? null,
+        metadata: {
+          feedback_id: feedback.id,
+          target_type: targetType,
+          target_id: targetId,
+          panel_ids: resolved.panelIds,
+          ...regeneration,
+        },
+      });
+    }
+  }
+
+  return NextResponse.json({ feedback, continuity_rule: continuityRule, regeneration }, { status: 201 });
 }
 
 export async function PATCH(
