@@ -233,13 +233,18 @@ export default function ProjectBrainPanel({ projectId }: { projectId: string }) 
     }
     setBody("");
     setTranscriptSource("typed");
-    setStatus(
-      effectiveIntent === "regenerate"
-        ? "Regeneration request saved to the Project Brain."
-        : data.continuity_rule
-        ? "Saved as feedback and continuity."
-        : "Feedback saved."
-    );
+    if (effectiveIntent === "regenerate") {
+      const regeneration = data.regeneration;
+      if (regeneration?.executed && regeneration.frames_generated > 0) {
+        setStatus(`Regenerated ${regeneration.frames_generated} frame${regeneration.frames_generated === 1 ? "" : "s"}.`);
+      } else if (regeneration?.supported === false) {
+        setStatus(regeneration.reason || "Regeneration request saved, but this target is not automated yet.");
+      } else {
+        setStatus("Regeneration request saved. No new frame was generated.");
+      }
+    } else {
+      setStatus(data.continuity_rule ? "Saved as feedback and continuity." : "Feedback saved.");
+    }
     await fetchBrain();
   };
 
