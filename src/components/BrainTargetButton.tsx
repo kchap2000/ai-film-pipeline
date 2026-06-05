@@ -26,9 +26,12 @@ export default function BrainTargetButton({
   className = "",
   ...payload
 }: BrainTargetButtonProps) {
+  const serializedPayload = JSON.stringify(payload);
+
   return (
     <button
       type="button"
+      data-project-brain-target={serializedPayload}
       onClick={() => openProjectBrain(payload)}
       className={`text-[10px] uppercase tracking-widest border px-3 py-2 transition-colors ${className}`}
       style={{

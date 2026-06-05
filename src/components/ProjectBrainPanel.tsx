@@ -85,6 +85,12 @@ function getSpeechRecognition(): SpeechRecognitionConstructor | null {
   return source.SpeechRecognition || source.webkitSpeechRecognition || null;
 }
 
+function isBrainContextPayload(value: unknown): value is BrainContextPayload {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<BrainContextPayload>;
+  return typeof candidate.targetType === "string" && typeof candidate.targetLabel === "string";
+}
+
 export default function ProjectBrainPanel({ projectId }: { projectId: string }) {
   const pathname = usePathname();
   const defaultPhase = useMemo(() => phaseFromPath(pathname), [pathname]);
@@ -140,8 +146,7 @@ export default function ProjectBrainPanel({ projectId }: { projectId: string }) 
   }, [activeContext.targetId, activeContext.targetType, projectId]);
 
   useEffect(() => {
-    const handler = (event: Event) => {
-      const detail = (event as CustomEvent<BrainContextPayload>).detail;
+    const openWithContext = (detail: BrainContextPayload) => {
       setContext({
         targetType: detail.targetType || "project",
         targetId: detail.targetId ?? null,
@@ -158,8 +163,30 @@ export default function ProjectBrainPanel({ projectId }: { projectId: string }) 
       setStatus(null);
       setOpen(true);
     };
+
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<BrainContextPayload>).detail;
+      if (isBrainContextPayload(detail)) openWithContext(detail);
+    };
+
+    const clickFallback = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-project-brain-target]") : null;
+      const rawPayload = target?.dataset.projectBrainTarget;
+      if (!rawPayload) return;
+      try {
+        const detail = JSON.parse(rawPayload) as unknown;
+        if (isBrainContextPayload(detail)) openWithContext(detail);
+      } catch {
+        setStatus("Could not read this Project Brain context.");
+      }
+    };
+
     window.addEventListener("project-brain:open", handler);
-    return () => window.removeEventListener("project-brain:open", handler);
+    document.addEventListener("click", clickFallback);
+    return () => {
+      window.removeEventListener("project-brain:open", handler);
+      document.removeEventListener("click", clickFallback);
+    };
   }, [defaultPhase]);
 
   useEffect(() => {
