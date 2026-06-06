@@ -666,6 +666,94 @@ create policy "Preview can update continuity rules"
   with check (true);
 
 -- ============================================================
+-- Migration: Generation job queue and review history
+-- ============================================================
+-- Durable queue for AI work requested from Project Brain or review pages.
+-- Jobs decouple client/reviewer feedback from immediate credit-spending
+-- generation, and preserve retry/error/result history per target asset.
+create table if not exists generation_jobs (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  job_type text not null default 'first_frame_regeneration',
+  action text not null default 'regenerate',
+  target_type text not null default 'project',
+  target_id uuid,
+  target_label text not null default 'Whole Project',
+  status text not null default 'queued',
+  priority text not null default 'important',
+  prompt text not null default '',
+  source_feedback_id uuid references project_feedback(id) on delete set null,
+  requested_by uuid references auth.users(id) on delete set null,
+  requested_by_email text,
+  started_by uuid references auth.users(id) on delete set null,
+  started_by_email text,
+  result_asset_type text,
+  result_asset_ids uuid[] not null default '{}',
+  error_message text,
+  metadata jsonb not null default '{}',
+  created_at timestamp with time zone default now(),
+  started_at timestamp with time zone,
+  completed_at timestamp with time zone,
+  updated_at timestamp with time zone default now()
+);
+
+create index if not exists idx_generation_jobs_project_created
+  on generation_jobs(project_id, created_at desc);
+create index if not exists idx_generation_jobs_target
+  on generation_jobs(project_id, target_type, target_id);
+create index if not exists idx_generation_jobs_status
+  on generation_jobs(project_id, status);
+create index if not exists idx_generation_jobs_feedback
+  on generation_jobs(source_feedback_id);
+
+do $$ begin
+  alter table generation_jobs
+    add constraint generation_jobs_job_type_check
+    check (job_type in ('first_frame_generation', 'first_frame_regeneration', 'storyboard_generation', 'scene_scout_generation', 'location_generation', 'cast_generation', 'pose_sheet_generation', 'wardrobe_generation', 'prop_generation'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table generation_jobs
+    add constraint generation_jobs_action_check
+    check (action in ('generate', 'regenerate', 'replace', 'export'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table generation_jobs
+    add constraint generation_jobs_target_type_check
+    check (target_type in ('project', 'character', 'cast_variation', 'pose_sheet', 'location', 'location_variation', 'scene', 'scene_variation', 'storyboard_panel', 'first_frame', 'prop', 'outfit'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table generation_jobs
+    add constraint generation_jobs_status_check
+    check (status in ('queued', 'running', 'completed', 'failed', 'cancelled'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table generation_jobs
+    add constraint generation_jobs_priority_check
+    check (priority in ('minor', 'important', 'must_follow'));
+exception when duplicate_object then null; end $$;
+
+alter table generation_jobs enable row level security;
+
+grant select, insert, update on generation_jobs to anon, authenticated, service_role;
+
+create policy "Preview can read generation jobs"
+  on generation_jobs for select
+  using (true);
+
+create policy "Preview can create generation jobs"
+  on generation_jobs for insert
+  with check (true);
+
+create policy "Preview can update generation jobs"
+  on generation_jobs for update
+  using (true)
+  with check (true);
+
+-- ============================================================
 -- Migration: Make project-uploads bucket public (2026-04-14)
 -- ============================================================
 -- Headshot uploads use getPublicUrl(); the bucket must be public or rendered

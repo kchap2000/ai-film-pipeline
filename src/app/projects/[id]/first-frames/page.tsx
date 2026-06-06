@@ -9,6 +9,7 @@ import { createClient } from "@/lib/supabase-browser";
 import {
   aspectRatioLabel,
   aspectRatioToCss,
+  type GenerationJob,
   normalizeProjectAspectRatio,
   type ProjectAspectRatio,
 } from "@/lib/types";
@@ -111,6 +112,9 @@ export default function FirstFramesPage() {
   const [approving, setApproving] = useState<string | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
   const [imageCache, setImageCache] = useState<Record<string, string>>({});
+  const [jobs, setJobs] = useState<GenerationJob[]>([]);
+  const [runningJobId, setRunningJobId] = useState<string | null>(null);
+  const [cancellingJobId, setCancellingJobId] = useState<string | null>(null);
   const [loadingImages, setLoadingImages] = useState<Set<string>>(new Set());
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [editingPanelId, setEditingPanelId] = useState<string | null>(null);
@@ -121,9 +125,10 @@ export default function FirstFramesPage() {
   const cancelRef = useRef(false);
 
   const fetchAll = useCallback(async () => {
-    const [framesRes, readinessRes] = await Promise.all([
+    const [framesRes, readinessRes, jobsRes] = await Promise.all([
       fetch(`/api/projects/${id}/first-frames`),
       fetch(`/api/projects/${id}/readiness`),
+      fetch(`/api/projects/${id}/generation-jobs?limit=120`),
     ]);
     if (framesRes.ok) {
       const data = await framesRes.json();
@@ -133,6 +138,10 @@ export default function FirstFramesPage() {
     if (readinessRes.ok) {
       const data = await readinessRes.json();
       setReadiness(data);
+    }
+    if (jobsRes.ok) {
+      const data = await jobsRes.json();
+      setJobs(data.jobs || []);
     }
     setLoading(false);
   }, [id]);
@@ -265,6 +274,55 @@ export default function FirstFramesPage() {
     }
   };
 
+  const jobsForPanel = (panel: PanelRow) => {
+    const frameIds = new Set(panel.frames.map((frame) => frame.id));
+    return jobs.filter((job) => {
+      if (job.target_type === "storyboard_panel" && job.target_id === panel.id) return true;
+      if (job.target_type === "first_frame" && job.target_id && frameIds.has(job.target_id)) return true;
+      if (job.target_type === "scene" && job.target_id === panel.scene_id) return true;
+      const panelIds = Array.isArray(job.metadata?.panel_ids) ? job.metadata.panel_ids : [];
+      return panelIds.some((panelId) => panelId === panel.id);
+    });
+  };
+
+  const runJob = async (jobId: string) => {
+    setRunningJobId(jobId);
+    setGenError(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/generation-jobs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "run", job_id: jobId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Generation job failed");
+      await fetchAll();
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRunningJobId(null);
+    }
+  };
+
+  const cancelJob = async (jobId: string) => {
+    setCancellingJobId(jobId);
+    setGenError(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/generation-jobs`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "cancel", job_id: jobId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not cancel generation job");
+      await fetchAll();
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setCancellingJobId(null);
+    }
+  };
+
   const triggerUpload = (panelId: string) => {
     uploadPanelIdRef.current = panelId;
     fileInputRef.current?.click();
@@ -358,6 +416,9 @@ export default function FirstFramesPage() {
   const generatedCount = panels.filter((p) => displayFrameFor(p)).length;
   const missingCount = Math.max(totalPanels - generatedCount, 0);
   const displayAspectLabel = aspectRatioLabel(projectAspectRatio);
+  const queuedJobs = jobs.filter((job) => job.status === "queued");
+  const runningJobs = jobs.filter((job) => job.status === "running");
+  const failedJobs = jobs.filter((job) => job.status === "failed");
 
   return (
     <>
@@ -492,6 +553,54 @@ export default function FirstFramesPage() {
             </div>
           )}
 
+          {jobs.length > 0 && (
+            <section
+              className="rounded-xl p-5 mb-8 no-print"
+              style={{
+                background: "var(--brand-mid)",
+                border: "1px solid var(--brand-steel)",
+              }}
+            >
+              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-widest mb-2" style={{ color: "var(--brand-orange)" }}>
+                    Generation Jobs
+                  </p>
+                  <p className="text-sm leading-relaxed max-w-3xl" style={{ color: "var(--brand-gray)" }}>
+                    Project Brain regeneration requests land here first. Producers can run queued jobs when the change is approved for AI spend.
+                  </p>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="px-3 py-2" style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)" }}>
+                    <p className="text-[9px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>Queued</p>
+                    <p className="mt-1" style={{ color: "var(--brand-white)" }}>{queuedJobs.length}</p>
+                  </div>
+                  <div className="px-3 py-2" style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)" }}>
+                    <p className="text-[9px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>Running</p>
+                    <p className="mt-1" style={{ color: "var(--brand-cyan)" }}>{runningJobs.length}</p>
+                  </div>
+                  <div className="px-3 py-2" style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)" }}>
+                    <p className="text-[9px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>Failed</p>
+                    <p className="mt-1" style={{ color: failedJobs.length > 0 ? "#fca5a5" : "var(--brand-white)" }}>{failedJobs.length}</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-2">
+                {jobs.slice(0, 8).map((job) => (
+                  <JobQueueRow
+                    key={job.id}
+                    job={job}
+                    running={runningJobId === job.id}
+                    cancelling={cancellingJobId === job.id}
+                    onRun={() => runJob(job.id)}
+                    onCancel={() => cancelJob(job.id)}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
           {/* Error banner */}
           {genError && (
             <div
@@ -532,6 +641,7 @@ export default function FirstFramesPage() {
                 const isApproved = !!panel.approved_first_frame_id;
                 const isGenThis = generatingPanel === panel.id;
                 const isUploading = uploadingFor === panel.id;
+                const panelJobs = jobsForPanel(panel);
                 return (
                   <div
                     key={panel.id}
@@ -647,6 +757,33 @@ export default function FirstFramesPage() {
                             {[panel.shot_type, panel.camera_angle, panel.camera_movement].filter(Boolean).join(" · ") || "—"}
                           </p>
 
+                          {panelJobs.length > 0 && (
+                            <div className="mb-3 space-y-2 no-print">
+                              {panelJobs.slice(0, 3).map((job) => (
+                                <div
+                                  key={job.id}
+                                  className="px-3 py-2"
+                                  style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)" }}
+                                >
+                                  <div className="flex items-center justify-between gap-3">
+                                    <span className="text-[9px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                                      Job · {job.action}
+                                    </span>
+                                    <JobStatusBadge status={job.status} />
+                                  </div>
+                                  <p className="text-[11px] mt-1 line-clamp-2" style={{ color: "var(--brand-white)" }}>
+                                    {job.prompt || job.target_label}
+                                  </p>
+                                  {job.error_message && (
+                                    <p className="text-[10px] mt-1" style={{ color: "#fca5a5" }}>
+                                      {job.error_message}
+                                    </p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
                           <div className="flex gap-2 flex-wrap no-print">
                             <BrainTargetButton
                               label="Brain Note"
@@ -739,6 +876,92 @@ function ReadinessRow({ label, check }: { label: string; check: ReadinessCheck }
       <span style={{ color: check.ok ? "#4ade80" : "var(--brand-gray)" }}>
         {check.done}/{check.total}
       </span>
+    </div>
+  );
+}
+
+function JobStatusBadge({ status }: { status: GenerationJob["status"] }) {
+  const color =
+    status === "completed"
+      ? "#4ade80"
+      : status === "failed" || status === "cancelled"
+      ? "#fca5a5"
+      : status === "running"
+      ? "var(--brand-cyan)"
+      : "var(--brand-orange)";
+
+  return (
+    <span
+      className="text-[9px] uppercase tracking-widest px-2 py-0.5"
+      style={{ color, border: "1px solid currentColor" }}
+    >
+      {status}
+    </span>
+  );
+}
+
+function JobQueueRow({
+  job,
+  running,
+  cancelling,
+  onRun,
+  onCancel,
+}: {
+  job: GenerationJob;
+  running: boolean;
+  cancelling: boolean;
+  onRun: () => void;
+  onCancel: () => void;
+}) {
+  const canRun = job.status === "queued" || job.status === "failed";
+  const canCancel = job.status === "queued" || job.status === "running";
+
+  return (
+    <div
+      className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-3 px-3 py-3"
+      style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)" }}
+    >
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <JobStatusBadge status={job.status} />
+          <span className="text-[9px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+            {job.job_type.replace(/_/g, " ")}
+          </span>
+          <span className="text-[9px] uppercase tracking-widest" style={{ color: "var(--brand-steel)" }}>
+            {job.target_label}
+          </span>
+        </div>
+        <p className="text-xs mt-2 leading-relaxed" style={{ color: "var(--brand-white)" }}>
+          {job.prompt || "No prompt note provided."}
+        </p>
+        {job.error_message && (
+          <p className="text-[10px] mt-1" style={{ color: "#fca5a5" }}>
+            {job.error_message}
+          </p>
+        )}
+      </div>
+      <div className="flex items-start gap-2">
+        {canRun && (
+          <button
+            onClick={onRun}
+            disabled={running || cancelling}
+            className="text-[10px] uppercase tracking-widest px-3 py-1.5 disabled:opacity-40"
+            style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+          >
+            {running ? "Running..." : job.status === "failed" ? "Retry" : "Run"}
+          </button>
+        )}
+        {canCancel && (
+          <button
+            onClick={onCancel}
+            disabled={running || cancelling}
+            className="text-[10px] uppercase tracking-widest px-3 py-1.5 disabled:opacity-40"
+            style={{ color: "#fca5a5", border: "1px solid rgba(248,113,113,0.35)" }}
+          >
+            {cancelling ? "Cancelling..." : "Cancel"}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

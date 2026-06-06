@@ -212,3 +212,42 @@ export interface StaleAsset {
   relationship: string | null;
   is_missing_source: boolean;
 }
+
+export type GenerationJobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type GenerationJobAction = "generate" | "regenerate" | "replace" | "export";
+export type GenerationJobType =
+  | "first_frame_generation"
+  | "first_frame_regeneration"
+  | "storyboard_generation"
+  | "scene_scout_generation"
+  | "location_generation"
+  | "cast_generation"
+  | "pose_sheet_generation"
+  | "wardrobe_generation"
+  | "prop_generation";
+
+export interface GenerationJob {
+  id: string;
+  project_id: string;
+  job_type: GenerationJobType;
+  action: GenerationJobAction;
+  target_type: AssetType | "prop" | "outfit";
+  target_id: string | null;
+  target_label: string;
+  status: GenerationJobStatus;
+  priority: "minor" | "important" | "must_follow";
+  prompt: string;
+  source_feedback_id: string | null;
+  requested_by: string | null;
+  requested_by_email: string | null;
+  started_by: string | null;
+  started_by_email: string | null;
+  result_asset_type: AssetType | null;
+  result_asset_ids: string[];
+  error_message: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  updated_at: string;
+}
