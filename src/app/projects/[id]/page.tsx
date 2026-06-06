@@ -10,6 +10,7 @@ import {
   PHASE_ORDER,
   PROJECT_ASPECT_RATIO_OPTIONS,
   aspectRatioLabel,
+  type GenerationJob,
   normalizeProjectAspectRatio,
   type ProjectAspectRatio,
 } from "@/lib/types";
@@ -81,6 +82,7 @@ export default function ProjectDetail() {
   const [automation, setAutomation] = useState<ProjectAutomation | null>(null);
   const [collaborators, setCollaborators] = useState<ProjectCollaborator[]>([]);
   const [activity, setActivity] = useState<ProjectActivity[]>([]);
+  const [generationJobs, setGenerationJobs] = useState<GenerationJob[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("client");
   const [inviteResult, setInviteResult] = useState<string | null>(null);
@@ -150,14 +152,16 @@ export default function ProjectDetail() {
   }, [fetchProject]);
 
   const fetchWorkspace = useCallback(async () => {
-    const [collaboratorsRes, activityRes, automationRes] = await Promise.all([
+    const [collaboratorsRes, activityRes, automationRes, jobsRes] = await Promise.all([
       fetch(`/api/projects/${id}/collaborators`).then((r) => (r.ok ? r.json() : null)),
       fetch(`/api/projects/${id}/activity`).then((r) => (r.ok ? r.json() : null)),
       fetch(`/api/projects/${id}/automation`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/projects/${id}/generation-jobs?limit=20`).then((r) => (r.ok ? r.json() : null)),
     ]);
     setCollaborators(collaboratorsRes?.collaborators || []);
     setActivity(activityRes?.activity || []);
     if (automationRes?.automation) setAutomation(automationRes.automation);
+    setGenerationJobs(jobsRes?.jobs || []);
   }, [id]);
 
   useEffect(() => {
@@ -325,6 +329,10 @@ export default function ProjectDetail() {
   const automationChecks = automation?.checks ? Object.entries(automation.checks) : [];
   const blockedChecks = automationChecks.filter(([, check]) => !check.ok);
   const topBlockedCheck = blockedChecks[0];
+  const queuedJobs = generationJobs.filter((job) => job.status === "queued");
+  const runningJobs = generationJobs.filter((job) => job.status === "running");
+  const failedJobs = generationJobs.filter((job) => job.status === "failed");
+  const activeJobCount = queuedJobs.length + runningJobs.length + failedJobs.length;
   const clientDecisionLabel = topBlockedCheck
     ? topBlockedCheck[0].replace(/_/g, " ")
     : project.phase_status === "first_frames"
@@ -486,7 +494,7 @@ export default function ProjectDetail() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-6">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-6">
                   <div className="p-4" style={{ background: "rgba(11,28,45,0.7)", border: "1px solid var(--brand-steel)" }}>
                     <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
                       Decision Needed
@@ -501,6 +509,14 @@ export default function ProjectDetail() {
                     </p>
                     <p className="text-sm mt-2" style={{ color: "var(--brand-white)" }}>
                       {collaborators.length} invited
+                    </p>
+                  </div>
+                  <div className="p-4" style={{ background: "rgba(11,28,45,0.7)", border: "1px solid var(--brand-steel)" }}>
+                    <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                      Generation Queue
+                    </p>
+                    <p className="text-sm mt-2" style={{ color: activeJobCount > 0 ? "var(--brand-orange)" : "var(--brand-white)" }}>
+                      {activeJobCount > 0 ? `${activeJobCount} needs review` : "Clear"}
                     </p>
                   </div>
                   <div className="p-4" style={{ background: "rgba(11,28,45,0.7)", border: "1px solid var(--brand-steel)" }}>
@@ -557,7 +573,7 @@ export default function ProjectDetail() {
           </div>
         </section>
 
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-10">
           <div className="p-5" style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>
             <h2 className="text-[10px] uppercase tracking-widest mb-4" style={{ color: "var(--brand-gray)" }}>
               Collaborators
@@ -583,6 +599,58 @@ export default function ProjectDetail() {
                         Link Ready
                       </span>
                     )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="p-5" style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <h2 className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                Generation Queue
+              </h2>
+              <Link
+                href={`/projects/${id}/first-frames`}
+                className="text-[10px] uppercase tracking-widest"
+                style={{ color: "var(--brand-orange)" }}
+              >
+                Review
+              </Link>
+            </div>
+            {generationJobs.length === 0 ? (
+              <p className="text-sm" style={{ color: "var(--brand-gray)" }}>
+                No queued generation work. Client and Project Brain regeneration requests will appear here before AI spend is approved.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                  <div className="px-2 py-2" style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)" }}>
+                    <p className="text-[9px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>Queued</p>
+                    <p className="mt-1" style={{ color: "var(--brand-white)" }}>{queuedJobs.length}</p>
+                  </div>
+                  <div className="px-2 py-2" style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)" }}>
+                    <p className="text-[9px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>Running</p>
+                    <p className="mt-1" style={{ color: "var(--brand-cyan)" }}>{runningJobs.length}</p>
+                  </div>
+                  <div className="px-2 py-2" style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)" }}>
+                    <p className="text-[9px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>Failed</p>
+                    <p className="mt-1" style={{ color: failedJobs.length > 0 ? "#fca5a5" : "var(--brand-white)" }}>{failedJobs.length}</p>
+                  </div>
+                </div>
+                {generationJobs.slice(0, 3).map((job) => (
+                  <div key={job.id} className="pt-3" style={{ borderTop: "1px solid var(--brand-steel)" }}>
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-[10px] uppercase tracking-widest truncate" style={{ color: "var(--brand-orange)" }}>
+                        {job.target_label}
+                      </p>
+                      <span className="text-[9px] uppercase tracking-widest" style={{ color: job.status === "failed" ? "#fca5a5" : "var(--brand-gray)" }}>
+                        {job.status}
+                      </span>
+                    </div>
+                    <p className="text-xs mt-1 line-clamp-2" style={{ color: "var(--brand-white)" }}>
+                      {job.prompt || job.job_type.replace(/_/g, " ")}
+                    </p>
                   </div>
                 ))}
               </div>
