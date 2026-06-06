@@ -77,6 +77,11 @@ export default function ReviewWorkroomPage() {
   const [activity, setActivity] = useState<ProjectActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [decisionTarget, setDecisionTarget] = useState<string | null>(null);
+  const [decisionStatus, setDecisionStatus] = useState<ProjectDecision["status"]>("approved");
+  const [decisionNotes, setDecisionNotes] = useState("");
+  const [submittingDecision, setSubmittingDecision] = useState(false);
+  const [decisionMessage, setDecisionMessage] = useState<string | null>(null);
 
   const fetchReview = useCallback(async () => {
     setError(null);
@@ -123,6 +128,53 @@ export default function ReviewWorkroomPage() {
   const revisionDecisions = decisions.filter((decision) => decision.status === "needs_changes" || decision.status === "rejected");
   const approvedDecisions = decisions.filter((decision) => decision.status === "approved");
   const topBlocker = blockedChecks[0] || null;
+  const latestDecisionByType = useMemo(() => {
+    const map = new Map<string, ProjectDecision>();
+    for (const decision of decisions) {
+      if (!map.has(decision.decision_type)) map.set(decision.decision_type, decision);
+    }
+    return map;
+  }, [decisions]);
+
+  const openDecision = (checkKey: string, nextStatus: ProjectDecision["status"]) => {
+    setDecisionTarget(checkKey);
+    setDecisionStatus(nextStatus);
+    setDecisionNotes("");
+    setDecisionMessage(null);
+  };
+
+  const submitDecision = async () => {
+    if (!project || !decisionTarget || submittingDecision) return;
+    setSubmittingDecision(true);
+    setDecisionMessage(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          decision_type: decisionTarget,
+          subject_type: "project_check",
+          subject_id: project.id,
+          status: decisionStatus,
+          notes: decisionNotes,
+          metadata: {
+            source: "review_workroom",
+            check_label: labelFor(decisionTarget),
+          },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not record decision.");
+      setDecisionTarget(null);
+      setDecisionNotes("");
+      setDecisionMessage("Decision recorded.");
+      await fetchReview();
+    } catch (err) {
+      setDecisionMessage(err instanceof Error ? err.message : "Could not record decision.");
+    } finally {
+      setSubmittingDecision(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -207,28 +259,110 @@ export default function ReviewWorkroomPage() {
             <h2 className="text-[10px] uppercase tracking-widest mb-4" style={{ color: "var(--brand-gray)" }}>
               Review Checklist
             </h2>
+            {decisionMessage && (
+              <p className="mb-4 text-xs" style={{ color: decisionMessage.includes("Could") || decisionMessage.includes("disabled") ? "#fca5a5" : "var(--brand-cyan)" }}>
+                {decisionMessage}
+              </p>
+            )}
             {checks.length === 0 ? (
               <p className="text-sm" style={{ color: "var(--brand-gray)" }}>Automation checks are still loading.</p>
             ) : (
               <div className="space-y-3">
                 {checks.map(([key, check]) => {
                   const href = CHECK_REVIEW_LINKS[key] ? `/projects/${id}/${CHECK_REVIEW_LINKS[key]}` : `/projects/${id}`;
+                  const latestDecision = latestDecisionByType.get(key);
                   return (
-                    <div key={key} className="grid grid-cols-[1fr_auto_auto] items-center gap-4 py-3" style={{ borderBottom: "1px solid var(--brand-steel)" }}>
-                      <div>
-                        <p className="text-sm" style={{ color: check.ok ? "var(--brand-white)" : "var(--brand-orange)" }}>
-                          {labelFor(key)}
-                        </p>
-                        <p className="text-xs mt-1" style={{ color: "var(--brand-gray)" }}>
-                          {check.done} of {check.total} complete
-                        </p>
+                    <div key={key} className="py-3" style={{ borderBottom: "1px solid var(--brand-steel)" }}>
+                      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] md:items-center gap-4">
+                        <div>
+                          <p className="text-sm" style={{ color: check.ok ? "var(--brand-white)" : "var(--brand-orange)" }}>
+                            {labelFor(key)}
+                          </p>
+                          <p className="text-xs mt-1" style={{ color: "var(--brand-gray)" }}>
+                            {check.done} of {check.total} complete
+                          </p>
+                          {latestDecision && (
+                            <p className="text-xs mt-1" style={{ color: statusColor(latestDecision.status) }}>
+                              Latest decision: {latestDecision.status.replace("_", " ")}
+                            </p>
+                          )}
+                        </div>
+                        <span className="text-[10px] uppercase tracking-widest" style={{ color: check.ok ? "#4ade80" : "var(--brand-orange)" }}>
+                          {check.ok ? "Ready" : "Open"}
+                        </span>
+                        <div className="flex flex-wrap gap-2">
+                          <Link href={href} className="text-[10px] uppercase tracking-widest px-3 py-2" style={{ color: "var(--brand-cyan)", border: "1px solid rgba(76,201,240,0.28)" }}>
+                            Review
+                          </Link>
+                          <button
+                            type="button"
+                            onClick={() => openDecision(key, check.ok ? "approved" : "needs_changes")}
+                            className="text-[10px] uppercase tracking-widest px-3 py-2"
+                            style={{ color: check.ok ? "#4ade80" : "var(--brand-orange)", border: check.ok ? "1px solid rgba(34,197,94,0.35)" : "1px solid rgba(255,138,42,0.35)" }}
+                          >
+                            {check.ok ? "Approve" : "Request Changes"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openDecision(key, "commented")}
+                            className="text-[10px] uppercase tracking-widest px-3 py-2"
+                            style={{ color: "var(--brand-gray)", border: "1px solid var(--brand-steel)" }}
+                          >
+                            Comment
+                          </button>
+                        </div>
                       </div>
-                      <span className="text-[10px] uppercase tracking-widest" style={{ color: check.ok ? "#4ade80" : "var(--brand-orange)" }}>
-                        {check.ok ? "Ready" : "Open"}
-                      </span>
-                      <Link href={href} className="text-[10px] uppercase tracking-widest px-3 py-2" style={{ color: "var(--brand-cyan)", border: "1px solid rgba(76,201,240,0.28)" }}>
-                        Review
-                      </Link>
+                      {decisionTarget === key && (
+                        <div className="mt-4 p-4" style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)" }}>
+                          <div className="grid grid-cols-1 md:grid-cols-[180px_1fr] gap-3">
+                            <label className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                              Decision
+                              <select
+                                value={decisionStatus}
+                                onChange={(event) => setDecisionStatus(event.target.value as ProjectDecision["status"])}
+                                className="mt-1 w-full px-3 py-2 text-sm normal-case tracking-normal outline-none"
+                                style={{ background: "var(--brand-mid)", color: "var(--brand-white)", border: "1px solid var(--brand-steel)" }}
+                              >
+                                <option value="approved">Approved</option>
+                                <option value="needs_changes">Needs Changes</option>
+                                <option value="rejected">Rejected</option>
+                                <option value="commented">Commented</option>
+                              </select>
+                            </label>
+                            <label className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                              Notes
+                              <textarea
+                                value={decisionNotes}
+                                onChange={(event) => setDecisionNotes(event.target.value)}
+                                rows={3}
+                                className="mt-1 w-full px-3 py-2 text-sm normal-case tracking-normal outline-none resize-y"
+                                style={{ background: "var(--brand-mid)", color: "var(--brand-white)", border: "1px solid var(--brand-steel)" }}
+                                placeholder="Add approval notes or requested changes."
+                              />
+                            </label>
+                          </div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={submitDecision}
+                              disabled={submittingDecision}
+                              className="text-[10px] uppercase tracking-widest px-3 py-2 disabled:opacity-50"
+                              style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.4)" }}
+                            >
+                              {submittingDecision ? "Recording..." : "Record Decision"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setDecisionTarget(null)}
+                              disabled={submittingDecision}
+                              className="text-[10px] uppercase tracking-widest px-3 py-2 disabled:opacity-50"
+                              style={{ color: "var(--brand-gray)", border: "1px solid var(--brand-steel)" }}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
