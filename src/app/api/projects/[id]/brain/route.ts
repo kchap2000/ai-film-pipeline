@@ -18,6 +18,15 @@ function nullableUuid(value: unknown) {
   return text.length > 0 ? text : null;
 }
 
+function appendDirectorNote(description: string | null, note: string) {
+  const base = String(description || "").trim();
+  const trimmedNote = note.trim();
+  if (!trimmedNote) return base;
+  if (base.toLowerCase().includes(trimmedNote.toLowerCase())) return base;
+  const prefix = "Director continuity note:";
+  return [base, `${prefix} ${trimmedNote}`].filter(Boolean).join("\n");
+}
+
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -95,6 +104,23 @@ export async function POST(
   const category = normalizeContinuityCategory(body.category);
   const transcriptSource = body.transcript_source === "speech" ? "speech" : "typed";
   const shouldCreateRule = Boolean(body.create_rule) || intent === "continuity_rule";
+  let wardrobeTargetForApply: { id: string; project_id: string; description: string | null; notes: string | null; locked: boolean } | null = null;
+  if (body.action === "apply_wardrobe_note" && (targetType !== "outfit" || !targetId)) {
+    return NextResponse.json({ error: "A wardrobe target is required to apply this note." }, { status: 400 });
+  }
+  if (body.action === "apply_wardrobe_note") {
+    const { data: wardrobeItem, error: wardrobeError } = await supabase
+      .from("wardrobe_items")
+      .select("id, project_id, description, notes, locked")
+      .eq("id", targetId)
+      .eq("project_id", id)
+      .maybeSingle();
+
+    if (wardrobeError || !wardrobeItem) {
+      return NextResponse.json({ error: wardrobeError?.message || "Wardrobe item not found" }, { status: 404 });
+    }
+    wardrobeTargetForApply = wardrobeItem;
+  }
 
   const { data: feedback, error } = await supabase
     .from("project_feedback")
@@ -150,14 +176,69 @@ export async function POST(
     continuityRule = rule;
   }
 
+  let appliedTarget = null;
+  if (body.action === "apply_wardrobe_note") {
+    const nextDescription = appendDirectorNote(wardrobeTargetForApply?.description || "", text);
+    const nextNotes = [
+      String(wardrobeTargetForApply?.notes || "").trim(),
+      `Applied from Project Brain feedback ${feedback.id}: ${text}`,
+    ].filter(Boolean).join("\n");
+
+    const { data: updatedWardrobe, error: updateWardrobeError } = await supabase
+      .from("wardrobe_items")
+      .update({
+        description: nextDescription,
+        notes: nextNotes,
+        locked: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", targetId)
+      .eq("project_id", id)
+      .select("id, description, notes, locked, updated_at")
+      .single();
+
+    if (updateWardrobeError || !updatedWardrobe) {
+      return NextResponse.json({ error: updateWardrobeError?.message || "Could not update wardrobe item" }, { status: 500 });
+    }
+
+    appliedTarget = {
+      type: "wardrobe_item",
+      id: updatedWardrobe.id,
+      locked: updatedWardrobe.locked,
+    };
+
+    await supabase
+      .from("project_feedback")
+      .update({
+        status: "applied",
+        metadata: {
+          ...(feedback.metadata || {}),
+          applied_target: appliedTarget,
+        },
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", feedback.id)
+      .eq("project_id", id);
+
+    await recordProjectActivity(supabase, {
+      projectId: id,
+      activityType: "wardrobe_feedback_applied",
+      title: `Applied wardrobe feedback to ${targetLabel}`,
+      body: text.slice(0, 180),
+      actorUserId: user && !user.isAnonymous ? user.id : null,
+      actorEmail: user?.email ?? null,
+      metadata: { feedback_id: feedback.id, wardrobe_item_id: targetId },
+    });
+  }
+
   await recordProjectActivity(supabase, {
     projectId: id,
-    activityType: shouldCreateRule ? "brain_rule_created" : "feedback_created",
-    title: shouldCreateRule ? `Saved continuity for ${targetLabel}` : `Added feedback on ${targetLabel}`,
+    activityType: appliedTarget ? "brain_note_applied" : shouldCreateRule ? "brain_rule_created" : "feedback_created",
+    title: appliedTarget ? `Applied note to ${targetLabel}` : shouldCreateRule ? `Saved continuity for ${targetLabel}` : `Added feedback on ${targetLabel}`,
     body: text.slice(0, 180),
     actorUserId: user && !user.isAnonymous ? user.id : null,
     actorEmail: user?.email ?? null,
-    metadata: { feedback_id: feedback.id, rule_id: continuityRule?.id ?? null, target_type: targetType, target_id: targetId },
+    metadata: { feedback_id: feedback.id, rule_id: continuityRule?.id ?? null, target_type: targetType, target_id: targetId, applied_target: appliedTarget },
   });
 
   let regeneration = null;
@@ -238,7 +319,7 @@ export async function POST(
     }
   }
 
-  return NextResponse.json({ feedback, continuity_rule: continuityRule, regeneration }, { status: 201 });
+  return NextResponse.json({ feedback, continuity_rule: continuityRule, regeneration, applied_target: appliedTarget }, { status: 201 });
 }
 
 export async function PATCH(

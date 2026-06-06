@@ -233,7 +233,9 @@ export default function ProjectBrainPanel({ projectId }: { projectId: string }) 
     }
     setBody("");
     setTranscriptSource("typed");
-    if (effectiveIntent === "regenerate") {
+    if (data.applied_target) {
+      setStatus("Applied to wardrobe and locked for future generations.");
+    } else if (effectiveIntent === "regenerate") {
       const regeneration = data.regeneration;
       if (regeneration?.job_id) {
         setStatus("Regeneration job queued for producer review.");
@@ -470,6 +472,17 @@ export default function ProjectBrainPanel({ projectId }: { projectId: string }) 
                 >
                   Save As Rule
                 </button>
+                {activeContext.targetType === "outfit" && activeContext.targetId && (
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={() => saveFeedback({ createRule: true, intent: "continuity_rule", priority: "must_follow", action: "apply_wardrobe_note" })}
+                    className="border px-3 py-2 text-xs uppercase tracking-widest disabled:opacity-50"
+                    style={{ borderColor: "rgba(34,197,94,0.7)", color: "#bbf7d0" }}
+                  >
+                    Apply To Wardrobe
+                  </button>
+                )}
                 <button
                   type="button"
                   disabled={saving}
