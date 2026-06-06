@@ -809,6 +809,260 @@ create policy "Preview can delete wardrobe items"
   using (true);
 
 -- ============================================================
+-- Migration: Agentic change planning and verification
+-- ============================================================
+-- Durable records for turning typed/spoken creative change requests into
+-- inspectable plans, downstream impact analysis, executable steps, and
+-- post-generation verification checks.
+create table if not exists change_requests (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  target_type text not null default 'project',
+  target_id uuid,
+  target_label text not null default 'Whole Project',
+  body text not null,
+  transcript_source text not null default 'typed',
+  priority text not null default 'important',
+  status text not null default 'planned',
+  requested_by uuid references auth.users(id) on delete set null,
+  requested_by_email text,
+  metadata jsonb not null default '{}',
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+create index if not exists idx_change_requests_project_created
+  on change_requests(project_id, created_at desc);
+create index if not exists idx_change_requests_target
+  on change_requests(project_id, target_type, target_id);
+create index if not exists idx_change_requests_status
+  on change_requests(project_id, status);
+
+do $$ begin
+  alter table change_requests
+    add constraint change_requests_target_type_check
+    check (target_type in ('project', 'character', 'cast_variation', 'pose_sheet', 'location', 'location_variation', 'scene', 'scene_variation', 'storyboard_panel', 'first_frame', 'prop', 'outfit'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table change_requests
+    add constraint change_requests_priority_check
+    check (priority in ('minor', 'important', 'must_follow'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table change_requests
+    add constraint change_requests_status_check
+    check (status in ('planned', 'approved', 'running', 'completed', 'failed', 'cancelled'));
+exception when duplicate_object then null; end $$;
+
+create table if not exists agent_runs (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  change_request_id uuid references change_requests(id) on delete set null,
+  run_type text not null default 'impact_plan',
+  status text not null default 'planned',
+  summary text not null default '',
+  requested_by uuid references auth.users(id) on delete set null,
+  requested_by_email text,
+  started_at timestamp with time zone,
+  completed_at timestamp with time zone,
+  error_message text,
+  metadata jsonb not null default '{}',
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+create index if not exists idx_agent_runs_project_created
+  on agent_runs(project_id, created_at desc);
+create index if not exists idx_agent_runs_change_request
+  on agent_runs(change_request_id);
+create index if not exists idx_agent_runs_status
+  on agent_runs(project_id, status);
+
+do $$ begin
+  alter table agent_runs
+    add constraint agent_runs_run_type_check
+    check (run_type in ('impact_plan', 'execution', 'verification'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table agent_runs
+    add constraint agent_runs_status_check
+    check (status in ('planned', 'approved', 'running', 'completed', 'failed', 'cancelled'));
+exception when duplicate_object then null; end $$;
+
+create table if not exists agent_steps (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  agent_run_id uuid not null references agent_runs(id) on delete cascade,
+  step_type text not null,
+  title text not null,
+  body text,
+  status text not null default 'planned',
+  sort_order integer not null default 1,
+  tool_name text,
+  started_at timestamp with time zone,
+  completed_at timestamp with time zone,
+  error_message text,
+  metadata jsonb not null default '{}',
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+create index if not exists idx_agent_steps_run_order
+  on agent_steps(agent_run_id, sort_order);
+create index if not exists idx_agent_steps_project_status
+  on agent_steps(project_id, status);
+
+do $$ begin
+  alter table agent_steps
+    add constraint agent_steps_status_check
+    check (status in ('planned', 'approved', 'running', 'completed', 'failed', 'skipped', 'cancelled'));
+exception when duplicate_object then null; end $$;
+
+create table if not exists asset_impacts (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  change_request_id uuid references change_requests(id) on delete cascade,
+  agent_run_id uuid references agent_runs(id) on delete cascade,
+  source_type text not null,
+  source_id uuid not null,
+  asset_type text not null,
+  asset_id uuid not null,
+  impact_type text not null default 'stale_dependency',
+  severity text not null default 'important',
+  status text not null default 'needs_review',
+  metadata jsonb not null default '{}',
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+create index if not exists idx_asset_impacts_project
+  on asset_impacts(project_id, created_at desc);
+create index if not exists idx_asset_impacts_change_request
+  on asset_impacts(change_request_id);
+create index if not exists idx_asset_impacts_asset
+  on asset_impacts(project_id, asset_type, asset_id);
+create index if not exists idx_asset_impacts_status
+  on asset_impacts(project_id, status);
+
+do $$ begin
+  alter table asset_impacts
+    add constraint asset_impacts_severity_check
+    check (severity in ('minor', 'important', 'must_follow'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table asset_impacts
+    add constraint asset_impacts_status_check
+    check (status in ('needs_review', 'queued', 'resolved', 'ignored'));
+exception when duplicate_object then null; end $$;
+
+create table if not exists agent_verifications (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  agent_run_id uuid references agent_runs(id) on delete cascade,
+  target_type text not null,
+  target_id uuid,
+  check_type text not null,
+  status text not null default 'pending',
+  summary text not null default '',
+  evidence jsonb not null default '{}',
+  created_at timestamp with time zone default now()
+);
+
+create index if not exists idx_agent_verifications_project
+  on agent_verifications(project_id, created_at desc);
+create index if not exists idx_agent_verifications_run
+  on agent_verifications(agent_run_id);
+create index if not exists idx_agent_verifications_target
+  on agent_verifications(project_id, target_type, target_id);
+
+do $$ begin
+  alter table agent_verifications
+    add constraint agent_verifications_status_check
+    check (status in ('pending', 'passed', 'failed', 'warning'));
+exception when duplicate_object then null; end $$;
+
+alter table change_requests enable row level security;
+alter table agent_runs enable row level security;
+alter table agent_steps enable row level security;
+alter table asset_impacts enable row level security;
+alter table agent_verifications enable row level security;
+
+grant select, insert, update on change_requests to anon, authenticated, service_role;
+grant select, insert, update on agent_runs to anon, authenticated, service_role;
+grant select, insert, update on agent_steps to anon, authenticated, service_role;
+grant select, insert, update on asset_impacts to anon, authenticated, service_role;
+grant select, insert, update on agent_verifications to anon, authenticated, service_role;
+
+create policy "Preview can read change requests"
+  on change_requests for select
+  using (true);
+
+create policy "Preview can create change requests"
+  on change_requests for insert
+  with check (true);
+
+create policy "Preview can update change requests"
+  on change_requests for update
+  using (true)
+  with check (true);
+
+create policy "Preview can read agent runs"
+  on agent_runs for select
+  using (true);
+
+create policy "Preview can create agent runs"
+  on agent_runs for insert
+  with check (true);
+
+create policy "Preview can update agent runs"
+  on agent_runs for update
+  using (true)
+  with check (true);
+
+create policy "Preview can read agent steps"
+  on agent_steps for select
+  using (true);
+
+create policy "Preview can create agent steps"
+  on agent_steps for insert
+  with check (true);
+
+create policy "Preview can update agent steps"
+  on agent_steps for update
+  using (true)
+  with check (true);
+
+create policy "Preview can read asset impacts"
+  on asset_impacts for select
+  using (true);
+
+create policy "Preview can create asset impacts"
+  on asset_impacts for insert
+  with check (true);
+
+create policy "Preview can update asset impacts"
+  on asset_impacts for update
+  using (true)
+  with check (true);
+
+create policy "Preview can read agent verifications"
+  on agent_verifications for select
+  using (true);
+
+create policy "Preview can create agent verifications"
+  on agent_verifications for insert
+  with check (true);
+
+create policy "Preview can update agent verifications"
+  on agent_verifications for update
+  using (true)
+  with check (true);
+
+-- ============================================================
 -- Migration: Make project-uploads bucket public (2026-04-14)
 -- ============================================================
 -- Headshot uploads use getPublicUrl(); the bucket must be public or rendered
