@@ -59,6 +59,18 @@ interface ProjectActivity {
   created_at: string;
 }
 
+interface ProjectDecision {
+  id: string;
+  decision_type: string;
+  subject_type: string;
+  subject_id: string;
+  status: "approved" | "rejected" | "needs_changes" | "commented";
+  notes: string | null;
+  decided_by_email: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
   const searchParams = useSearchParams();
@@ -82,6 +94,7 @@ export default function ProjectDetail() {
   const [automation, setAutomation] = useState<ProjectAutomation | null>(null);
   const [collaborators, setCollaborators] = useState<ProjectCollaborator[]>([]);
   const [activity, setActivity] = useState<ProjectActivity[]>([]);
+  const [decisions, setDecisions] = useState<ProjectDecision[]>([]);
   const [generationJobs, setGenerationJobs] = useState<GenerationJob[]>([]);
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("client");
@@ -152,16 +165,18 @@ export default function ProjectDetail() {
   }, [fetchProject]);
 
   const fetchWorkspace = useCallback(async () => {
-    const [collaboratorsRes, activityRes, automationRes, jobsRes] = await Promise.all([
+    const [collaboratorsRes, activityRes, automationRes, jobsRes, decisionsRes] = await Promise.all([
       fetch(`/api/projects/${id}/collaborators`).then((r) => (r.ok ? r.json() : null)),
       fetch(`/api/projects/${id}/activity`).then((r) => (r.ok ? r.json() : null)),
       fetch(`/api/projects/${id}/automation`).then((r) => (r.ok ? r.json() : null)),
       fetch(`/api/projects/${id}/generation-jobs?limit=20`).then((r) => (r.ok ? r.json() : null)),
+      fetch(`/api/projects/${id}/decisions`).then((r) => (r.ok ? r.json() : null)),
     ]);
     setCollaborators(collaboratorsRes?.collaborators || []);
     setActivity(activityRes?.activity || []);
     if (automationRes?.automation) setAutomation(automationRes.automation);
     setGenerationJobs(jobsRes?.jobs || []);
+    setDecisions(decisionsRes?.decisions || []);
   }, [id]);
 
   useEffect(() => {
@@ -333,6 +348,15 @@ export default function ProjectDetail() {
   const runningJobs = generationJobs.filter((job) => job.status === "running");
   const failedJobs = generationJobs.filter((job) => job.status === "failed");
   const activeJobCount = queuedJobs.length + runningJobs.length + failedJobs.length;
+  const approvedDecisionCount = decisions.filter((decision) => decision.status === "approved").length;
+  const revisionDecisionCount = decisions.filter((decision) => decision.status === "needs_changes" || decision.status === "rejected").length;
+  const latestDecision = decisions[0] || null;
+  const decisionStatusLabel =
+    revisionDecisionCount > 0
+      ? `${revisionDecisionCount} revision request${revisionDecisionCount === 1 ? "" : "s"}`
+      : decisions.length > 0
+      ? `${approvedDecisionCount}/${decisions.length} approved`
+      : "No decisions yet";
   const clientDecisionLabel = topBlockedCheck
     ? topBlockedCheck[0].replace(/_/g, " ")
     : project.phase_status === "first_frames"
@@ -494,7 +518,7 @@ export default function ProjectDetail() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-3 mt-6">
                   <div className="p-4" style={{ background: "rgba(11,28,45,0.7)", border: "1px solid var(--brand-steel)" }}>
                     <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
                       Decision Needed
@@ -509,6 +533,14 @@ export default function ProjectDetail() {
                     </p>
                     <p className="text-sm mt-2" style={{ color: "var(--brand-white)" }}>
                       {collaborators.length} invited
+                    </p>
+                  </div>
+                  <div className="p-4" style={{ background: "rgba(11,28,45,0.7)", border: "1px solid var(--brand-steel)" }}>
+                    <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                      Decisions
+                    </p>
+                    <p className="text-sm mt-2" style={{ color: revisionDecisionCount > 0 ? "var(--brand-orange)" : "var(--brand-white)" }}>
+                      {decisionStatusLabel}
                     </p>
                   </div>
                   <div className="p-4" style={{ background: "rgba(11,28,45,0.7)", border: "1px solid var(--brand-steel)" }}>
@@ -573,7 +605,7 @@ export default function ProjectDetail() {
           </div>
         </section>
 
-        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-10">
+        <section className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-10">
           <div className="p-5" style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>
             <h2 className="text-[10px] uppercase tracking-widest mb-4" style={{ color: "var(--brand-gray)" }}>
               Collaborators
@@ -601,6 +633,50 @@ export default function ProjectDetail() {
                     )}
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+
+          <div className="p-5" style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>
+            <h2 className="text-[10px] uppercase tracking-widest mb-4" style={{ color: "var(--brand-gray)" }}>
+              Client Decisions
+            </h2>
+            {decisions.length === 0 ? (
+              <p className="text-sm" style={{ color: "var(--brand-gray)" }}>
+                Approvals and change requests will appear here as clients review casting, locations, storyboards, and frames.
+              </p>
+            ) : (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                  <div className="px-2 py-2" style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)" }}>
+                    <p className="text-[9px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>Approved</p>
+                    <p className="mt-1" style={{ color: "#4ade80" }}>{approvedDecisionCount}</p>
+                  </div>
+                  <div className="px-2 py-2" style={{ background: "var(--brand-navy)", border: "1px solid var(--brand-steel)" }}>
+                    <p className="text-[9px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>Revisions</p>
+                    <p className="mt-1" style={{ color: revisionDecisionCount > 0 ? "var(--brand-orange)" : "var(--brand-white)" }}>{revisionDecisionCount}</p>
+                  </div>
+                </div>
+                {latestDecision && (
+                  <div className="pt-3" style={{ borderTop: "1px solid var(--brand-steel)" }}>
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-[10px] uppercase tracking-widest truncate" style={{ color: "var(--brand-cyan)" }}>
+                        Latest
+                      </p>
+                      <span className="text-[9px] uppercase tracking-widest" style={{ color: latestDecision.status === "approved" ? "#4ade80" : "var(--brand-orange)" }}>
+                        {latestDecision.status.replace("_", " ")}
+                      </span>
+                    </div>
+                    <p className="text-xs mt-2 capitalize" style={{ color: "var(--brand-white)" }}>
+                      {latestDecision.decision_type.replace(/_/g, " ")} · {latestDecision.subject_type.replace(/_/g, " ")}
+                    </p>
+                    {latestDecision.notes && (
+                      <p className="text-xs mt-1 line-clamp-2" style={{ color: "var(--brand-gray)" }}>
+                        {latestDecision.notes}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             )}
           </div>
