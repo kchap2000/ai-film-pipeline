@@ -754,6 +754,61 @@ create policy "Preview can update generation jobs"
   with check (true);
 
 -- ============================================================
+-- Migration: Wardrobe continuity assets
+-- ============================================================
+-- One editable, lockable wardrobe item per character per scene. This turns
+-- extracted scene wardrobe JSON into real production continuity data that can
+-- feed generation prompts and client approvals.
+create table if not exists wardrobe_items (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  character_id uuid not null references characters(id) on delete cascade,
+  scene_id uuid not null references scenes(id) on delete cascade,
+  outfit_name text not null default '',
+  description text not null default '',
+  reference_image_url text,
+  notes text not null default '',
+  locked boolean not null default false,
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+
+create index if not exists idx_wardrobe_items_project on wardrobe_items(project_id);
+create index if not exists idx_wardrobe_items_character on wardrobe_items(character_id);
+create index if not exists idx_wardrobe_items_scene on wardrobe_items(scene_id);
+create unique index if not exists idx_wardrobe_items_character_scene
+  on wardrobe_items(character_id, scene_id);
+
+do $$ begin
+  create trigger wardrobe_items_updated_at
+    before update on wardrobe_items
+    for each row
+    execute function update_updated_at();
+exception when duplicate_object then null;
+end $$;
+
+alter table wardrobe_items enable row level security;
+
+grant select, insert, update, delete on wardrobe_items to anon, authenticated, service_role;
+
+create policy "Preview can read wardrobe items"
+  on wardrobe_items for select
+  using (true);
+
+create policy "Preview can create wardrobe items"
+  on wardrobe_items for insert
+  with check (true);
+
+create policy "Preview can update wardrobe items"
+  on wardrobe_items for update
+  using (true)
+  with check (true);
+
+create policy "Preview can delete wardrobe items"
+  on wardrobe_items for delete
+  using (true);
+
+-- ============================================================
 -- Migration: Make project-uploads bucket public (2026-04-14)
 -- ============================================================
 -- Headshot uploads use getPublicUrl(); the bucket must be public or rendered

@@ -6,6 +6,7 @@ import {
 import { getProjectBrainPrompt } from "@/lib/project-brain";
 import { recordProvenance, type ProvenanceSource } from "@/lib/provenance";
 import { normalizeProjectAspectRatio } from "@/lib/types";
+import { buildWardrobePromptBlock, getLockedWardrobeForScene } from "@/lib/wardrobe";
 
 interface FirstFrameSceneContext {
   id: string;
@@ -90,6 +91,7 @@ export async function generateProjectFirstFrames(
     .in("id", sceneIds);
   const sceneById: Record<string, FirstFrameSceneContext> = {};
   for (const scene of (scenes || []) as FirstFrameSceneContext[]) sceneById[scene.id] = scene;
+  const wardrobePromptBySceneId = new Map<string, string>();
 
   const allCharNames = new Set<string>();
   for (const panel of panels) {
@@ -152,13 +154,18 @@ export async function generateProjectFirstFrames(
       sceneId: panel.scene_id,
       characterNames: panel.characters_in_shot || [],
     });
+    if (!wardrobePromptBySceneId.has(panel.scene_id)) {
+      const wardrobe = await getLockedWardrobeForScene(supabase, projectId, panel.scene_id);
+      wardrobePromptBySceneId.set(panel.scene_id, buildWardrobePromptBlock(wardrobe));
+    }
+    const wardrobePrompt = wardrobePromptBySceneId.get(panel.scene_id) || "";
     const feedbackPrompt = options.feedbackNote
       ? [
           "PROJECT BRAIN REGENERATION REQUEST:",
           `- MUST FOLLOW: ${options.feedbackNote.trim()}`,
         ].join("\n")
       : "";
-    const notesWithBrain = [productionNotes, brainPrompt, feedbackPrompt].filter(Boolean).join("\n\n");
+    const notesWithBrain = [productionNotes, brainPrompt, wardrobePrompt, feedbackPrompt].filter(Boolean).join("\n\n");
 
     try {
       const result = await generateFirstFrame({
@@ -217,6 +224,7 @@ export async function generateProjectFirstFrames(
           panel_number: panel.panel_number,
           aspect_ratio: aspectRatio,
           feedback_id: options.feedbackId || null,
+          wardrobe_locked: Boolean(wardrobePrompt),
         },
       });
     } catch (err) {

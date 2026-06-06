@@ -15,6 +15,7 @@ const NAV_STEPS: Array<
   { type: "phase", phase: "bible",       label: "Film Bible",      path: "bible",       unlocksAt: 1 }, // unlocks after extraction
   { type: "phase", phase: "casting",     label: "AI Casting",      path: "cast",        unlocksAt: 1 }, // unlocks after extraction
   { type: "phase", phase: "lock",        label: "Character Lock",  path: "lock",        unlocksAt: 3 }, // unlocks after casting
+  { type: "custom", key: "wardrobe", label: "Wardrobe", path: "wardrobe", unlockedAfter: 3 },
   { type: "phase", phase: "scene_bible", label: "Locations",       path: "locations",   unlocksAt: 4 }, // unlocks after lock
   // Scene Scouting: custom step, unlocks after index 4 (lock phase)
   { type: "custom", key: "scenes", label: "Scene Scout", path: "scenes", unlockedAfter: 4 },

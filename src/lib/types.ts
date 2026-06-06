@@ -175,6 +175,26 @@ export interface Location {
   created_at: string;
 }
 
+export interface WardrobeItem {
+  id: string;
+  project_id: string;
+  character_id: string;
+  scene_id: string;
+  outfit_name: string;
+  description: string;
+  reference_image_url: string | null;
+  notes: string;
+  locked: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WardrobeItemWithContext extends WardrobeItem {
+  character_name: string;
+  scene_number: number;
+  scene_location: string;
+}
+
 export type AssetType =
   | "project"
   | "character"
