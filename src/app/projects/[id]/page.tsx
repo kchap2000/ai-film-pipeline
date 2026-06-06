@@ -165,6 +165,32 @@ function fallbackInitials(value: string) {
     .join("");
 }
 
+type WorkflowState = "complete" | "active" | "waiting" | "blocked";
+
+interface WorkflowStep {
+  key: string;
+  label: string;
+  status: WorkflowState;
+  statusLabel: string;
+  detail: string;
+  href: string | null;
+  actionLabel: string;
+}
+
+function workflowColor(status: WorkflowState) {
+  if (status === "complete") return "#4ade80";
+  if (status === "active") return "var(--brand-orange)";
+  if (status === "blocked") return "#fca5a5";
+  return "var(--brand-gray)";
+}
+
+function workflowBackground(status: WorkflowState) {
+  if (status === "complete") return "rgba(74,222,128,0.07)";
+  if (status === "active") return "rgba(255,138,42,0.08)";
+  if (status === "blocked") return "rgba(252,165,165,0.08)";
+  return "rgba(255,255,255,0.025)";
+}
+
 function LazyProjectImage({
   source,
   alt = "",
@@ -328,6 +354,90 @@ export default function ProjectDetail() {
       null
     );
   }, [home]);
+  const workflowSteps = useMemo<WorkflowStep[]>(() => {
+    if (!home || !project) return [];
+
+    const allCastLocked = home.counts.characters > 0 && home.counts.cast_locked === home.counts.characters;
+    const allLocationsApproved = home.counts.locations > 0 && home.counts.locations_approved === home.counts.locations;
+    const hasPanels = home.counts.storyboard_panels > 0;
+    const allFramesApproved = hasPanels && home.counts.first_frames_approved === home.counts.storyboard_panels;
+    const generationReady = sourceReady && extracted && allCastLocked && hasPanels && allFramesApproved && home.counts.open_revisions === 0;
+
+    return [
+      {
+        key: "source",
+        label: "Source",
+        status: sourceReady ? "complete" : "active",
+        statusLabel: sourceReady ? "Loaded" : "Needs upload",
+        detail: sourceReady ? `${home.counts.files} document${home.counts.files === 1 ? "" : "s"} loaded.` : "Upload the script or treatment.",
+        href: null,
+        actionLabel: sourceReady ? "Loaded" : "Upload",
+      },
+      {
+        key: "bible",
+        label: "Film Bible",
+        status: extracted ? "complete" : sourceReady ? "active" : "waiting",
+        statusLabel: extracted ? "Built" : sourceReady ? "Ready to build" : "Waiting",
+        detail: extracted ? "Story, tone, characters, locations, and scenes are available." : "Build the creative foundation from the source.",
+        href: extracted ? `/projects/${project.id}/bible` : null,
+        actionLabel: extracted ? "Open Bible" : "Build Bible",
+      },
+      {
+        key: "casting",
+        label: "Casting",
+        status: allCastLocked ? "complete" : home.counts.characters > 0 ? "active" : "waiting",
+        statusLabel: allCastLocked ? "Locked" : home.counts.characters > 0 ? `${home.counts.cast_locked}/${home.counts.characters} locked` : "Waiting",
+        detail: home.counts.characters > 0 ? "Select and lock character looks for continuity." : "Characters appear after the film bible is built.",
+        href: `/projects/${project.id}/cast`,
+        actionLabel: "Review Casting",
+      },
+      {
+        key: "locations",
+        label: "Locations",
+        status: allLocationsApproved ? "complete" : home.counts.locations > 0 ? "active" : "waiting",
+        statusLabel: allLocationsApproved ? "Approved" : home.counts.locations > 0 ? `${home.counts.locations_approved}/${home.counts.locations} approved` : "Waiting",
+        detail: home.counts.locations > 0 ? "Approve the visual look of each major place." : "Locations appear after extraction.",
+        href: `/projects/${project.id}/locations`,
+        actionLabel: "Review Locations",
+      },
+      {
+        key: "storyboard",
+        label: "Storyboard",
+        status: hasPanels ? "complete" : home.counts.scenes > 0 ? "active" : "waiting",
+        statusLabel: hasPanels ? `${home.counts.storyboard_panels} panels` : home.counts.scenes > 0 ? "Ready" : "Waiting",
+        detail: hasPanels ? "Scene beats have storyboard panels attached." : "Create shot-by-shot panels from the scenes.",
+        href: `/projects/${project.id}/storyboard`,
+        actionLabel: "Open Boards",
+      },
+      {
+        key: "first_frames",
+        label: "First Frames",
+        status: allFramesApproved ? "complete" : hasPanels || home.counts.first_frames > 0 ? "active" : "waiting",
+        statusLabel: allFramesApproved ? "Approved" : hasPanels ? `${home.counts.first_frames_approved}/${home.counts.storyboard_panels} approved` : "Waiting",
+        detail: hasPanels ? `${aspectRatioLabel(selectedAspectRatio)} references are prepared for generation review.` : "Frames depend on storyboard panels.",
+        href: `/projects/${project.id}/first-frames`,
+        actionLabel: "Review Frames",
+      },
+      {
+        key: "review",
+        label: "Client Review",
+        status: home.counts.open_revisions > 0 ? "blocked" : extracted ? "active" : "waiting",
+        statusLabel: home.counts.open_revisions > 0 ? `${home.counts.open_revisions} changes` : extracted ? "Open" : "Waiting",
+        detail: home.counts.open_revisions > 0 ? "Resolve requested changes before generation." : "Collaborators can approve, comment, or request changes.",
+        href: `/projects/${project.id}/review`,
+        actionLabel: "Review Workroom",
+      },
+      {
+        key: "generation",
+        label: "Generation Ready",
+        status: generationReady ? "complete" : home.counts.open_jobs > 0 ? "active" : "waiting",
+        statusLabel: generationReady ? "Ready" : home.counts.open_jobs > 0 ? `${home.counts.open_jobs} queued` : "Not ready",
+        detail: generationReady ? "Core creative decisions are locked for production generation." : "Generation waits for locked casting, approved frames, and resolved notes.",
+        href: `/projects/${project.id}/review`,
+        actionLabel: home.counts.open_jobs > 0 ? "Check Queue" : "View Status",
+      },
+    ];
+  }, [extracted, home, project, selectedAspectRatio, sourceReady]);
 
   if (loading) {
     return (
@@ -351,8 +461,8 @@ export default function ProjectDetail() {
   }
 
   return (
-    <main className="min-h-screen pb-20" style={{ background: "var(--brand-navy)", color: "var(--brand-white)" }}>
-      <div className="max-w-7xl mx-auto px-6 py-10">
+    <main className="min-h-screen pb-20 overflow-x-hidden" style={{ background: "var(--brand-navy)", color: "var(--brand-white)" }}>
+      <div className="w-full max-w-7xl mx-auto px-6 py-10" style={{ maxWidth: "min(80rem, 100vw)" }}>
         <header className="mb-8">
           <Link href="/" className="text-[10px] uppercase tracking-[0.25em]" style={{ color: "var(--brand-orange)" }}>
             &larr; Dashboard
@@ -360,15 +470,15 @@ export default function ProjectDetail() {
         </header>
 
         <section className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-8 items-stretch mb-10">
-          <div className="min-h-[460px] flex flex-col justify-between py-2">
+          <div className="min-h-[460px] min-w-0 flex flex-col justify-between py-2">
             <div>
               <p className="text-xs mb-4" style={{ color: "var(--brand-gray)" }}>
                 {project.type === "client" && project.client_name ? project.client_name : "Personal Project"} / {aspectRatioLabel(selectedAspectRatio)}
               </p>
-              <h1 className="text-5xl md:text-6xl font-black leading-[0.95] tracking-tight max-w-3xl" style={{ color: "var(--brand-white)" }}>
+              <h1 className="text-4xl sm:text-5xl md:text-6xl font-black leading-[0.98] tracking-tight max-w-3xl break-words whitespace-normal" style={{ color: "var(--brand-white)", width: "calc(100vw - 48px)", overflowWrap: "anywhere" }}>
                 {project.title}
               </h1>
-              <p className="text-lg mt-6 max-w-2xl leading-relaxed" style={{ color: "var(--brand-gray)" }}>
+              <p className="text-base sm:text-lg mt-6 max-w-2xl leading-relaxed break-words whitespace-normal" style={{ color: "var(--brand-gray)", width: "calc(100vw - 48px)", overflowWrap: "anywhere" }}>
                 {home.bible.premise}
               </p>
             </div>
@@ -393,7 +503,7 @@ export default function ProjectDetail() {
             </div>
           </div>
 
-          <div className="relative min-h-[460px] overflow-hidden" style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>
+          <div className="relative min-h-[460px] min-w-0 overflow-hidden" style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>
             {heroImage ? (
               <LazyProjectImage source={heroImage} className="absolute inset-0 h-full w-full object-cover" />
             ) : (
@@ -409,7 +519,7 @@ export default function ProjectDetail() {
             <div className="absolute inset-x-0 bottom-0 p-5" style={{ background: "linear-gradient(180deg, transparent, rgba(11,28,45,0.92))" }}>
               <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-cyan)" }}>Next Decision</p>
               <h2 className="text-xl font-semibold mt-2">{home.next_action.label}</h2>
-              <p className="text-sm mt-2 leading-relaxed" style={{ color: "var(--brand-gray)" }}>{home.next_action.detail}</p>
+              <p className="text-sm mt-2 leading-relaxed break-words" style={{ color: "var(--brand-gray)", overflowWrap: "anywhere" }}>{home.next_action.detail}</p>
               <div className="mt-4 flex flex-wrap gap-3">
                 {home.next_action.href ? (
                   <Link href={home.next_action.href} className="text-[10px] uppercase tracking-widest px-4 py-2" style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.45)" }}>
@@ -433,6 +543,77 @@ export default function ProjectDetail() {
             {inviteStatus}
           </div>
         )}
+
+        <section className="mb-10">
+          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-4">
+            <div>
+              <p className="text-[10px] uppercase tracking-widest mb-2" style={{ color: "var(--brand-cyan)" }}>Production Roadmap</p>
+              <h2 className="text-2xl font-semibold tracking-tight">Workflow</h2>
+              <p className="text-sm mt-2 max-w-2xl" style={{ color: "var(--brand-gray)" }}>
+                Each step shows what is ready, what needs a decision, and where the next review happens.
+              </p>
+            </div>
+            <Link href={`/projects/${project.id}/review`} className="text-[10px] uppercase tracking-widest self-start md:self-auto px-4 py-2" style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.45)" }}>
+              Open Review
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+            {workflowSteps.map((step, index) => (
+              <div
+                key={step.key}
+                className="min-h-[190px] p-4 flex flex-col justify-between"
+                style={{
+                  background: workflowBackground(step.status),
+                  border: `1px solid ${step.status === "waiting" ? "var(--brand-steel)" : workflowColor(step.status)}`,
+                }}
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <span
+                        className="h-7 w-7 shrink-0 flex items-center justify-center text-[10px] font-semibold"
+                        style={{
+                          color: workflowColor(step.status),
+                          border: `1px solid ${workflowColor(step.status)}`,
+                        }}
+                      >
+                        {index + 1}
+                      </span>
+                      <h3 className="text-base font-semibold truncate">{step.label}</h3>
+                    </div>
+                    <span className="text-[9px] uppercase tracking-widest shrink-0" style={{ color: workflowColor(step.status) }}>
+                      {step.statusLabel}
+                    </span>
+                  </div>
+                  <p className="text-sm mt-4 leading-relaxed" style={{ color: "var(--brand-gray)" }}>
+                    {step.detail}
+                  </p>
+                </div>
+
+                <div className="mt-5">
+                  {step.key === "bible" && !extracted && sourceReady ? (
+                    <button type="button" onClick={runExtraction} disabled={extracting} className="text-[10px] uppercase tracking-widest disabled:opacity-50" style={{ color: "var(--brand-orange)" }}>
+                      {extracting ? "Building..." : step.actionLabel}
+                    </button>
+                  ) : step.key === "source" && !sourceReady ? (
+                    <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                      Upload Below
+                    </span>
+                  ) : step.href ? (
+                    <Link href={step.href} className="text-[10px] uppercase tracking-widest" style={{ color: step.status === "waiting" ? "var(--brand-gray)" : "var(--brand-orange)" }}>
+                      {step.actionLabel}
+                    </Link>
+                  ) : (
+                    <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                      {step.actionLabel}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
 
         <section className="grid grid-cols-1 lg:grid-cols-[0.95fr_1.05fr] gap-6 mb-10">
           <div className="p-6" style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>

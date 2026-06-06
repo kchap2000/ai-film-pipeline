@@ -321,9 +321,21 @@ export default function ProjectBrainPanel({ projectId }: { projectId: string }) 
       <button
         type="button"
         onClick={openForProject}
-        className="fixed bottom-4 right-4 z-40 border px-3 py-4 text-[10px] uppercase tracking-widest shadow-2xl sm:bottom-auto sm:top-1/2 sm:-translate-y-1/2"
+        className="hidden sm:block fixed right-4 z-40 border px-3 py-4 text-[10px] uppercase tracking-widest shadow-2xl sm:top-1/2 sm:-translate-y-1/2"
         style={{
           writingMode: "vertical-rl",
+          borderColor: "rgba(76,201,240,0.45)",
+          background: "rgba(11,28,45,0.96)",
+          color: "var(--brand-cyan)",
+        }}
+      >
+        Project Brain
+      </button>
+      <button
+        type="button"
+        onClick={openForProject}
+        className="fixed bottom-4 right-4 z-40 border px-4 py-3 text-[10px] uppercase tracking-widest shadow-2xl sm:hidden"
+        style={{
           borderColor: "rgba(76,201,240,0.45)",
           background: "rgba(11,28,45,0.96)",
           color: "var(--brand-cyan)",
