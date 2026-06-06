@@ -211,12 +211,16 @@ export default function ProjectDetail() {
   // so Khalil can see what's blocking the next phase without visiting each
   // phase page. Silently no-ops if the endpoint 404s (old projects).
   useEffect(() => {
-    Promise.all([
-      fetch(`/api/projects/${id}/readiness`).then((r) => (r.ok ? r.json() : null)),
-      fetch(`/api/projects/${id}/staleness`).then((r) => (r.ok ? r.json() : null)),
-    ])
-      .then(([readinessData, stalenessData]) => {
+    fetch(`/api/projects/${id}/readiness`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((readinessData) => {
         if (readinessData && readinessData.checks) setReadiness(readinessData);
+      })
+      .catch(() => {});
+
+    fetch(`/api/projects/${id}/staleness`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((stalenessData) => {
         if (stalenessData && stalenessData.summary) setStaleness(stalenessData);
       })
       .catch(() => {});
@@ -508,6 +512,24 @@ export default function ProjectDetail() {
                 <p className="text-sm mt-3 max-w-2xl leading-relaxed" style={{ color: "var(--brand-gray)" }}>
                   This workspace is now structured around decisions: invite collaborators, collect approvals, and let the pipeline move forward when every required choice is complete.
                 </p>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <Link
+                    href={`/projects/${project.id}/review`}
+                    className="text-[10px] uppercase tracking-widest px-4 py-2.5"
+                    style={{ color: "var(--brand-cyan)", border: "1px solid rgba(76,201,240,0.35)" }}
+                  >
+                    Open Review Workroom
+                  </Link>
+                  {nextGuidance.href && (
+                    <Link
+                      href={nextGuidance.href}
+                      className="text-[10px] uppercase tracking-widest px-4 py-2.5"
+                      style={{ color: "var(--brand-orange)", border: "1px solid rgba(255,138,42,0.35)" }}
+                    >
+                      Continue Current Phase
+                    </Link>
+                  )}
+                </div>
 
                 {inviteStatus && (
                   <div
