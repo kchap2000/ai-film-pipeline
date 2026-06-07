@@ -39,6 +39,20 @@ function buildBiblePreview(structure: Record<string, unknown> | null, production
   };
 }
 
+function allDone(done: number, total: number) {
+  return total > 0 && done === total;
+}
+
+function workflowCheck(label: string, done: number, total: number, href: string) {
+  return {
+    label,
+    done,
+    total,
+    ok: allDone(done, total),
+    href,
+  };
+}
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
@@ -92,7 +106,7 @@ export async function GET(
       .eq("status", "approved"),
     supabase
       .from("scenes")
-      .select("id, scene_number, location, time_of_day, scene_type, action_summary, mood, props, characters_present, locked")
+      .select("id, scene_number, location, time_of_day, scene_type, action_summary, mood, props, characters_present, locked, approved_scout_image_url")
       .eq("project_id", id)
       .order("scene_number", { ascending: true }),
     supabase
@@ -183,10 +197,12 @@ export async function GET(
   }));
 
   const scenes = (scenesRes.data || []).map((scene) => {
+    const { approved_scout_image_url: approvedScoutImageUrl, ...sceneMeta } = scene;
     const panels = panelsByScene.get(scene.id) || [];
     const frame = panels.map((panel) => latestFrameByPanel.get(panel.id)).find(Boolean) || null;
     return {
-      ...scene,
+      ...sceneMeta,
+      has_approved_scout: Boolean(approvedScoutImageUrl),
       panel_count: panels.length,
       preview_image: scene.locked
         ? {
@@ -214,8 +230,28 @@ export async function GET(
 
   const totalPanels = (panelsRes.data || []).length;
   const approvedFrames = (panelsRes.data || []).filter((panel) => panel.approved_first_frame_id).length;
+  const castableCharacters = characters.filter((character) => !character.voice_only);
+  const castApproved = castableCharacters.filter((character) => character.approved_cast_id || character.approved_image).length;
+  const castLocked = castableCharacters.filter((character) => character.locked && (character.approved_cast_id || character.approved_image)).length;
+  const locationsApproved = locations.filter((location) => location.approved_image).length;
+  const scenesScouted = scenes.filter((scene) => scene.has_approved_scout || scene.locked).length;
+  const scenesWithPanels = scenes.filter((scene) => scene.panel_count > 0).length;
+  const generatedPanelIds = new Set((framesRes.data || []).map((frame) => frame.panel_id));
+  const framesGenerated = (panelsRes.data || []).filter((panel) => generatedPanelIds.has(panel.id)).length;
   const openJobs = (jobsRes.data || []).filter((job) => ["queued", "running", "failed"].includes(job.status));
   const revisionDecisions = (decisionsRes.data || []).filter((decision) => decision.status === "needs_changes" || decision.status === "rejected");
+  const workflowChecks = {
+    cast_approved: workflowCheck("Cast approved", castApproved, castableCharacters.length, `/projects/${id}/cast`),
+    cast_locked: workflowCheck("Cast locked", castLocked, castableCharacters.length, `/projects/${id}/lock`),
+    locations_approved: workflowCheck("Locations approved", locationsApproved, locations.length, `/projects/${id}/locations`),
+    scenes_scouted: workflowCheck("Scenes scouted", scenesScouted, scenes.length, `/projects/${id}/scenes`),
+    scenes_have_panels: workflowCheck("Scenes have panels", scenesWithPanels, scenes.length, `/projects/${id}/storyboard`),
+    first_frames_generated: workflowCheck("First frames generated", framesGenerated, totalPanels, `/projects/${id}/first-frames`),
+    first_frames_approved: workflowCheck("First frames approved", approvedFrames, totalPanels, `/projects/${id}/first-frames`),
+  };
+  const workflowBlockers = Object.entries(workflowChecks)
+    .filter(([, check]) => !check.ok)
+    .map(([key, check]) => ({ key, ...check }));
 
   const nextAction =
     (filesRes.data || []).length === 0
@@ -269,15 +305,26 @@ export async function GET(
     counts: {
       files: (filesRes.data || []).length,
       characters: characters.length,
-      cast_locked: characters.filter((character) => character.locked && character.approved_cast_id).length,
+      cast_locked: castLocked,
       locations: locations.length,
-      locations_approved: locations.filter((location) => location.approved_image).length,
+      locations_approved: locationsApproved,
       scenes: scenes.length,
       storyboard_panels: totalPanels,
       first_frames: (framesRes.data || []).length,
       first_frames_approved: approvedFrames,
       open_jobs: openJobs.length,
       open_revisions: revisionDecisions.length,
+    },
+    workflow: {
+      checks: workflowChecks,
+      blockers: workflowBlockers,
+      primary_blocker: workflowBlockers[0] || null,
+      ready_for_first_frames:
+        workflowChecks.cast_locked.ok &&
+        workflowChecks.locations_approved.ok &&
+        workflowChecks.scenes_scouted.ok &&
+        workflowChecks.scenes_have_panels.ok,
+      ready_for_generation: workflowChecks.first_frames_approved.ok && revisionDecisions.length === 0,
     },
     next_action: nextAction,
   });

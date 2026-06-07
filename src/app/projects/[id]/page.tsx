@@ -51,7 +51,7 @@ interface HomeScene {
   mood: string;
   props: string[];
   characters_present: string[];
-  approved_scout_image_url: string | null;
+  has_approved_scout: boolean;
   panel_count: number;
   preview_image: HomeImageSource | null;
 }
@@ -90,6 +90,18 @@ interface HomeFrame {
   image: HomeImageSource;
 }
 
+interface HomeWorkflowCheck {
+  label: string;
+  done: number;
+  total: number;
+  ok: boolean;
+  href: string;
+}
+
+interface HomeWorkflowBlocker extends HomeWorkflowCheck {
+  key: string;
+}
+
 interface ProjectHomePayload {
   project: Project;
   files: ProjectFile[];
@@ -119,6 +131,13 @@ interface ProjectHomePayload {
     first_frames_approved: number;
     open_jobs: number;
     open_revisions: number;
+  };
+  workflow: {
+    checks: Record<string, HomeWorkflowCheck>;
+    blockers: HomeWorkflowBlocker[];
+    primary_blocker: HomeWorkflowBlocker | null;
+    ready_for_first_frames: boolean;
+    ready_for_generation: boolean;
   };
   next_action: {
     label: string;
@@ -438,6 +457,7 @@ export default function ProjectDetail() {
       },
     ];
   }, [extracted, home, project, selectedAspectRatio, sourceReady]);
+  const visibleBlockers = home?.workflow.blockers.slice(0, 4) || [];
 
   if (loading) {
     return (
@@ -557,6 +577,64 @@ export default function ProjectDetail() {
               Open Review
             </Link>
           </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-[0.9fr_1.1fr] gap-4 mb-4">
+            <div className="p-5" style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>
+              <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>Current Blocker</p>
+              <h3 className="text-xl font-semibold mt-2" style={{ color: home.workflow.primary_blocker ? "var(--brand-orange)" : "#4ade80" }}>
+                {home.workflow.primary_blocker ? home.workflow.primary_blocker.label : "No active blocker"}
+              </h3>
+              <p className="text-sm mt-2 leading-relaxed" style={{ color: "var(--brand-gray)" }}>
+                {home.workflow.primary_blocker
+                  ? `${home.workflow.primary_blocker.done}/${home.workflow.primary_blocker.total} complete. This is the next constraint before generation can move forward.`
+                  : "All tracked workflow checks are currently clear."}
+              </p>
+              {home.workflow.primary_blocker && (
+                <Link href={home.workflow.primary_blocker.href} className="inline-block mt-4 text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-orange)" }}>
+                  Resolve Blocker
+                </Link>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="p-5" style={{ background: home.workflow.ready_for_first_frames ? "rgba(76,201,240,0.06)" : "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>
+                <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>First Frame Readiness</p>
+                <p className="text-sm mt-2" style={{ color: home.workflow.ready_for_first_frames ? "var(--brand-cyan)" : "var(--brand-orange)" }}>
+                  {home.workflow.ready_for_first_frames ? "Ready" : "Blocked"}
+                </p>
+                <p className="text-xs mt-2 leading-relaxed" style={{ color: "var(--brand-gray)" }}>
+                  Requires locked cast, approved locations, scouted scenes, and storyboard panels.
+                </p>
+              </div>
+              <div className="p-5" style={{ background: home.workflow.ready_for_generation ? "rgba(74,222,128,0.06)" : "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>
+                <p className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>Generation Readiness</p>
+                <p className="text-sm mt-2" style={{ color: home.workflow.ready_for_generation ? "#4ade80" : "var(--brand-gray)" }}>
+                  {home.workflow.ready_for_generation ? "Ready" : "Waiting"}
+                </p>
+                <p className="text-xs mt-2 leading-relaxed" style={{ color: "var(--brand-gray)" }}>
+                  Requires approved first frames and no unresolved revision requests.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {visibleBlockers.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+              {visibleBlockers.map((blocker) => (
+                <Link key={blocker.key} href={blocker.href} className="p-4" style={{ background: "rgba(255,138,42,0.05)", border: "1px solid rgba(255,138,42,0.22)" }}>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-medium">{blocker.label}</p>
+                    <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-orange)" }}>
+                      {blocker.done}/{blocker.total}
+                    </span>
+                  </div>
+                  <p className="text-xs mt-2" style={{ color: "var(--brand-gray)" }}>
+                    Open this step to clear the blocker.
+                  </p>
+                </Link>
+              ))}
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
             {workflowSteps.map((step, index) => (
