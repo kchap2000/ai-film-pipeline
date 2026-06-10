@@ -146,10 +146,14 @@ export default function WatchPage() {
             </div>
           ) : (
             <>
-              {/* Player */}
+              {/* Player — a stitched single file (assembly.video_url, made by
+                  scripts/stitch-film.mjs) takes priority over the per-clip
+                  sequential playlist. */}
               <div className="rounded-xl overflow-hidden mb-4" style={{ border: "1px solid var(--brand-steel)" }}>
                 <div className="aspect-video" style={{ background: "black" }}>
-                  {current ? (
+                  {assembly.video_url ? (
+                    <video key="stitched" src={assembly.video_url} controls className="w-full h-full" />
+                  ) : current ? (
                     <video
                       ref={videoRef}
                       key={current.clip_id}
@@ -167,6 +171,22 @@ export default function WatchPage() {
                   )}
                 </div>
               </div>
+              {assembly.video_url && (
+                <div className="flex items-center justify-between mb-8">
+                  <span className="text-[10px] uppercase tracking-widest text-green-400">
+                    Stitched film — single file
+                  </span>
+                  <a
+                    href={assembly.video_url}
+                    download
+                    className="text-[10px] uppercase tracking-widest px-3 py-1.5"
+                    style={{ color: "var(--brand-cyan)", border: "1px solid rgba(76,201,240,0.35)" }}
+                  >
+                    Download MP4
+                  </a>
+                </div>
+              )}
+              {!assembly.video_url && (
               <div className="flex items-center justify-between mb-8">
                 <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
                   {current ? `Scene ${current.scene_number} · Panel ${String(current.panel_number).padStart(2, "0")} · Clip ${clipIndex + 1}/${manifest.length}` : ""}
@@ -196,6 +216,7 @@ export default function WatchPage() {
                   </button>
                 </div>
               </div>
+              )}
 
               {/* Clip strip */}
               <div className="flex gap-2 overflow-x-auto pb-2 mb-10">

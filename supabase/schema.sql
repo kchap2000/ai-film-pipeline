@@ -868,3 +868,15 @@ create index if not exists idx_qa_reports_project on qa_reports(project_id);
 -- DROP TABLE IF EXISTS project_decisions CASCADE;
 -- DROP TABLE IF EXISTS project_continuity_rules CASCADE;
 -- DROP TABLE IF EXISTS project_feedback CASCADE;
+
+
+-- ============================================================
+-- Migration: Higgsfield Elements for consistency (2026-06-10)
+-- (already applied to live DB via MCP migration higgsfield_element_ids)
+-- ============================================================
+-- Characters and locations carry a reusable Higgsfield reference element
+-- created from their approved headshot / location plate. Video prompts
+-- embed <<<element_id>>> placeholders, which Higgsfield resolves to the
+-- locked reference image — preventing face/wardrobe/set drift.
+alter table characters add column if not exists higgsfield_element_id text;
+alter table locations add column if not exists higgsfield_element_id text;

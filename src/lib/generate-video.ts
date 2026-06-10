@@ -30,6 +30,21 @@ export interface VideoGenRequest {
   durationSeconds: number;
   charactersInShot: string[];
   productionNotes?: string;
+  /**
+   * Spoken lines for this shot (from storyboard_panels.dialogue, written
+   * by the Claude shot breakdown). Rendered as a DIALOGUE / SPOKEN AUDIO
+   * section — Seedance/Kling generate the speech with the video.
+   */
+  dialogue?: string;
+  /**
+   * Higgsfield reference-element IDs for identity/set locking. Character
+   * names found in actionDescription are replaced with <<<element_id>>>
+   * placeholders; the location element anchors the set. The Higgsfield
+   * backend auto-injects the reference images and prevents the face /
+   * wardrobe / set drift we get from a start_image alone.
+   */
+  characterElements?: Array<{ name: string; elementId: string }>;
+  locationElementId?: string | null;
 }
 
 /**
@@ -46,21 +61,53 @@ export function selectVideoModel(req: VideoGenRequest): HiggsfieldModel {
 }
 
 /**
- * Motion prompt = camera movement + action + mood + production directive.
+ * Motion prompt v2 — structured VISUALS / DIALOGUE / SOUND format (the
+ * format proven on Khalil's manual Higgsfield work). Character names are
+ * replaced with <<<element_id>>> placeholders so the backend injects the
+ * locked reference image; the location element anchors the set.
  */
 export function buildMotionPrompt(req: VideoGenRequest): string {
   const directive = (req.productionNotes || "").trim();
-  return [
+
+  // Swap character names for element placeholders (longest names first so
+  // "Donna Mae" wins over "Donna"). Case-insensitive whole-word match.
+  let action = req.actionDescription || "";
+  const elements = [...(req.characterElements || [])].sort((a, b) => b.name.length - a.name.length);
+  const usedElements: string[] = [];
+  for (const el of elements) {
+    const re = new RegExp(`\\b${el.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:'s)?\\b`, "gi");
+    if (re.test(action)) {
+      action = action.replace(re, (m) => (m.toLowerCase().endsWith("'s") ? `<<<${el.elementId}>>>'s` : `<<<${el.elementId}>>>`));
+      usedElements.push(el.elementId);
+    }
+  }
+  // Characters in the shot whose names never appeared in the action text
+  // still get their identity anchored via an explicit cast note.
+  const unmentioned = elements.filter((el) => !usedElements.includes(el.elementId) && req.charactersInShot.includes(el.name));
+  const castNote = unmentioned.length > 0
+    ? ` Characters in shot: ${unmentioned.map((el) => `<<<${el.elementId}>>> (${el.name})`).join(", ")}.`
+    : "";
+
+  const setting = req.locationElementId ? ` Set: <<<${req.locationElementId}>>> — same set dressing and layout as the reference, no redesign.` : "";
+
+  const visuals = [
     directive ? `PRODUCTION DIRECTIVE (locked): ${directive}` : "",
-    `Animate this frame as a live-action film shot.`,
+    `VISUALS: Live-action film shot.`,
     req.cameraMovement && req.cameraMovement !== "static"
       ? `Camera: ${req.cameraMovement} over the duration of the shot.`
       : `Camera: locked-off static shot with subtle natural motion.`,
-    `Action: ${req.actionDescription}.`,
+    `Action: ${action}.${castNote}${setting}`,
     req.mood ? `Mood: ${req.mood}.` : "",
-    `Maintain exact character identity, wardrobe, lighting, and color grade from the reference frame.`,
+    `Maintain exact character identity, wardrobe, lighting, and color grade throughout — same outfit from first frame to last frame, no wardrobe changes.`,
     `Photorealistic, cinematic, no morphing or warping artifacts.`,
   ].filter(Boolean).join(" ");
+
+  const dialogue = (req.dialogue || "").trim();
+  const dialogueBlock = dialogue
+    ? `\n\nDIALOGUE / SPOKEN AUDIO:\n${dialogue}`
+    : `\n\nDIALOGUE / SPOKEN AUDIO:\nNo dialogue in this shot.`;
+
+  return `${visuals}${dialogueBlock}`;
 }
 
 export interface VideoGenResult {
