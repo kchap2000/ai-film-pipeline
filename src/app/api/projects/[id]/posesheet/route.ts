@@ -8,7 +8,7 @@ import { recordProvenance } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const POSE_SHEET_PROMPT = `Create a 9-image storyboard (NOT a single collage).
 Each image is a separate cinematic frame.
