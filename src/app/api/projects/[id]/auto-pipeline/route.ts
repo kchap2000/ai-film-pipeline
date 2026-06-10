@@ -465,14 +465,26 @@ async function executeStep(
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return { work: "", nextStep: step, progress, failed: data.error || `First frame failed for panel ${panel.panel_number}` };
 
-      // Auto-approve the newest frame for this panel
+      // Auto-approve the newest frame — but NOT if Gemini returned an SVG
+      // placeholder (content block). Retry the panel once; on the second
+      // placeholder approve anyway so the pipeline can proceed (the video
+      // step will skip the panel after repeated clip failures).
       const { data: frame } = await supabase
         .from("first_frames")
-        .select("id")
+        .select("id, image_url")
         .eq("panel_id", panel.id)
         .order("created_at", { ascending: false })
         .limit(1)
         .single();
+      const isPlaceholder = !!frame?.image_url?.startsWith("data:image/svg");
+      const svgRetries = (progress.frame_svg_retries as Record<string, number>) || {};
+      if (frame && isPlaceholder && (svgRetries[panel.id] || 0) < 1) {
+        return {
+          work: `Panel ${panel.panel_number}: frame came back as placeholder (content blocked) — retrying once`,
+          nextStep: "first_frames",
+          progress: { ...progress, frame_svg_retries: { ...svgRetries, [panel.id]: 1 } },
+        };
+      }
       if (frame) {
         await api(`/projects/${projectId}/first-frames`, {
           method: "PATCH",
@@ -484,7 +496,8 @@ async function executeStep(
       if (regenTargets) {
         nextProgress = { ...progress, regen_panel_ids: regenTargets.filter((t) => t !== panel.id) };
       }
-      return { work: `Panel ${panel.panel_number}: first frame generated + approved`, nextStep: "first_frames", progress: nextProgress };
+      const placeholderNote = isPlaceholder ? " (placeholder — video will be skipped for this shot)" : "";
+      return { work: `Panel ${panel.panel_number}: first frame generated + approved${placeholderNote}`, nextStep: "first_frames", progress: nextProgress };
     }
 
     // ── Phase 10: video clips (one panel per call, auto-approve) ──
@@ -495,12 +508,21 @@ async function executeStep(
         .select("id, panel_number, approved_first_frame_id")
         .eq("project_id", projectId)
         .order("panel_number");
-      const { data: clips } = await supabase
+      // ALL clip rows — failed ones count toward an attempt cap so a panel
+      // whose clips keep failing (e.g. its frame is an SVG placeholder)
+      // gets skipped after 2 attempts instead of looping forever.
+      const { data: allClips } = await supabase
         .from("video_clips")
         .select("panel_id, status")
-        .eq("project_id", projectId)
-        .in("status", ["pending", "completed", "approved"]);
-      const covered = new Set((clips || []).map((c) => c.panel_id));
+        .eq("project_id", projectId);
+      const clips = (allClips || []).filter((c) => ["pending", "completed", "approved"].includes(c.status));
+      const failedCount: Record<string, number> = {};
+      for (const c of allClips || []) {
+        if (c.status === "failed") failedCount[c.panel_id] = (failedCount[c.panel_id] || 0) + 1;
+      }
+      const covered = new Set(clips.map((c) => c.panel_id));
+      const skippedFailed = (panels || []).filter((p) => !covered.has(p.id) && (failedCount[p.id] || 0) >= 2);
+      for (const p of skippedFailed) covered.add(p.id);
       const targets = (panels || []).filter((p) =>
         p.approved_first_frame_id && (regenTargets ? regenTargets.includes(p.id) : !covered.has(p.id))
       );
@@ -536,8 +558,11 @@ async function executeStep(
         const next = { ...progress };
         delete next.regen_clip_panel_ids;
         delete next.video_resume_rounds;
-        const pendingNote = pendingPanels.length > 0 ? ` (${pendingPanels.length} still pending external fulfillment)` : "";
-        return { work: `Video clips complete${pendingNote}`, nextStep: "assemble", progress: next };
+        const notes = [
+          pendingPanels.length > 0 ? `${pendingPanels.length} pending external fulfillment` : "",
+          skippedFailed.length > 0 ? `${skippedFailed.length} skipped after repeated failures` : "",
+        ].filter(Boolean).join(", ");
+        return { work: `Video clips complete${notes ? ` (${notes})` : ""}`, nextStep: "assemble", progress: next };
       }
       const panel = targets[0];
       const res = await api(`/projects/${projectId}/video-clips`, { method: "POST", body: JSON.stringify({ panel_id: panel.id }) });

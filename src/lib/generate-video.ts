@@ -77,8 +77,10 @@ const HF_BASE = process.env.HIGGSFIELD_API_BASE || "https://platform.higgsfield.
 const HF_REST_MODEL = process.env.HIGGSFIELD_MODEL || "dop-turbo";
 
 function authHeader(): string | null {
-  const keyId = process.env.HIGGSFIELD_API_KEY;
-  const secret = process.env.HIGGSFIELD_API_SECRET;
+  // Accept both our names and the official SDK's documented env names
+  // (HF_API_KEY / HF_SECRET) — whichever is configured in Vercel.
+  const keyId = process.env.HIGGSFIELD_API_KEY || process.env.HF_API_KEY;
+  const secret = process.env.HIGGSFIELD_API_SECRET || process.env.HF_SECRET;
   if (!keyId || !secret) return null;
   return `Key ${keyId}:${secret}`;
 }
