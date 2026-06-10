@@ -98,6 +98,7 @@ export interface Project {
   archived: boolean;
   aspect_ratio: ProjectAspectRatio;
   production_notes: string;
+  mode: ProjectMode;
   version: number;
   created_at: string;
   updated_at: string;
@@ -185,7 +186,9 @@ export type AssetType =
   | "cast_variation"
   | "location_variation"
   | "scene_variation"
-  | "pose_sheet";
+  | "pose_sheet"
+  | "video_clip"
+  | "assembled_video";
 
 export type SourceType = "project" | "character" | "location" | "scene" | "storyboard_panel";
 
@@ -250,4 +253,116 @@ export interface GenerationJob {
   started_at: string | null;
   completed_at: string | null;
   updated_at: string;
+}
+
+// ── FINAL VISION: modes, video pipeline, QA ─────────────────────
+
+export type ProjectMode = "auto" | "manual";
+
+export type PipelineStep =
+  | "extract"
+  | "cast_generate"
+  | "cast_select"
+  | "pose_sheets"
+  | "locations_generate"
+  | "locations_select"
+  | "scenes_generate"
+  | "scenes_select"
+  | "storyboard"
+  | "first_frames"
+  | "video_clips"
+  | "assemble"
+  | "qa"
+  | "done";
+
+export const PIPELINE_STEP_ORDER: PipelineStep[] = [
+  "extract",
+  "cast_generate",
+  "cast_select",
+  "pose_sheets",
+  "locations_generate",
+  "locations_select",
+  "scenes_generate",
+  "scenes_select",
+  "storyboard",
+  "first_frames",
+  "video_clips",
+  "assemble",
+  "qa",
+  "done",
+];
+
+export const PIPELINE_STEP_LABELS: Record<PipelineStep, string> = {
+  extract: "Script Extraction",
+  cast_generate: "Casting — Generate Variations",
+  cast_select: "Casting — Auto-Select & Lock",
+  pose_sheets: "Pose Sheets",
+  locations_generate: "Locations — Generate",
+  locations_select: "Locations — Auto-Select",
+  scenes_generate: "Scene Scouts — Generate",
+  scenes_select: "Scene Scouts — Auto-Select",
+  storyboard: "Storyboard Breakdown",
+  first_frames: "First Frames",
+  video_clips: "Video Generation",
+  assemble: "Video Assembly",
+  qa: "QA Beat Analysis",
+  done: "Complete",
+};
+
+export interface PipelineRun {
+  id: string;
+  project_id: string;
+  mode: ProjectMode;
+  current_step: PipelineStep;
+  progress: Record<string, unknown>;
+  status: "running" | "paused" | "completed" | "failed";
+  phase_timings: Record<string, number>;
+  error_log: Array<{ step: string; error: string; at: string }>;
+  qa_loops_completed: number;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export type VideoClipStatus = "pending" | "generating" | "completed" | "failed" | "approved";
+
+export interface VideoClip {
+  id: string;
+  project_id: string;
+  panel_id: string;
+  first_frame_id: string | null;
+  higgsfield_job_id: string | null;
+  status: VideoClipStatus;
+  video_url: string | null;
+  duration_seconds: number | null;
+  model_used: string;
+  prompt_used: string;
+  motion_description: string | null;
+  retry_count: number;
+  parent_clip_id: string | null;
+  created_at: string;
+}
+
+export interface AssembledVideo {
+  id: string;
+  project_id: string;
+  scope: "scene" | "full";
+  scene_id: string | null;
+  video_url: string | null;
+  manifest: Array<{ clip_id: string; video_url: string; duration: number | null; scene_number: number; panel_number: number }>;
+  duration_seconds: number | null;
+  clip_count: number;
+  status: "pending" | "ready" | "failed";
+  created_at: string;
+}
+
+export interface QAReport {
+  id: string;
+  project_id: string;
+  assembled_video_id: string | null;
+  overall_score: number | null;
+  beat_accuracy: Array<{ scene_number: number; score: number; notes: string }>;
+  character_flags: Array<{ character: string; issue: string; shots: string[] }>;
+  mood_flags: Array<{ scene_number: number; expected: string; observed: string }>;
+  regen_targets: Array<{ panel_id: string; scene_number: number; panel_number: number; reason: string }>;
+  created_at: string;
 }

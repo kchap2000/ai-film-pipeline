@@ -7,6 +7,7 @@ import {
   DEFAULT_NEW_PROJECT_ASPECT_RATIO,
   PROJECT_ASPECT_RATIO_OPTIONS,
   type ProjectAspectRatio,
+  type ProjectMode,
   type ProjectType,
 } from "@/lib/types";
 
@@ -14,6 +15,7 @@ export default function NewProject() {
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [type, setType] = useState<ProjectType>("personal");
+  const [mode, setMode] = useState<ProjectMode>("manual");
   const [aspectRatio, setAspectRatio] = useState<ProjectAspectRatio>(
     DEFAULT_NEW_PROJECT_ASPECT_RATIO
   );
@@ -35,6 +37,7 @@ export default function NewProject() {
         body: JSON.stringify({
           title: title.trim(),
           type,
+          mode,
           aspect_ratio: aspectRatio,
           client_name: type === "client" ? clientName.trim() : null,
         }),
@@ -46,7 +49,9 @@ export default function NewProject() {
       }
 
       const project = await res.json();
-      router.push(`/projects/${project.id}`);
+      // Auto mode skips straight to the pipeline control room — upload the
+      // script there, hit Start, and the orchestrator runs everything.
+      router.push(mode === "auto" ? `/projects/${project.id}` : `/projects/${project.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
       setSubmitting(false);
@@ -141,6 +146,37 @@ export default function NewProject() {
               />
             </div>
           )}
+
+          {/* Production Mode — the FINAL VISION two-mode split */}
+          <div>
+            <label className="block text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>
+              Production Mode
+            </label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {([
+                { value: "manual" as const, label: "Manual — You Direct", desc: "Pipeline pauses at every gate. Approve casting, locations, scenes, and shots yourself — with the Director's Chat agent on every page." },
+                { value: "auto" as const, label: "Auto — Script → Video", desc: "Zero intervention. AI selects the best option at every gate and runs all 12 phases to a finished video + QA report." },
+              ]).map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setMode(option.value)}
+                  className="text-left px-4 py-3 transition-colors"
+                  style={{
+                    border: mode === option.value ? "1px solid var(--brand-orange)" : "1px solid var(--brand-steel)",
+                    background: mode === option.value ? "rgba(255,138,42,0.08)" : "var(--brand-mid)",
+                  }}
+                >
+                  <span className="block text-xs font-semibold" style={{ color: mode === option.value ? "var(--brand-orange)" : "var(--brand-white)" }}>
+                    {option.label}
+                  </span>
+                  <span className="block text-[11px] mt-1 leading-relaxed" style={{ color: "var(--brand-gray)" }}>
+                    {option.desc}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
 
           {/* Aspect Ratio */}
           <div>

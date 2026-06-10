@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import BrainTargetButton from "@/components/BrainTargetButton";
 import ProjectNav from "@/components/ProjectNav";
+import DirectorChat from "@/components/DirectorChat";
 import { createClient } from "@/lib/supabase-browser";
 
 // Same client-side compression as the cast page — keeps Storage payload small
@@ -287,6 +288,7 @@ export default function CharacterLockPage() {
       />
 
       <ProjectNav projectId={id} />
+      <DirectorChat projectId={id} currentPage="lock" />
       <div className="min-h-screen" style={{ background: "var(--brand-navy)" }}>
         <div className="max-w-6xl mx-auto px-6 py-12">
 

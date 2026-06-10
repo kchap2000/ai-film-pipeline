@@ -1,5 +1,34 @@
 # AI Film Pipeline — Progress Log
 
+## 🔄 In Progress: FINAL VISION build-out (branch `feature/final-pipeline`, started 2026-04-19)
+
+Read FINAL_VISION.md first — it is the single source of truth. This branch builds the
+script-in→video-out product: two modes (Auto / Manual), Phases 10-12 (video gen,
+assembly, QA), the auto-pipeline orchestrator, and the Director's Chat agent.
+
+### Sprint status (per FINAL_VISION.md roadmap)
+- [x] **Sprint 1 — Foundation**: provenance + version columns already on main (commit 0d373a4 et seq). Cleanup SQL block appended to schema.sql (commented; Khalil runs in Supabase when ready).
+- [x] **Sprint 2 — Auto-Pipeline Orchestrator**: `pipeline_runs` table; `POST /api/projects/[id]/auto-pipeline` resumable step machine (one unit of work per call — never near the 300s ceiling; resume from `current_step`+`progress` cursor after any failure); `src/lib/auto-select.ts` Claude-Haiku-vision best-of-N scoring at casting/location/scene gates; `/projects/[id]/pipeline` control room drives the loop client-side with live work log + per-step timings.
+- [x] **Sprint 3 — Video Generation (Phase 10)**: `video_clips` table; `src/lib/generate-video.ts` (model selection per spec: seedance_2_0 character shots / cinematic_studio_3_0 establishing / kling3_0-pro ambient; motion prompt = camera + action + mood + production directive); REST path when HIGGSFIELD_API_KEY/SECRET set, MCP-fulfillment path otherwise (clips stored 'pending' with full prompt+model; a Cowork session with the Higgsfield connector generates and PATCHes video_url back); `/projects/[id]/video` clip grid with approve/regenerate/cancel.
+- [x] **Sprint 4 — Assembly + QA (Phases 11-12)**: `assembled_videos` (manifest-based: ordered clip list, per-scene + full; sequential playback in `/projects/[id]/video/watch` Screening Room; ffmpeg single-file export can fill `video_url` later without a model change); `qa_reports` + `POST /api/projects/[id]/qa` — Claude Sonnet vision checks approved first frames + shot metadata against screenplay beats → overall score, per-scene beats, character/mood flags, regen targets; QA report rendered in the Screening Room.
+- [x] **Sprint 5 — Agent Revision System (Manual Mode)**: `POST /api/projects/[id]/agent` — Claude Sonnet tool-use loop with 10 tools (update character/location/scene/panel/production-notes + regenerate cast/location/scene-scout/first-frame/video-clip); mutations bump versions so provenance flags downstream stale; `DirectorChat` drawer mounted on cast, lock, locations, scenes, storyboard, first-frames, and video pages.
+- [x] **Sprint 6 — Mode selection + wiring**: `projects.mode` column; Auto/Manual picker on project creation; PATCH allowlist; ProjectNav gains Video + Auto Pilot steps; auto-pipeline QA loop auto-regenerates flagged shots (max 3 loops, pass ≥80).
+
+### Auto Mode end-to-end flow (as built)
+Upload script → `/projects/[id]/pipeline` → Start Auto Run → orchestrator steps through:
+extract → cast_generate (10/char) → cast_select (Haiku scores, auto-approve+lock) →
+pose_sheets → locations_generate/select → scenes_generate/select → storyboard →
+first_frames (auto-approve) → video_clips (auto-approve) → assemble → qa
+(→ regen loop if score < 80, ≤3 loops) → done. Watch + QA report in the Screening Room.
+
+### Outstanding for full vision parity
+- [ ] Higgsfield REST credentials (or run clip fulfillment via MCP from Cowork) — clips queue as 'pending' until then; endpoint contract in src/lib/generate-video.ts may need adjusting to the official platform API shape on first live call
+- [ ] ffmpeg single-file export (local script or cloud assembler) to fill assembled_videos.video_url
+- [ ] QA v2: sample frames from rendered clips instead of first-frame proxies
+- [ ] Run Supabase migration block (schema.sql "FINAL VISION" section) + optional cleanup DROPs
+- [ ] Full E2E test on WAYW Ep2, then merge feature/final-pipeline → main
+
+
 ## Phase 1: Project Dashboard & Creation Flow ✅ COMPLETE
 
 ### Completed — March 24, 2026

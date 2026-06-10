@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import BrainTargetButton from "@/components/BrainTargetButton";
 import ProjectNav from "@/components/ProjectNav";
+import DirectorChat from "@/components/DirectorChat";
 import {
   aspectRatioLabel,
   aspectRatioToCss,
@@ -206,6 +207,7 @@ export default function LocationBiblePage() {
   return (
     <>
     <ProjectNav projectId={id} />
+      <DirectorChat projectId={id} currentPage="locations" />
     <div className="min-h-screen" style={{ background: "var(--brand-navy)" }}>
     <div className="max-w-6xl mx-auto px-6 py-12">
       {/* Header */}

@@ -59,7 +59,7 @@ export async function PATCH(
   const body = await req.json();
 
   // Only allow safe fields to be patched this way
-  const allowed = ["archived", "title", "client_name", "phase_status", "production_notes", "aspect_ratio"];
+  const allowed = ["archived", "title", "client_name", "phase_status", "production_notes", "aspect_ratio", "mode"];
   const update: Record<string, unknown> = {};
   for (const key of allowed) {
     if (key in body) update[key] = body[key];
