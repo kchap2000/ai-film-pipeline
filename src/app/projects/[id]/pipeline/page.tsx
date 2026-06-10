@@ -57,12 +57,16 @@ export default function PipelinePage() {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          setError(data.error || `Step failed (${res.status})`);
+          const errMsg = typeof data.error === "string" ? data.error : data.error ? JSON.stringify(data.error) : `Step failed (${res.status})`;
+          setError(errMsg);
           if (data.run) setRun(data.run);
           break;
         }
         if (data.run) setRun(data.run);
-        if (data.work) setWorkLog((prev) => [...prev.slice(-49), data.work]);
+        if (data.work) {
+          const workMsg = typeof data.work === "string" ? data.work : JSON.stringify(data.work);
+          setWorkLog((prev) => [...prev.slice(-49), workMsg]);
+        }
         if (!data.run || ["completed", "failed", "paused"].includes(data.run.status)) break;
       }
     } finally {
@@ -83,7 +87,8 @@ export default function PipelinePage() {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      setError(data.error || "Could not start run");
+      const errMsg = typeof data.error === "string" ? data.error : data.error ? JSON.stringify(data.error) : "Could not start run";
+      setError(errMsg);
       return;
     }
     setRun(data.run);
@@ -290,9 +295,9 @@ export default function PipelinePage() {
             <section>
               <h2 className="text-[10px] uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>Run Errors</h2>
               <div className="rounded-xl p-4 space-y-1" style={{ background: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.25)" }}>
-                {run.error_log.map((e, i) => (
+                {run.error_log.map((e: { step?: string; error?: unknown }, i: number) => (
                   <p key={i} className="text-[11px]" style={{ color: "#fca5a5" }}>
-                    [{e.step}] {e.error}
+                    [{String(e.step || "?")}] {typeof e.error === "string" ? e.error : JSON.stringify(e.error)}
                   </p>
                 ))}
               </div>
