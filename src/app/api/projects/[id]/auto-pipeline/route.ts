@@ -132,11 +132,40 @@ export async function POST(
     phase_timings: timings,
   };
   if (result.failed) {
+    // Inner routes can die at the platform level (timeouts return Vercel's
+    // {code,id,message} envelope). Those are transient: the generation
+    // routes are idempotent (skip-existing), so retry the same step up to
+    // 2 times before declaring the run failed. Always store error STRINGS.
+    const failedStr = typeof result.failed === "string" ? result.failed : JSON.stringify(result.failed);
+    const retries = Number((run.progress || {}).__step_retries) || 0;
+    if (retries < 2) {
+      const { data: retried } = await supabase
+        .from("pipeline_runs")
+        .update({
+          progress: { ...(run.progress || {}), __step_retries: retries + 1 },
+          phase_timings: timings,
+        })
+        .eq("id", run.id)
+        .select("*")
+        .single();
+      return NextResponse.json({
+        run: retried,
+        work: `Step ${run.current_step} hit an error (retry ${retries + 1}/2): ${failedStr.slice(0, 200)}`,
+      });
+    }
     update.status = "failed";
-    update.error_log = [...(run.error_log || []), { step: run.current_step, error: result.failed, at: new Date().toISOString() }];
+    update.error_log = [...(run.error_log || []), { step: run.current_step, error: failedStr, at: new Date().toISOString() }];
   } else if (result.nextStep === "done") {
     update.status = "completed";
     update.completed_at = new Date().toISOString();
+  }
+  // Successful unit of work clears the retry counter
+  if (!result.failed && (result.progress as Record<string, unknown>).__step_retries !== undefined) {
+    delete (result.progress as Record<string, unknown>).__step_retries;
+    update.progress = result.progress;
+  } else if (!result.failed && Number((run.progress || {}).__step_retries) > 0) {
+    // progress object was rebuilt by the step without the counter — fine
+    update.progress = result.progress;
   }
   if (result.progress.__qa_loop_increment) {
     update.qa_loops_completed = (run.qa_loops_completed || 0) + 1;
