@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   Project,
@@ -60,7 +60,9 @@ interface ProjectActivity {
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const searchParams = useSearchParams();
+  const autoExtractTriggered = useRef(false);
   const [project, setProject] = useState<Project | null>(null);
   const [files, setFiles] = useState<ProjectFile[]>([]);
   const [loading, setLoading] = useState(true);
@@ -203,7 +205,7 @@ export default function ProjectDetail() {
       .catch(() => {});
   }, [id]);
 
-  const runExtraction = async () => {
+  const runExtraction = async (autoRedirect?: boolean) => {
     setExtracting(true);
     setExtractError(null);
     setExtractResult(null);
@@ -236,6 +238,11 @@ export default function ProjectDetail() {
         scenes: data.scenes ?? 0,
       });
       await fetchProject();
+
+      // Auto mode: redirect to the pipeline control room after extraction
+      if (autoRedirect) {
+        router.push(`/projects/${id}/pipeline?autostart=1`);
+      }
     } catch (err) {
       setExtractError(
         err instanceof Error ? err.message : "Extraction failed"
@@ -244,6 +251,22 @@ export default function ProjectDetail() {
       setExtracting(false);
     }
   };
+
+  // Auto mode: when files arrive and extraction hasn't run yet, auto-trigger it.
+  // If extraction is already done (e.g. page reload), redirect to pipeline.
+  useEffect(() => {
+    if (!project || loading) return;
+    const phaseIdx = PHASE_ORDER.indexOf(project.phase_status);
+    const extracted = phaseIdx >= 1;
+
+    if (project.mode === "auto" && files.length > 0 && !extracted && !extracting && !autoExtractTriggered.current) {
+      autoExtractTriggered.current = true;
+      runExtraction(true); // true = auto-redirect to pipeline after
+    }
+    if (project.mode === "auto" && extracted && !extracting && !extractResult) {
+      router.push(`/projects/${id}/pipeline`);
+    }
+  }, [project, files.length, loading, extracting, extractResult, id, router]);
 
   const inviteCollaborator = async () => {
     if (!inviteEmail.trim() || inviting) return;
@@ -849,7 +872,7 @@ export default function ProjectDetail() {
                   )}
                 </div>
                 <button
-                  onClick={runExtraction}
+                  onClick={() => runExtraction()}
                   disabled={!canExtract}
                   className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed whitespace-nowrap"
                   style={{

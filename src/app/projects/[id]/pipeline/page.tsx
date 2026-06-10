@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import ProjectNav from "@/components/ProjectNav";
 import { PIPELINE_STEP_ORDER, PIPELINE_STEP_LABELS, PipelineStep, PipelineRun } from "@/lib/types";
@@ -14,24 +14,28 @@ import { PIPELINE_STEP_ORDER, PIPELINE_STEP_LABELS, PipelineStep, PipelineRun } 
  */
 export default function PipelinePage() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
   const [run, setRun] = useState<PipelineRun | null>(null);
   const [loading, setLoading] = useState(true);
   const [looping, setLooping] = useState(false);
   const [workLog, setWorkLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const loopRef = useRef(false);
+  const autoStartTriggered = useRef(false);
 
   const fetchRun = useCallback(async () => {
     const res = await fetch(`/api/projects/${id}/auto-pipeline`);
     if (res.ok) {
       const data = await res.json();
       setRun(data.run);
+      return data.run;
     }
     setLoading(false);
+    return null;
   }, [id]);
 
   useEffect(() => {
-    fetchRun();
+    fetchRun().then(() => setLoading(false));
     return () => {
       loopRef.current = false;
     };
@@ -67,13 +71,15 @@ export default function PipelinePage() {
     }
   }, [id]);
 
-  const startRun = async () => {
+  const startRun = async (startFromStep?: string) => {
     setError(null);
     setWorkLog([]);
+    const body: Record<string, string> = { action: "start" };
+    if (startFromStep) body.start_from_step = startFromStep;
     const res = await fetch(`/api/projects/${id}/auto-pipeline`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "start" }),
+      body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -103,6 +109,36 @@ export default function PipelinePage() {
     await fetchRun();
     stepLoop();
   };
+
+  // Auto-start: when redirected from the project page after extraction
+  // (?autostart=1), or when the page loads with a running run that needs
+  // the client-side loop resumed (e.g. page refresh mid-run).
+  useEffect(() => {
+    if (loading || autoStartTriggered.current) return;
+
+    const wantsAutoStart = searchParams.get("autostart") === "1";
+
+    // Case 1: No run yet and autostart requested → start fresh, skip extraction
+    // (extraction was already done on the project page before redirect)
+    if (wantsAutoStart && (!run || ["completed", "failed"].includes(run.status))) {
+      autoStartTriggered.current = true;
+      startRun("cast_generate");
+      return;
+    }
+
+    // Case 2: Run exists and is still running but loop isn't active (page refresh)
+    if (run?.status === "running" && !looping) {
+      autoStartTriggered.current = true;
+      stepLoop();
+      return;
+    }
+
+    // Case 3: Run exists and is paused + autostart → resume
+    if (wantsAutoStart && run?.status === "paused") {
+      autoStartTriggered.current = true;
+      resumeRun();
+    }
+  }, [loading, run, looping, searchParams]);
 
   if (loading) {
     return (
@@ -135,7 +171,7 @@ export default function PipelinePage() {
               <div className="flex gap-3">
                 {!run || ["completed", "failed"].includes(run.status) ? (
                   <button
-                    onClick={startRun}
+                    onClick={() => startRun()}
                     disabled={looping}
                     className="text-xs uppercase tracking-widest px-6 py-3 text-green-400 border border-green-800/50 hover:bg-green-950/30 transition-colors disabled:opacity-40"
                   >

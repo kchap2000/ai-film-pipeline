@@ -238,7 +238,7 @@ async function executeStep(
       if (!variations || variations.length === 0) {
         return { work: "", nextStep: step, progress, failed: `No pending variations for ${char.name}` };
       }
-      const { winner, all } = await selectBest(castingBrief(char.name, char.description || ""), variations);
+      const { winner, all } = await selectBest(castingBrief(char.name, char.description || ""), variations.map((v) => ({ id: v.id, imageUrl: v.image_url })));
       if (!winner) return { work: "", nextStep: step, progress, failed: `Scoring produced no winner for ${char.name}` };
       const res = await api(`/projects/${projectId}/cast`, {
         method: "PATCH",
@@ -331,7 +331,7 @@ async function executeStep(
       if (!variations || variations.length === 0) {
         return { work: "", nextStep: step, progress, failed: `No pending variations for location ${loc.name}` };
       }
-      const { winner, all } = await selectBest(locationBrief(loc.name, loc.description || "", loc.time_of_day || "", loc.mood || ""), variations);
+      const { winner, all } = await selectBest(locationBrief(loc.name, loc.description || "", loc.time_of_day || "", loc.mood || ""), variations.map((v) => ({ id: v.id, imageUrl: v.image_url })));
       if (!winner) return { work: "", nextStep: step, progress, failed: `No winner for location ${loc.name}` };
       const res = await api(`/projects/${projectId}/locations`, {
         method: "PATCH",
@@ -383,7 +383,7 @@ async function executeStep(
       }
       const { winner, all } = await selectBest(
         sceneScoutBrief(scene.action_summary || "", scene.location || "", scene.mood || "", scene.characters_present || []),
-        variations
+        variations.map((v) => ({ id: v.id, imageUrl: v.image_url }))
       );
       if (!winner) return { work: "", nextStep: step, progress, failed: `No winner for scene ${scene.scene_number}` };
       const res = await api(`/projects/${projectId}/scenes`, {
