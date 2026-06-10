@@ -81,6 +81,7 @@ export async function POST(req: NextRequest) {
     client_name: type === "client" ? client_name : null,
     aspect_ratio: aspectRatio,
     phase_status: "ingestion",
+    mode: body.mode === "auto" ? "auto" : "manual",
   };
 
   if (!user.isAnonymous) {

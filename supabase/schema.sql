@@ -666,6 +666,94 @@ create policy "Preview can update continuity rules"
   with check (true);
 
 -- ============================================================
+-- Migration: Generation job queue and review history
+-- ============================================================
+-- Durable queue for AI work requested from Project Brain or review pages.
+-- Jobs decouple client/reviewer feedback from immediate credit-spending
+-- generation, and preserve retry/error/result history per target asset.
+create table if not exists generation_jobs (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  job_type text not null default 'first_frame_regeneration',
+  action text not null default 'regenerate',
+  target_type text not null default 'project',
+  target_id uuid,
+  target_label text not null default 'Whole Project',
+  status text not null default 'queued',
+  priority text not null default 'important',
+  prompt text not null default '',
+  source_feedback_id uuid references project_feedback(id) on delete set null,
+  requested_by uuid references auth.users(id) on delete set null,
+  requested_by_email text,
+  started_by uuid references auth.users(id) on delete set null,
+  started_by_email text,
+  result_asset_type text,
+  result_asset_ids uuid[] not null default '{}',
+  error_message text,
+  metadata jsonb not null default '{}',
+  created_at timestamp with time zone default now(),
+  started_at timestamp with time zone,
+  completed_at timestamp with time zone,
+  updated_at timestamp with time zone default now()
+);
+
+create index if not exists idx_generation_jobs_project_created
+  on generation_jobs(project_id, created_at desc);
+create index if not exists idx_generation_jobs_target
+  on generation_jobs(project_id, target_type, target_id);
+create index if not exists idx_generation_jobs_status
+  on generation_jobs(project_id, status);
+create index if not exists idx_generation_jobs_feedback
+  on generation_jobs(source_feedback_id);
+
+do $$ begin
+  alter table generation_jobs
+    add constraint generation_jobs_job_type_check
+    check (job_type in ('first_frame_generation', 'first_frame_regeneration', 'storyboard_generation', 'scene_scout_generation', 'location_generation', 'cast_generation', 'pose_sheet_generation', 'wardrobe_generation', 'prop_generation'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table generation_jobs
+    add constraint generation_jobs_action_check
+    check (action in ('generate', 'regenerate', 'replace', 'export'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table generation_jobs
+    add constraint generation_jobs_target_type_check
+    check (target_type in ('project', 'character', 'cast_variation', 'pose_sheet', 'location', 'location_variation', 'scene', 'scene_variation', 'storyboard_panel', 'first_frame', 'prop', 'outfit'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table generation_jobs
+    add constraint generation_jobs_status_check
+    check (status in ('queued', 'running', 'completed', 'failed', 'cancelled'));
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+  alter table generation_jobs
+    add constraint generation_jobs_priority_check
+    check (priority in ('minor', 'important', 'must_follow'));
+exception when duplicate_object then null; end $$;
+
+alter table generation_jobs enable row level security;
+
+grant select, insert, update on generation_jobs to anon, authenticated, service_role;
+
+create policy "Preview can read generation jobs"
+  on generation_jobs for select
+  using (true);
+
+create policy "Preview can create generation jobs"
+  on generation_jobs for insert
+  with check (true);
+
+create policy "Preview can update generation jobs"
+  on generation_jobs for update
+  using (true)
+  with check (true);
+
+-- ============================================================
 -- Migration: Make project-uploads bucket public (2026-04-14)
 -- ============================================================
 -- Headshot uploads use getPublicUrl(); the bucket must be public or rendered
@@ -687,3 +775,96 @@ update storage.buckets set public = true where id = 'project-uploads';
 -- create policy "Users can insert their own projects" on projects for insert with check (auth.uid() = user_id);
 -- create policy "Users can update their own projects" on projects for update using (auth.uid() = user_id);
 -- create policy "Users can delete their own projects" on projects for delete using (auth.uid() = user_id);
+
+-- ============================================================
+-- Migration: FINAL VISION — modes, video pipeline, QA (2026-04-19)
+-- ============================================================
+-- See FINAL_VISION.md. Adds Auto/Manual mode, the auto-pipeline
+-- orchestrator state, Phase 10 video clips, Phase 11 assembly,
+-- and Phase 12 QA reports.
+
+-- Project mode: 'auto' runs the full pipeline unattended,
+-- 'manual' pauses at each phase gate for director review.
+alter table projects add column if not exists mode text not null default 'manual';
+
+-- Orchestrator state — one row per pipeline run. Resumable: if a run
+-- fails mid-flight, POST /auto-pipeline picks up from current_step.
+create table if not exists pipeline_runs (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  mode text not null default 'auto',
+  current_step text not null default 'extract',
+  -- progress cursor for multi-item steps (e.g. which character / which variation)
+  progress jsonb not null default '{}',
+  status text not null default 'running', -- running, paused, completed, failed
+  phase_timings jsonb not null default '{}',
+  error_log jsonb not null default '[]',
+  qa_loops_completed integer not null default 0,
+  started_at timestamp with time zone default now(),
+  completed_at timestamp with time zone
+);
+create index if not exists idx_pipeline_runs_project on pipeline_runs(project_id);
+
+-- Phase 10: one row per generated video clip (regen lineage via parent_clip_id)
+create table if not exists video_clips (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  panel_id uuid not null references storyboard_panels(id) on delete cascade,
+  first_frame_id uuid references first_frames(id) on delete set null,
+  higgsfield_job_id text,
+  status text not null default 'pending', -- pending, generating, completed, failed, approved
+  video_url text,
+  duration_seconds numeric,
+  model_used text not null default 'seedance_2_0',
+  prompt_used text not null default '',
+  motion_description text,
+  retry_count integer not null default 0,
+  parent_clip_id uuid references video_clips(id) on delete set null,
+  created_at timestamp with time zone default now()
+);
+create index if not exists idx_video_clips_project on video_clips(project_id);
+create index if not exists idx_video_clips_panel on video_clips(panel_id);
+create index if not exists idx_video_clips_status on video_clips(status);
+
+-- Phase 11: assembled scene/full videos. video_url null = manifest-only
+-- assembly (sequential playback in the player); set when a stitched file
+-- exists (ffmpeg local export or cloud assembler).
+create table if not exists assembled_videos (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  scope text not null default 'full', -- 'scene' or 'full'
+  scene_id uuid references scenes(id) on delete set null,
+  video_url text,
+  manifest jsonb not null default '[]', -- ordered clip list [{clip_id, video_url, duration}]
+  duration_seconds numeric,
+  clip_count integer not null default 0,
+  status text not null default 'pending', -- pending, ready, failed
+  created_at timestamp with time zone default now()
+);
+create index if not exists idx_assembled_videos_project on assembled_videos(project_id);
+
+-- Phase 12: QA beat-analysis reports
+create table if not exists qa_reports (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  assembled_video_id uuid references assembled_videos(id) on delete set null,
+  overall_score numeric,
+  beat_accuracy jsonb not null default '[]',
+  character_flags jsonb not null default '[]',
+  mood_flags jsonb not null default '[]',
+  regen_targets jsonb not null default '[]',
+  created_at timestamp with time zone default now()
+);
+create index if not exists idx_qa_reports_project on qa_reports(project_id);
+
+-- ============================================================
+-- OPTIONAL CLEANUP (per FINAL_VISION.md feature-sprawl verdicts)
+-- Run manually in Supabase SQL Editor when ready. The app degrades
+-- gracefully when these are gone (inserts silently no-op).
+-- ============================================================
+-- DROP TABLE IF EXISTS wardrobe_items CASCADE;
+-- DROP TABLE IF EXISTS generation_jobs CASCADE;
+-- DROP TABLE IF EXISTS project_collaborators CASCADE;
+-- DROP TABLE IF EXISTS project_decisions CASCADE;
+-- DROP TABLE IF EXISTS project_continuity_rules CASCADE;
+-- DROP TABLE IF EXISTS project_feedback CASCADE;

@@ -20,6 +20,10 @@ const NAV_STEPS: Array<
   { type: "custom", key: "scenes", label: "Scene Scout", path: "scenes", unlockedAfter: 4 },
   { type: "phase", phase: "storyboard",  label: "Storyboard",      path: "storyboard",  unlocksAt: 5 }, // unlocks after scene_bible
   { type: "phase", phase: "first_frames", label: "First Frames",   path: "first-frames", unlocksAt: 6 }, // unlocks after storyboard
+  // Video Generation (Phase 10) + Screening Room: unlock once first frames exist
+  { type: "custom", key: "video", label: "Video", path: "video", unlockedAfter: 6 },
+  // Auto Pilot control room: always reachable — it can start a run from any phase
+  { type: "custom", key: "pipeline", label: "Auto Pilot", path: "pipeline", unlockedAfter: -1 },
 ];
 
 interface ProjectNavProps {
