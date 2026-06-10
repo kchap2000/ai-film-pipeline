@@ -1,5 +1,58 @@
 # AI Film Pipeline — Progress Log
 
+## ✅ SHIPPED: First full script→video E2E run (2026-06-10)
+
+**The FINAL_VISION.md loop is closed.** WAYW Ep2 went from uploaded script to an
+assembled 42-second film (12 clips, 3 scenes) with a beat-by-beat QA report,
+end-to-end through the production deployment.
+
+### Run record
+- Project `ce2c5a83-efb1-47d4-a3df-b6b279b42be8`, final run completed with
+  `qa_loops_completed: 3`, QA score 58/100.
+- Watch it: `/projects/ce2c5a83-efb1-47d4-a3df-b6b279b42be8/video/watch`
+- Phase timings (orchestrator-recorded): first_frames 821s, storyboard 417s,
+  qa 273s, video_clips 169s, scenes 107s, assemble 4s.
+- The QA report is genuinely useful production feedback: it caught the bedroom
+  set continuity break between Scenes 1 and 3, Jeff's shirt continuity error in
+  Scene 2 (shirtless → shirted between panels), a mid-scene wardrobe change
+  (boardshorts → jeans), and the pink princess phone becoming a white handset
+  in Scene 3. Per-scene beat scores: 72 / 61 / 52.
+
+### Bugs found & fixed live during the run (PRs #10-#12, all merged)
+1. **Pipeline page React crash** (#10) — error objects rendered as children.
+2. **Higgsfield REST contract** (#11) — wrong auth header, wrong endpoints; now
+   verified against the official higgsfield-js SDK (`Authorization: Key id:secret`,
+   `POST /v1/image2video/dop`, `GET /requests/{id}/status`).
+3. **Data-URL frames** (#11) — Gemini first frames are base64; Higgsfield needs
+   HTTPS. video-clips route now uploads frame bytes to the public bucket
+   (`video-frames/{project}/{frame}.jpg`) before submitting.
+4. **Orchestrator self-healing** (#11) — transient platform 500s now retry 2×
+   per step instead of failing the run (validated live twice).
+5. **Infinite clip loop** (#12) — failing panels now cap at 2 attempts.
+6. **SVG placeholder frames** (#12) — first_frames step retries a content-blocked
+   frame once, then approves-with-note so the run can proceed.
+7. **HF env aliases** (#12) — authHeader accepts HF_API_KEY/HF_SECRET too.
+
+### MCP fulfillment path — validated for real
+Production has no Higgsfield REST credentials, so the designed fallback carried
+the run: 18 clips were generated through the Higgsfield MCP connector (seedance_2_0,
+16:9, 720p, ~18 credits each) and PATCHed back via the video-clips API. 12 rendered;
+2 were rejected `nsfw`, 3 `ip_detected` (cast faces resemble recognizable people),
+1 generic failure — those shots are flagged as QA regen targets for a manual pass.
+
+### Outstanding to reach a >80 QA score (not blockers; the machine works)
+- [ ] Add real Higgsfield REST credentials in Vercel (either name pair works:
+      `HIGGSFIELD_API_KEY`/`HIGGSFIELD_API_SECRET` or `HF_API_KEY`/`HF_SECRET`)
+      so Auto Mode is fully hands-off including video.
+- [ ] Re-cast or regenerate headshots for shots hitting `ip_detected` (the
+      blocker is the frame's face, not the prompt).
+- [ ] Location-consistency in first frames: QA flagged Scene 1 vs Scene 3 using
+      different bedroom sets — consider passing the approved location image as an
+      additional ref to generateFirstFrame for interior continuity.
+- [ ] Single-file MP4 export (ffmpeg local script or cloud assembler) to fill
+      `assembled_videos.video_url` — Screening Room playlist playback works today.
+
+
 ## 🔄 In Progress: FINAL VISION build-out (branch `feature/final-pipeline`, started 2026-04-19)
 
 Read FINAL_VISION.md first — it is the single source of truth. This branch builds the
