@@ -126,6 +126,8 @@ export interface Character {
   voice_only: boolean;
   approved_cast_id: string | null;
   locked: boolean;
+  /** Higgsfield reference-element ID (identity lock for video generation) */
+  higgsfield_element_id: string | null;
   version: number;
   created_at: string;
 }
@@ -172,6 +174,8 @@ export interface Location {
   mood: string;
   locked: boolean;
   approved_image_url: string | null;
+  /** Higgsfield reference-element ID (set lock for video generation) */
+  higgsfield_element_id: string | null;
   version: number;
   created_at: string;
 }

@@ -120,7 +120,7 @@ export async function POST(
 
   let panelsQuery = supabase
     .from("storyboard_panels")
-    .select("id, scene_id, panel_number, shot_type, camera_angle, camera_movement, action_description, characters_in_shot, duration_seconds, approved_first_frame_id")
+    .select("id, scene_id, panel_number, shot_type, camera_angle, camera_movement, action_description, dialogue, characters_in_shot, duration_seconds, approved_first_frame_id")
     .eq("project_id", id)
     .order("panel_number", { ascending: true });
   if (singlePanelId) panelsQuery = panelsQuery.eq("id", singlePanelId);
@@ -129,14 +129,31 @@ export async function POST(
     return NextResponse.json({ error: "No storyboard panels found" }, { status: 400 });
   }
 
-  // Scene metadata for mood + scene_number
+  // Scene metadata: mood + scene_number + the scene's location name so we
+  // can resolve the location's Higgsfield element for set consistency.
   const sceneIds = Array.from(new Set(panels.map((p) => p.scene_id)));
   const { data: scenes } = await supabase
     .from("scenes")
-    .select("id, scene_number, mood")
+    .select("id, scene_number, mood, location")
     .in("id", sceneIds);
-  const sceneById: Record<string, { scene_number: number; mood: string }> = {};
-  for (const s of scenes || []) sceneById[s.id] = { scene_number: s.scene_number, mood: s.mood || "" };
+  const sceneById: Record<string, { scene_number: number; mood: string; location: string }> = {};
+  for (const s of scenes || []) sceneById[s.id] = { scene_number: s.scene_number, mood: s.mood || "", location: s.location || "" };
+
+  // Higgsfield element IDs: characters (identity lock) + locations (set lock)
+  const { data: charRows } = await supabase
+    .from("characters")
+    .select("name, higgsfield_element_id")
+    .eq("project_id", id)
+    .not("higgsfield_element_id", "is", null);
+  const characterElements = (charRows || []).map((c) => ({ name: c.name, elementId: c.higgsfield_element_id as string }));
+
+  const { data: locRows } = await supabase
+    .from("locations")
+    .select("name, higgsfield_element_id")
+    .eq("project_id", id)
+    .not("higgsfield_element_id", "is", null);
+  const locationElementByName: Record<string, string> = {};
+  for (const l of locRows || []) locationElementByName[(l.name || "").toLowerCase().trim()] = l.higgsfield_element_id as string;
 
   // Skip panels that already have a non-failed clip when running bulk
   const { data: existingClips } = await supabase
@@ -203,7 +220,14 @@ export async function POST(
       continue;
     }
 
-    const scene = sceneById[panel.scene_id] || { scene_number: 0, mood: "" };
+    const scene = sceneById[panel.scene_id] || { scene_number: 0, mood: "", location: "" };
+    // Set lock: exact location-name match, else substring match (handles
+    // compound names like "Donna's Kitchen / Donna's Pool")
+    const locKey = scene.location.toLowerCase().trim();
+    const locationElementId =
+      locationElementByName[locKey] ||
+      Object.entries(locationElementByName).find(([name]) => name.includes(locKey) || locKey.includes(name))?.[1] ||
+      null;
     const genReq: VideoGenRequest = {
       panelNumber: panel.panel_number,
       sceneNumber: scene.scene_number,
@@ -215,6 +239,9 @@ export async function POST(
       durationSeconds: Number(panel.duration_seconds) || 5,
       charactersInShot: panel.characters_in_shot || [],
       productionNotes,
+      dialogue: panel.dialogue || "",
+      characterElements,
+      locationElementId,
     };
 
     const prompt = motionOverride || buildMotionPrompt(genReq);
