@@ -1,16 +1,20 @@
 /**
  * Phase 10 — Video Generation (FINAL_VISION.md).
  *
- * Turns an approved first frame + shot metadata into a video clip via
- * Higgsfield. Two fulfillment paths:
+ * Turns an approved first frame + shot metadata into a video clip via the
+ * Higgsfield platform REST API. Contract verified against the official
+ * higgsfield-js SDK (github.com/higgsfield-ai/higgsfield-js):
+ *   - Auth:    Authorization: Key KEY_ID:KEY_SECRET
+ *   - Submit:  POST /v1/image2video/dop  { model, prompt, input_images }
+ *   - Poll:    GET  /requests/{request_id}/status
+ *              → { status: queued|in_progress|completed|failed|nsfw,
+ *                  video: { url } }
  *
- * 1. REST (HIGGSFIELD_API_KEY + HIGGSFIELD_API_SECRET set): the route calls
- *    the Higgsfield platform API directly and polls the job.
- * 2. MCP-fulfilled (no key): the clip row is created as 'pending' with the
- *    full motion prompt + model selection stored. A Claude Code / Cowork
- *    session with the Higgsfield MCP connector picks up pending clips,
- *    generates via mcp generate_video, and PATCHes the result back into
- *    /api/projects/:id/video-clips. The app never blocks on this.
+ * Two fulfillment paths:
+ * 1. REST (HIGGSFIELD_API_KEY + HIGGSFIELD_API_SECRET set): submit + poll.
+ * 2. MCP-fulfilled (no creds): the clip row stays 'pending' carrying the
+ *    full motion prompt + model so a Cowork session with the Higgsfield
+ *    connector generates it and PATCHes video_url back.
  */
 
 export type HiggsfieldModel = "seedance_2_0" | "cinematic_studio_3_0" | "kling3_0";
@@ -29,10 +33,10 @@ export interface VideoGenRequest {
 }
 
 /**
- * Model selection per FINAL_VISION.md:
- * - character-heavy (dialogue/action with people) → seedance_2_0 (identity consistency)
- * - cinematic establishing (wide, no/few characters) → cinematic_studio_3_0
- * - ambient/atmospheric (insert/detail shots) → kling3_0 pro (ambient audio)
+ * Shot-intent model selection per FINAL_VISION.md. Stored as metadata on
+ * the clip; the REST DoP endpoint maps everything to HIGGSFIELD_MODEL
+ * (default dop-turbo) since that's the documented platform-API model. The
+ * intent labels stay useful for MCP fulfillment, which can route per model.
  */
 export function selectVideoModel(req: VideoGenRequest): HiggsfieldModel {
   const shot = (req.shotType || "").toLowerCase();
@@ -43,7 +47,6 @@ export function selectVideoModel(req: VideoGenRequest): HiggsfieldModel {
 
 /**
  * Motion prompt = camera movement + action + mood + production directive.
- * This is the text Higgsfield animates the first frame with.
  */
 export function buildMotionPrompt(req: VideoGenRequest): string {
   const directive = (req.productionNotes || "").trim();
@@ -70,11 +73,20 @@ export interface VideoGenResult {
 }
 
 const HF_BASE = process.env.HIGGSFIELD_API_BASE || "https://platform.higgsfield.ai";
+// Platform REST model for the DoP image2video endpoint
+const HF_REST_MODEL = process.env.HIGGSFIELD_MODEL || "dop-turbo";
+
+function authHeader(): string | null {
+  const keyId = process.env.HIGGSFIELD_API_KEY;
+  const secret = process.env.HIGGSFIELD_API_SECRET;
+  if (!keyId || !secret) return null;
+  return `Key ${keyId}:${secret}`;
+}
 
 /**
- * Generate a clip from a first frame. If REST credentials are absent, the
- * caller stores the clip as 'pending' for MCP fulfillment — that is the
- * expected mode until Khalil provisions platform API keys.
+ * Generate a clip from a first frame (must be an HTTPS URL — the route
+ * uploads data-URL frames to Supabase Storage first). Returns
+ * pending_external when no REST credentials are configured.
  */
 export async function generateVideoClip(
   firstFrameUrl: string,
@@ -82,73 +94,108 @@ export async function generateVideoClip(
 ): Promise<VideoGenResult> {
   const model = selectVideoModel(req);
   const prompt = buildMotionPrompt(req);
-  const apiKey = process.env.HIGGSFIELD_API_KEY;
-  const apiSecret = process.env.HIGGSFIELD_API_SECRET;
+  const auth = authHeader();
 
-  if (!apiKey || !apiSecret) {
+  if (!auth) {
     return { status: "pending_external", videoUrl: null, jobId: null, model, prompt };
   }
 
   try {
     // Submit the image-to-video job
-    const submitRes = await fetch(`${HF_BASE}/v1/image2video`, {
+    const submitRes = await fetch(`${HF_BASE}/v1/image2video/dop`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "hf-api-key": apiKey,
-        "hf-secret": apiSecret,
+        Authorization: auth,
+        "User-Agent": "ai-film-pipeline/1.0",
       },
       body: JSON.stringify({
-        params: {
-          model,
-          prompt,
-          input_image: { type: "image_url", image_url: firstFrameUrl },
-          duration: Math.min(15, Math.max(3, Math.round(req.durationSeconds || 5))),
-          ...(model === "kling3_0" ? { mode: "pro" } : {}),
-        },
+        model: HF_REST_MODEL,
+        prompt,
+        input_images: [{ type: "image_url", image_url: firstFrameUrl }],
       }),
     });
     if (!submitRes.ok) {
       const body = await submitRes.text();
-      return { status: "failed", videoUrl: null, jobId: null, model, prompt, error: `Higgsfield submit ${submitRes.status}: ${body.slice(0, 300)}` };
+      return {
+        status: "failed", videoUrl: null, jobId: null, model, prompt,
+        error: `Higgsfield submit ${submitRes.status}: ${body.slice(0, 300)}`,
+      };
     }
-    const submitData = (await submitRes.json()) as { id?: string; job_id?: string };
-    const jobId = submitData.id || submitData.job_id || null;
+    const submitData = (await submitRes.json()) as {
+      request_id?: string;
+      id?: string;
+      jobs?: Array<{ id?: string; request_id?: string }>;
+    };
+    const jobId =
+      submitData.request_id ||
+      submitData.id ||
+      submitData.jobs?.[0]?.request_id ||
+      submitData.jobs?.[0]?.id ||
+      null;
     if (!jobId) {
-      return { status: "failed", videoUrl: null, jobId: null, model, prompt, error: "Higgsfield returned no job id" };
+      return {
+        status: "failed", videoUrl: null, jobId: null, model, prompt,
+        error: `Higgsfield returned no request id: ${JSON.stringify(submitData).slice(0, 200)}`,
+      };
     }
 
     // Poll up to ~4 minutes (route maxDuration is 300s)
-    for (let i = 0; i < 48; i++) {
-      await new Promise((r) => setTimeout(r, 5000));
-      const pollRes = await fetch(`${HF_BASE}/v1/jobs/${jobId}`, {
-        headers: { "hf-api-key": apiKey, "hf-secret": apiSecret },
-      });
-      if (!pollRes.ok) continue;
-      const job = (await pollRes.json()) as {
-        status?: string;
-        results?: { raw?: { url?: string }; min?: { url?: string } };
-      };
-      const s = (job.status || "").toLowerCase();
-      if (s === "completed" || s === "succeeded") {
-        const url = job.results?.raw?.url || job.results?.min?.url || null;
-        if (url) return { status: "completed", videoUrl: url, jobId, model, prompt };
-        return { status: "failed", videoUrl: null, jobId, model, prompt, error: "Job completed but no video URL in results" };
-      }
-      if (s === "failed" || s === "error" || s === "nsfw") {
-        return { status: "failed", videoUrl: null, jobId, model, prompt, error: `Higgsfield job ${s}` };
-      }
-    }
-    // Timed out polling — leave it pending; a later GET/poll can finish it
-    return { status: "pending_external", videoUrl: null, jobId, model, prompt };
+    const result = await pollHiggsfieldJob(jobId);
+    return { ...result, model, prompt };
   } catch (err) {
     return {
-      status: "failed",
-      videoUrl: null,
-      jobId: null,
-      model,
-      prompt,
+      status: "failed", videoUrl: null, jobId: null, model, prompt,
       error: err instanceof Error ? err.message : String(err),
     };
   }
+}
+
+/**
+ * Poll /requests/{id}/status until terminal or ~4 minutes elapse.
+ * Exported so the video-clips GET route can finish clips whose first
+ * submit timed out (status stayed 'pending' with a job id).
+ */
+export async function pollHiggsfieldJob(
+  jobId: string,
+  // 40 × 5s = 200s: leaves headroom inside the 300s video-clips route when
+  // it's invoked through the orchestrator (another 300s function).
+  maxPolls = 40
+): Promise<{ status: "completed" | "pending_external" | "failed"; videoUrl: string | null; jobId: string; error?: string }> {
+  const auth = authHeader();
+  if (!auth) return { status: "pending_external", videoUrl: null, jobId };
+
+  for (let i = 0; i < maxPolls; i++) {
+    await new Promise((r) => setTimeout(r, 5000));
+    let pollRes: Response;
+    try {
+      pollRes = await fetch(`${HF_BASE}/requests/${jobId}/status`, {
+        headers: { Authorization: auth, "User-Agent": "ai-film-pipeline/1.0" },
+      });
+    } catch {
+      continue; // transient network error — keep polling
+    }
+    if (!pollRes.ok) continue;
+    const job = (await pollRes.json()) as {
+      status?: string;
+      video?: { url?: string };
+      results?: { raw?: { url?: string }; min?: { url?: string } };
+    };
+    const s = (job.status || "").toLowerCase();
+    if (s === "completed") {
+      const url = job.video?.url || job.results?.raw?.url || job.results?.min?.url || null;
+      if (url) return { status: "completed", videoUrl: url, jobId };
+      return { status: "failed", videoUrl: null, jobId, error: "Job completed but no video URL in response" };
+    }
+    if (s === "failed" || s === "error") {
+      return { status: "failed", videoUrl: null, jobId, error: "Higgsfield job failed" };
+    }
+    if (s === "nsfw") {
+      return { status: "failed", videoUrl: null, jobId, error: "Higgsfield flagged content (nsfw) — adjust the frame or prompt" };
+    }
+    // queued / in_progress → keep polling
+  }
+  // Timed out — job may still finish; caller keeps the clip 'pending' with
+  // the job id so a later poll can complete it.
+  return { status: "pending_external", videoUrl: null, jobId };
 }

@@ -476,9 +476,39 @@ async function executeStep(
         p.approved_first_frame_id && (regenTargets ? regenTargets.includes(p.id) : !covered.has(p.id))
       );
       if (targets.length === 0) {
+        // All panels have a clip row — but some may be stuck 'pending' with a
+        // Higgsfield job id (submit timed out mid-poll). Make up to 3 resume
+        // passes (the video-clips POST resume path re-polls the job) before
+        // moving on to assembly.
+        const pendingPanels = (clips || []).filter((c) => c.status === "pending").map((c) => c.panel_id);
+        const resumeRounds = Number(progress.video_resume_rounds) || 0;
+        if (pendingPanels.length > 0 && resumeRounds < 3) {
+          const panelId = pendingPanels[0];
+          const panelNum = (panels || []).find((p) => p.id === panelId)?.panel_number ?? "?";
+          await api(`/projects/${projectId}/video-clips`, { method: "POST", body: JSON.stringify({ panel_id: panelId }) });
+          // Re-check: did it complete?
+          const { data: refreshed } = await supabase
+            .from("video_clips")
+            .select("id, status")
+            .eq("panel_id", panelId)
+            .order("created_at", { ascending: false })
+            .limit(1)
+            .single();
+          if (refreshed?.status === "completed") {
+            await supabase.from("video_clips").update({ status: "approved" }).eq("id", refreshed.id);
+            return { work: `Panel ${panelNum}: pending clip resolved + approved`, nextStep: "video_clips", progress };
+          }
+          return {
+            work: `Panel ${panelNum}: still processing (resume pass ${resumeRounds + 1}/3)`,
+            nextStep: "video_clips",
+            progress: { ...progress, video_resume_rounds: resumeRounds + 1 },
+          };
+        }
         const next = { ...progress };
         delete next.regen_clip_panel_ids;
-        return { work: "Video clips complete", nextStep: "assemble", progress: next };
+        delete next.video_resume_rounds;
+        const pendingNote = pendingPanels.length > 0 ? ` (${pendingPanels.length} still pending external fulfillment)` : "";
+        return { work: `Video clips complete${pendingNote}`, nextStep: "assemble", progress: next };
       }
       const panel = targets[0];
       const res = await api(`/projects/${projectId}/video-clips`, { method: "POST", body: JSON.stringify({ panel_id: panel.id }) });

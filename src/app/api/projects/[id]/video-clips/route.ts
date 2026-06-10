@@ -1,7 +1,39 @@
 import { createRouteClient } from "@/lib/supabase-route";
-import { generateVideoClip, buildMotionPrompt, selectVideoModel, VideoGenRequest } from "@/lib/generate-video";
+import { generateVideoClip, pollHiggsfieldJob, buildMotionPrompt, selectVideoModel, VideoGenRequest } from "@/lib/generate-video";
 import { recordProvenance } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+/**
+ * Higgsfield's image2video input takes an image_url — it can't ingest our
+ * base64 data-URL first frames (Gemini output stored in the DB). Upload
+ * the bytes to the public project-uploads bucket once per frame and reuse
+ * the public URL on regenerations.
+ */
+async function ensureHttpFrameUrl(
+  supabase: SupabaseClient,
+  projectId: string,
+  frameId: string,
+  imageUrl: string
+): Promise<string | null> {
+  if (imageUrl.startsWith("http")) return imageUrl;
+  const match = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return null;
+  const [, mimeType, base64] = match;
+  if (mimeType.includes("svg")) return null; // placeholder frames can't be animated
+  const ext = mimeType.includes("png") ? "png" : "jpg";
+  const path = `video-frames/${projectId}/${frameId}.${ext}`;
+  const bytes = Buffer.from(base64, "base64");
+  const { error: upErr } = await supabase.storage
+    .from("project-uploads")
+    .upload(path, bytes, { contentType: mimeType, upsert: true });
+  if (upErr) {
+    console.error(`ensureHttpFrameUrl: upload failed for frame ${frameId}:`, upErr.message);
+    return null;
+  }
+  const { data } = supabase.storage.from("project-uploads").getPublicUrl(path);
+  return data.publicUrl || null;
+}
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -126,6 +158,41 @@ export async function POST(
       continue;
     }
 
+    // Resume path: if this panel already has a pending clip with a job id
+    // (earlier submit timed out mid-poll), poll that job instead of
+    // submitting a duplicate.
+    if (singlePanelId) {
+      const { data: pendingClip } = await supabase
+        .from("video_clips")
+        .select("id, higgsfield_job_id")
+        .eq("panel_id", panel.id)
+        .eq("status", "pending")
+        .not("higgsfield_job_id", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .single();
+      if (pendingClip?.higgsfield_job_id) {
+        const polled = await pollHiggsfieldJob(pendingClip.higgsfield_job_id);
+        if (polled.status === "completed") {
+          await supabase
+            .from("video_clips")
+            .update({ status: "completed", video_url: polled.videoUrl })
+            .eq("id", pendingClip.id);
+          clipsCreated++;
+          clipsCompleted++;
+          continue;
+        }
+        if (polled.status === "failed") {
+          await supabase.from("video_clips").update({ status: "failed" }).eq("id", pendingClip.id);
+          errors.push(`Panel ${panel.panel_number}: resumed job failed — ${polled.error || "unknown"}`);
+          continue;
+        }
+        // Still in progress — leave pending; caller can retry later.
+        errors.push(`Panel ${panel.panel_number}: job still processing (id ${pendingClip.higgsfield_job_id})`);
+        continue;
+      }
+    }
+
     const { data: frame } = await supabase
       .from("first_frames")
       .select("id, image_url")
@@ -153,15 +220,15 @@ export async function POST(
     const prompt = motionOverride || buildMotionPrompt(genReq);
     const model = selectVideoModel(genReq);
 
-    // Data-URL first frames can't be sent to an external API by URL —
-    // those clips go to MCP fulfillment (the connector uploads bytes).
-    const isHttpFrame = frame.image_url.startsWith("http");
-    const result =
-      isHttpFrame && !motionOverride
-        ? await generateVideoClip(frame.image_url, genReq)
-        : isHttpFrame
-        ? await generateVideoClip(frame.image_url, { ...genReq, actionDescription: motionOverride || genReq.actionDescription })
-        : { status: "pending_external" as const, videoUrl: null, jobId: null, model, prompt };
+    // Higgsfield needs an HTTPS image URL — upload data-URL frames to the
+    // public Storage bucket first. SVG placeholders can't be animated.
+    const httpFrameUrl = await ensureHttpFrameUrl(supabase, id, frame.id, frame.image_url);
+    const result = httpFrameUrl
+      ? await generateVideoClip(
+          httpFrameUrl,
+          motionOverride ? { ...genReq, actionDescription: motionOverride } : genReq
+        )
+      : { status: "failed" as const, videoUrl: null, jobId: null, model, prompt, error: "First frame is a placeholder or could not be uploaded for video generation" };
 
     const { data: inserted, error: insertErr } = await supabase
       .from("video_clips")
