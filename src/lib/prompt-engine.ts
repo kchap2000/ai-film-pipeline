@@ -75,7 +75,13 @@ export function applyElementPlaceholders(
       if (!used.includes(el)) used.push(el);
       continue;
     }
-    const re = new RegExp(`\\b${escapeRe(term)}(?:'s)?\\b`, "gi");
+    // Single-word terms match CASE-SENSITIVELY: the character "Ash" must
+    // not swallow "blood and ash on his face". Names are stored
+    // capitalized, so requiring exact case keeps proper-noun mentions
+    // matching while common-noun homographs pass through untouched.
+    // Multi-word terms ("princess phone") stay case-insensitive.
+    const flags = term.trim().includes(" ") ? "gi" : "g";
+    const re = new RegExp(`\\b${escapeRe(term)}(?:'s)?\\b`, flags);
     if (re.test(out)) {
       out = out.replace(re, (m) =>
         m.toLowerCase().endsWith("'s") ? `<<<${el.elementId}>>>'s` : `<<<${el.elementId}>>>`
@@ -84,6 +90,38 @@ export function applyElementPlaceholders(
     }
   }
   return { text: out, used };
+}
+
+/**
+ * Element ranking + cap (diagnostic v2 fix 5). Higgsfield generations
+ * degrade or fail past ~4 reference elements (plus a start image), so the
+ * prompt engine ranks elements by relevance and only the top slots get
+ * <<<element_id>>> placeholders — the overflow keeps continuity-text
+ * descriptions only.
+ *
+ * Ranking: characters scripted in the shot > other characters > props >
+ * outfits > extra environments. The scene's location element occupies one
+ * slot when present (handled by the caller via `reservedSlots`).
+ */
+export const MAX_ACTIVE_ELEMENTS = 4;
+
+export function rankAndCapElements(
+  elements: RegistryElement[],
+  charactersInShot: string[],
+  reservedSlots = 0
+): { active: RegistryElement[]; overflow: RegistryElement[] } {
+  const inShot = new Set(charactersInShot.map((n) => n.toLowerCase()));
+  const rank = (el: RegistryElement): number => {
+    if (el.kind === "character") {
+      return el.matchTerms.some((t) => inShot.has(t.toLowerCase())) ? 0 : 1;
+    }
+    if (el.kind === "prop") return 2;
+    if (el.kind === "outfit") return 3;
+    return 4; // extra environments — the location element covers the set
+  };
+  const sorted = [...elements].sort((a, b) => rank(a) - rank(b));
+  const cap = Math.max(0, MAX_ACTIVE_ELEMENTS - reservedSlots);
+  return { active: sorted.slice(0, cap), overflow: sorted.slice(cap) };
 }
 
 /** Camera line per PROMPTING.md vocabulary. */
@@ -102,12 +140,20 @@ function cameraLine(shotType: string, cameraAngle: string, cameraMovement: strin
  * Build the full house-structure prompt for one shot.
  */
 export function buildShotPrompt(shot: ShotPrompt): string {
+  // 0. Rank + cap: only the most relevant elements get placeholders (the
+  // location element reserves one slot); overflow stays text-only.
+  const { active, overflow } = rankAndCapElements(
+    shot.elements,
+    shot.charactersInShot,
+    shot.locationElementId ? 1 : 0
+  );
+
   // 1. Placeholder swaps in the action text
-  const { text: action, used } = applyElementPlaceholders(shot.actionDescription, shot.elements);
+  const { text: action, used } = applyElementPlaceholders(shot.actionDescription, active);
 
   // Characters scripted in the shot but never named in the action still get
   // identity-anchored via an explicit cast note.
-  const unmentioned = shot.elements.filter(
+  const unmentioned = active.filter(
     (el) =>
       el.kind === "character" &&
       !used.includes(el) &&
@@ -132,8 +178,10 @@ export function buildShotPrompt(shot: ShotPrompt): string {
   const dialogueBlock = `DIALOGUE / SPOKEN AUDIO:\n${dialogue || "No dialogue in this shot."}`;
 
   // 3. Continuity invariants — explicit invariants beat implied ones.
+  // Capped-out elements keep their identity in TEXT here even though they
+  // get no <<<placeholder>>> reference slot.
   const allUsed = [...used, ...unmentioned];
-  const elementRules = allUsed
+  const elementRules = [...allUsed, ...overflow]
     .filter((el) => el.description)
     .map((el) => el.description)
     .join(" ");
@@ -166,8 +214,15 @@ export function buildSequencePrompt(
   const lines: string[] = [];
   const allUsed: RegistryElement[] = [];
 
+  // Rank + cap across the whole sequence (location element reserves a slot)
+  const { active, overflow } = rankAndCapElements(
+    shared.elements,
+    shared.charactersInShot,
+    shared.locationElementId ? 1 : 0
+  );
+
   shots.forEach((s, i) => {
-    const { text, used } = applyElementPlaceholders(s.actionDescription, shared.elements);
+    const { text, used } = applyElementPlaceholders(s.actionDescription, active);
     for (const u of used) if (!allUsed.includes(u)) allUsed.push(u);
     const move = s.cameraMovement && s.cameraMovement !== "static" ? ` ${s.cameraMovement}.` : " Static.";
     lines.push(`Shot ${i + 1}: ${s.shotType || "Medium"} — ${text}.${move}`);
@@ -179,7 +234,10 @@ export function buildSequencePrompt(
   const setNote = shared.locationElementId
     ? `Set: <<<${shared.locationElementId}>>> — same set dressing across all shots.`
     : "";
-  const elementRules = allUsed.filter((el) => el.description).map((el) => el.description).join(" ");
+  const elementRules = [...allUsed, ...overflow]
+    .filter((el) => el.description)
+    .map((el) => el.description)
+    .join(" ");
 
   return [
     technicalPreamble(shared.productionNotes),

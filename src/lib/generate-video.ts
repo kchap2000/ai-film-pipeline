@@ -101,6 +101,33 @@ const HF_BASE = process.env.HIGGSFIELD_API_BASE || "https://platform.higgsfield.
 // Platform REST model for the DoP image2video endpoint
 const HF_REST_MODEL = process.env.HIGGSFIELD_MODEL || "dop-turbo";
 
+/**
+ * Intent-model → REST model param (diagnostic v2 fix 9). The DoP endpoint
+ * documents dop-turbo; if/when other REST model ids are confirmed, set
+ * HIGGSFIELD_MODEL_<INTENT> env vars to route per intent without a deploy.
+ */
+function restModelFor(intent: HiggsfieldModel): string {
+  const envKey = `HIGGSFIELD_MODEL_${intent.toUpperCase()}`;
+  return process.env[envKey] || HF_REST_MODEL;
+}
+
+/**
+ * Content-block fallback ladder (diagnostic v2 fix 1). When a generation
+ * is blocked for content/IP/likeness reasons:
+ *   1. re-roll the same model (block detection is probabilistic on output)
+ *   2. fall back to the next model in the chain with elements intact
+ *   3. last resort: regenerate the prompt WITHOUT element references
+ *      (text-only identity — loses the lock but keeps the shot)
+ * Proven manually on the Apex Hunter run: panel 16 passed on the
+ * text-only rung after three element-anchored attempts were IP-flagged.
+ */
+const FALLBACK_CHAIN: HiggsfieldModel[] = ["seedance_2_0", "kling3_0"];
+
+function isContentBlock(error?: string): boolean {
+  const e = (error || "").toLowerCase();
+  return e.includes("nsfw") || e.includes("ip detect") || e.includes("ip_detected") || e.includes("likeness") || e.includes("flagged content") || e.includes("rights");
+}
+
 function authHeader(): string | null {
   // Accept both our names and the official SDK's documented env names
   // (HF_API_KEY / HF_SECRET) — whichever is configured in Vercel.
@@ -125,14 +152,38 @@ export async function generateVideoClip(
    */
   promptOverride?: string
 ): Promise<VideoGenResult> {
-  const model = selectVideoModel(req);
+  const primaryModel = selectVideoModel(req);
   const prompt = promptOverride || buildMotionPrompt(req);
   const auth = authHeader();
 
   if (!auth) {
-    return { status: "pending_external", videoUrl: null, jobId: null, model, prompt };
+    return { status: "pending_external", videoUrl: null, jobId: null, model: primaryModel, prompt };
   }
 
+  // Fallback ladder: primary model → remaining chain models (elements
+  // intact) → primary model with elements stripped (text-only identity).
+  const chain = [primaryModel, ...FALLBACK_CHAIN.filter((m) => m !== primaryModel)];
+  let last: VideoGenResult | null = null;
+  for (const model of chain) {
+    last = await submitAndPoll(auth, model, prompt, firstFrameUrl);
+    if (last.status !== "failed" || !isContentBlock(last.error)) return last;
+    console.warn(`generateVideoClip: ${model} content-blocked — trying next rung`);
+  }
+  // Last resort: rebuild without element references
+  if (req.registryElements?.length || req.locationElementId) {
+    const bare = buildMotionPrompt({ ...req, registryElements: [], locationElementId: null });
+    const result = await submitAndPoll(auth, primaryModel, bare, firstFrameUrl);
+    return { ...result, error: result.error ? `${result.error} (after element-free fallback)` : undefined };
+  }
+  return last!;
+}
+
+async function submitAndPoll(
+  auth: string,
+  model: HiggsfieldModel,
+  prompt: string,
+  firstFrameUrl: string
+): Promise<VideoGenResult> {
   try {
     // Submit the image-to-video job
     const submitRes = await fetch(`${HF_BASE}/v1/image2video/dop`, {
@@ -143,7 +194,7 @@ export async function generateVideoClip(
         "User-Agent": "ai-film-pipeline/1.0",
       },
       body: JSON.stringify({
-        model: HF_REST_MODEL,
+        model: restModelFor(model),
         prompt,
         input_images: [{ type: "image_url", image_url: firstFrameUrl }],
       }),
@@ -223,8 +274,18 @@ export async function pollHiggsfieldJob(
     if (s === "failed" || s === "error") {
       return { status: "failed", videoUrl: null, jobId, error: "Higgsfield job failed" };
     }
-    if (s === "nsfw") {
-      return { status: "failed", videoUrl: null, jobId, error: "Higgsfield flagged content (nsfw) — adjust the frame or prompt" };
+    if (s === "nsfw" || s === "ip_detected") {
+      return { status: "failed", videoUrl: null, jobId, error: `Higgsfield flagged content (${s}) — adjust the frame or prompt` };
+    }
+    // Rights-verification gate (diagnostic v2 fix 4): the job is DONE on
+    // Higgsfield's side but held until a human clicks "verify rights" on
+    // the platform. Not a failure — park as pending so the UI can surface
+    // a "Verify on Higgsfield" link and a later poll picks up the video.
+    if (s.includes("rights") || s.includes("verification") || s === "pending_verification") {
+      return {
+        status: "pending_external", videoUrl: null, jobId,
+        error: "rights_verification: approve this generation on the Higgsfield platform, then re-poll",
+      };
     }
     // queued / in_progress → keep polling
   }
