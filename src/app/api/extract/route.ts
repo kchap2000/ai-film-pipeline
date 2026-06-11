@@ -112,6 +112,14 @@ export async function POST(req: NextRequest) {
 
   const combinedText = textParts.join("\n\n");
 
+  // Persist the parsed script so downstream phases (storyboard shot
+  // breakdown especially) can quote dialogue VERBATIM instead of working
+  // from the 2-4 sentence scene summaries.
+  await supabase
+    .from("projects")
+    .update({ script_text: combinedText.slice(0, 200_000) })
+    .eq("id", project_id);
+
   // 4. Run Claude extraction
   let extraction;
   try {

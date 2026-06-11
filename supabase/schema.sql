@@ -920,3 +920,12 @@ create index if not exists idx_project_elements_project on project_elements(proj
 -- absorbs are listed here so coverage/skip logic and QA regens treat
 -- them as fulfilled.
 alter table video_clips add column if not exists covered_panel_ids uuid[] not null default '{}';
+
+-- ============================================================
+-- Migration: script text on project (2026-06-11)
+-- (already applied live via MCP migration projects_script_text)
+-- ============================================================
+-- The parsed script is persisted at extraction time so the storyboard
+-- shot breakdown can quote dialogue VERBATIM (DramaBox-fidelity rule)
+-- instead of working from 2-4 sentence scene summaries.
+alter table projects add column if not exists script_text text;
