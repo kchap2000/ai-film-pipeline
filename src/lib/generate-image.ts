@@ -515,6 +515,11 @@ export async function generateFirstFrame(opts: {
    * shot-to-shot instead of resetting per panel.
    */
   previousFrameUrl?: string | null;
+  /**
+   * Realism-gate correction addendum (diagnostic v3): injected on
+   * regeneration when the previous attempt scored as illustration.
+   */
+  realismBoost?: string;
   locationName: string;
   timeOfDay: string;
   mood: string;
@@ -528,25 +533,27 @@ export async function generateFirstFrame(opts: {
     .map((c) => c.name)
     .join(", ");
 
+  // Photorealism technique (diagnostic v3 P0, per Google's Nano Banana
+  // prompting guidance): direct the scene as a NARRATIVE with specific
+  // hardware, film stock, lighting physics, and material texture language.
+  // Keyword spam and "masterpiece"-style quality tags push toward
+  // illustration; cinematographer direction pushes toward photograph.
   const prompt = [
     productionDirectivePrefix(opts.productionNotes),
-    `Generate a PHOTOREALISTIC FIRST FRAME for a film shoot — not a storyboard illustration, not a concept sketch.`,
-    `This image will be used as shoot-day visual reference: composition, lighting, blocking, and costume must match production standards.`,
-    `Shot type: ${opts.shotType || "medium shot"}.`,
-    `Camera angle: ${opts.cameraAngle || "eye-level"}.`,
-    opts.cameraMovement ? `Camera movement implied: ${opts.cameraMovement}.` : "",
-    `Action: ${opts.actionDescription}.`,
+    `A production still captured on an ARRI Alexa 65 with anamorphic prime lenses during a film shoot — a real photograph from a practical set, never an illustration, painting, or concept art.`,
+    `The shot: a ${opts.shotType || "medium shot"} from a ${opts.cameraAngle || "eye-level"} angle${opts.cameraMovement ? `, composed for a ${opts.cameraMovement} move` : ""}, shallow depth of field around f/2.0 with optically soft bokeh.`,
+    `In the frame: ${opts.actionDescription}.`,
     charDetails
-      ? `Characters in shot (identities locked from attached reference images above): ${charDetails}.`
+      ? `The people in shot are the exact individuals from the attached reference photographs: ${charDetails}. Match faces, hair, and builds precisely.`
       : "",
-    `Location: ${opts.locationName}.`,
-    opts.timeOfDay ? `Time of day: ${opts.timeOfDay}.` : "",
-    opts.mood ? `Mood/atmosphere: ${opts.mood}.` : "",
+    `The setting is ${opts.locationName}${opts.timeOfDay ? ` at ${opts.timeOfDay}` : ""}${opts.mood ? `; the atmosphere reads ${opts.mood}` : ""}.`,
+    `Physical realism is non-negotiable: skin shows pores, oil, and subsurface scattering; metal carries wear, scratches, and physically correct specular highlights; fabric shows its weave, leather its grain, stone its chips and dust. Lighting follows real physics — motivated sources, soft penumbra shadows, natural falloff.`,
+    `Graded like developed film negative: slightly desaturated, filmic contrast, subtle halation and natural grain. No oversaturated palettes, no clean vector edges, no flat color fills, no painterly brushwork, no cel shading.`,
     `Aspect ratio: ${aspect}. Compose for the final ${aspect} frame with no letterboxing, pillarboxing, or unused borders.`,
-    `Style: photorealistic cinematic frame, natural film grain, shallow depth of field where appropriate, production-quality color grading, NOT illustrated or animated.`,
     opts.previousFrameUrl
       ? `CONTINUITY: the attached previous-shot frame is the IMMEDIATELY preceding moment. Carry over wardrobe state, hair, lighting direction, color grade, set dressing, weather, and any props characters were holding — change only what this shot's action and framing change.`
       : "",
+    opts.realismBoost || "",
     `Panel ${opts.panelNumber} of the sequence.`,
   ].filter(Boolean).join(" ");
 
@@ -591,8 +598,12 @@ export async function generateFirstFrame(opts: {
 
   const ai = new GoogleGenAI({ apiKey });
   try {
+    // First frames are the product — they seed every video clip's style.
+    // Pro tier (gemini-3-pro-image / Nano Banana Pro) reasons about
+    // composition+lighting before rendering and takes a 14-image reference
+    // window; markedly more photorealistic than Flash. Env-overridable.
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-image-preview",
+      model: process.env.GEMINI_FRAME_MODEL || "gemini-3-pro-image",
       contents: [{ role: "user", parts }],
       config: { responseModalities: [Modality.IMAGE, Modality.TEXT] },
     });

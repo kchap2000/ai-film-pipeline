@@ -106,10 +106,13 @@ export async function POST(
   const { id } = params;
   const body = await req.json().catch(() => ({}));
   const singlePanelId = body.panel_id as string | undefined;
+  // Realism-gate regeneration: anti-illustration addendum from the failed
+  // attempt's scored issues (diagnostic v3)
+  const feedbackNote = (body.feedback_note as string | undefined) || undefined;
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const result = await generateProjectFirstFrames(supabase, id, { panelId: singlePanelId });
+  const result = await generateProjectFirstFrames(supabase, id, { panelId: singlePanelId, feedbackNote });
   const failedCompletely = result.framesGenerated === 0 && result.errors.length > 0;
   return NextResponse.json(
     {

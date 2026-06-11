@@ -1,5 +1,6 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { selectBest, castingBrief, locationBrief, sceneScoutBrief } from "@/lib/auto-select";
+import { scoreRealism, realismBoost, REALISM_PASS_SCORE } from "@/lib/realism-gate";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -540,7 +541,18 @@ async function executeStep(
         return { work: "First frames complete", nextStep: "video_clips", progress: next };
       }
       const panel = targets[0];
-      const res = await api(`/projects/${projectId}/first-frames`, { method: "POST", body: JSON.stringify({ panel_id: panel.id }) });
+      // Realism-gate retry: if the panel's prior frame scored as
+      // illustration, this pass regenerates with the correction addendum.
+      const realismRetries = (progress.realism_retries as Record<string, { frame_id: string; score: number; issues: string[] }>) || {};
+      const priorAttempt = realismRetries[panel.id];
+      const res = await api(`/projects/${projectId}/first-frames`, {
+        method: "POST",
+        body: JSON.stringify(
+          priorAttempt
+            ? { panel_id: panel.id, feedback_note: realismBoost(priorAttempt.issues) }
+            : { panel_id: panel.id }
+        ),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return { work: "", nextStep: step, progress, failed: data.error || `First frame failed for panel ${panel.panel_number}` };
 
@@ -564,19 +576,54 @@ async function executeStep(
           progress: { ...progress, frame_svg_retries: { ...svgRetries, [panel.id]: 1 } },
         };
       }
-      if (frame) {
+
+      // ── Realism gate (diagnostic v3 P0) ────────────────────
+      // Frames seed every clip's visual style; illustration-looking frames
+      // produce illustration-looking video. Score the frame; one boosted
+      // re-roll for low scorers, then approve the better of the two.
+      let approveFrameId = frame?.id || null;
+      let realismNote = "";
+      if (frame && !isPlaceholder) {
+        const verdict = await scoreRealism(frame.image_url);
+        if (verdict) {
+          if (verdict.score < REALISM_PASS_SCORE && !priorAttempt) {
+            return {
+              work: `Panel ${panel.panel_number}: realism ${verdict.score}/10 (${verdict.style}) — re-rolling with anti-illustration boost`,
+              nextStep: "first_frames",
+              progress: {
+                ...progress,
+                realism_retries: { ...realismRetries, [panel.id]: { frame_id: frame.id, score: verdict.score, issues: verdict.issues } },
+              },
+            };
+          }
+          if (priorAttempt && verdict.score < priorAttempt.score) {
+            // Boosted retry came back worse — approve the original attempt
+            approveFrameId = priorAttempt.frame_id;
+            realismNote = ` (realism ${priorAttempt.score}/10, boost re-roll scored ${verdict.score} — kept original)`;
+          } else {
+            realismNote = ` (realism ${verdict.score}/10${priorAttempt ? ` after boost, was ${priorAttempt.score}` : ""})`;
+          }
+        }
+      }
+      if (approveFrameId) {
         await api(`/projects/${projectId}/first-frames`, {
           method: "PATCH",
-          body: JSON.stringify({ frame_id: frame.id, status: "approved" }),
+          body: JSON.stringify({ frame_id: approveFrameId, status: "approved" }),
         });
       }
-      // If this was a regen target, remove it from the list
-      let nextProgress = progress;
+      // If this was a regen target, remove it from the list; clear any
+      // realism bookkeeping for the now-approved panel.
+      let nextProgress: Record<string, unknown> = progress;
       if (regenTargets) {
-        nextProgress = { ...progress, regen_panel_ids: regenTargets.filter((t) => t !== panel.id) };
+        nextProgress = { ...nextProgress, regen_panel_ids: regenTargets.filter((t) => t !== panel.id) };
+      }
+      if (realismRetries[panel.id]) {
+        const cleared = { ...realismRetries };
+        delete cleared[panel.id];
+        nextProgress = { ...nextProgress, realism_retries: cleared };
       }
       const placeholderNote = isPlaceholder ? " (placeholder — video will be skipped for this shot)" : "";
-      return { work: `Panel ${panel.panel_number}: first frame generated + approved${placeholderNote}`, nextStep: "first_frames", progress: nextProgress };
+      return { work: `Panel ${panel.panel_number}: first frame generated + approved${placeholderNote}${realismNote}`, nextStep: "first_frames", progress: nextProgress };
     }
 
     // ── Phase 10: video clips (one panel per call, auto-approve) ──
