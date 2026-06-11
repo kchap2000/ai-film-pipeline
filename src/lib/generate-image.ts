@@ -508,6 +508,13 @@ export async function generateFirstFrame(opts: {
   cameraMovement: string;
   characterReferences: { name: string; imageUrl: string }[];
   sceneReferenceImageUrl?: string | null;
+  /**
+   * Cross-panel continuity (diagnostic v2 fix 6): the immediately
+   * preceding panel's APPROVED frame. Passed as a multimodal reference so
+   * wardrobe state, lighting, set dressing, and carried props persist
+   * shot-to-shot instead of resetting per panel.
+   */
+  previousFrameUrl?: string | null;
   locationName: string;
   timeOfDay: string;
   mood: string;
@@ -537,6 +544,9 @@ export async function generateFirstFrame(opts: {
     opts.mood ? `Mood/atmosphere: ${opts.mood}.` : "",
     `Aspect ratio: ${aspect}. Compose for the final ${aspect} frame with no letterboxing, pillarboxing, or unused borders.`,
     `Style: photorealistic cinematic frame, natural film grain, shallow depth of field where appropriate, production-quality color grading, NOT illustrated or animated.`,
+    opts.previousFrameUrl
+      ? `CONTINUITY: the attached previous-shot frame is the IMMEDIATELY preceding moment. Carry over wardrobe state, hair, lighting direction, color grade, set dressing, weather, and any props characters were holding — change only what this shot's action and framing change.`
+      : "",
     `Panel ${opts.panelNumber} of the sequence.`,
   ].filter(Boolean).join(" ");
 
@@ -563,6 +573,18 @@ export async function generateFirstFrame(opts: {
     }
     parts.push({ text: `Identity reference for ${ref.name} (match face, hair, build exactly):` });
     parts.push({ inlineData: inline });
+  }
+
+  // Previous-shot frame rides last among references so it reads as "state
+  // to continue from" rather than the composition to copy. Unreachable or
+  // placeholder previous frames are skipped silently — continuity is an
+  // enhancement, never a blocker.
+  if (opts.previousFrameUrl && !opts.previousFrameUrl.startsWith("data:image/svg")) {
+    const prevInline = await toInlineData(opts.previousFrameUrl);
+    if (prevInline) {
+      parts.push({ text: `Previous shot's frame (continuity reference — carry over wardrobe, lighting, set state; do NOT copy its composition):` });
+      parts.push({ inlineData: prevInline });
+    }
   }
 
   parts.push({ text: prompt });

@@ -4,18 +4,20 @@
  *
  * Usage:  node scripts/stitch-film.mjs <project_id> [--base https://...]
  *
- * Requires ffmpeg on PATH (`brew install ffmpeg`). Downloads every clip in
- * the assembly manifest (scene/panel order), concatenates them with
- * stream-copy (all clips are same-codec Seedance 720p H.264, so no
- * re-encode), uploads the result to the public Storage bucket, and stamps
+ * ffmpeg resolution order: system PATH, then the bundled ffmpeg-static
+ * devDependency (no Homebrew or system install needed). Downloads every
+ * clip in the assembly manifest (scene/panel order), concatenates with
+ * stream-copy, falls back to a re-encode concat when clips' codec params
+ * differ, uploads the result to the public Storage bucket, and stamps
  * assembled_videos.video_url so the Screening Room serves one file.
  */
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, createWriteStream } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, createWriteStream, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { createRequire } from "node:module";
 
 const projectId = process.argv[2];
 const baseFlag = process.argv.indexOf("--base");
@@ -25,12 +27,24 @@ if (!projectId) {
   process.exit(1);
 }
 
-// ffmpeg present?
+// Resolve ffmpeg: PATH first, then the ffmpeg-static package binary
+let FFMPEG = "ffmpeg";
 try {
-  execFileSync("ffmpeg", ["-version"], { stdio: "ignore" });
+  execFileSync(FFMPEG, ["-version"], { stdio: "ignore" });
 } catch {
-  console.error("ffmpeg not found on PATH. Install it first: brew install ffmpeg");
-  process.exit(1);
+  try {
+    const require = createRequire(import.meta.url);
+    const staticPath = require("ffmpeg-static");
+    if (staticPath && existsSync(staticPath)) {
+      FFMPEG = staticPath;
+      execFileSync(FFMPEG, ["-version"], { stdio: "ignore" });
+    } else {
+      throw new Error("no static binary");
+    }
+  } catch {
+    console.error("ffmpeg not found. Run: npm install -D ffmpeg-static  (or brew install ffmpeg)");
+    process.exit(1);
+  }
 }
 
 // Supabase creds from .env.local (anon key — bucket allows uploads)
@@ -64,11 +78,28 @@ for (const [i, entry] of latest_full.manifest.entries()) {
   console.log(`  [${i + 1}/${latest_full.manifest.length}] S${entry.scene_number} P${entry.panel_number}`);
 }
 
-// 3. Concat (stream copy — same codec/resolution across Seedance clips)
+// 3. Concat: stream copy first (fast, lossless — works when all clips
+// share codec params); on failure, re-encode concat (handles mixed
+// encoders/resolutions across fulfillment paths).
 const listFile = join(dir, "list.txt");
 writeFileSync(listFile, files.map((f) => `file '${f}'`).join("\n"));
 const outFile = join(dir, "film.mp4");
-execFileSync("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", outFile], { stdio: "inherit" });
+try {
+  execFileSync(FFMPEG, ["-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", outFile], { stdio: "inherit" });
+} catch {
+  console.log("Stream-copy concat failed (mixed codec params) — re-encoding…");
+  execFileSync(
+    FFMPEG,
+    [
+      "-y", "-f", "concat", "-safe", "0", "-i", listFile,
+      "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+      "-c:a", "aac", "-b:a", "192k",
+      "-movflags", "+faststart",
+      outFile,
+    ],
+    { stdio: "inherit" }
+  );
+}
 
 // 4. Upload + stamp the assembly row
 const storagePath = `films/${projectId}/${latest_full.id}.mp4`;
