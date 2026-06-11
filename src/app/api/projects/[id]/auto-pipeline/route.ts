@@ -504,10 +504,13 @@ async function executeStep(
       }
       const el = planned[0];
       const failures = (progress.element_image_failures as Record<string, number>) || {};
+      const elRealismRetries = (progress.element_realism_retries as Record<string, number>) || {};
+      const elBoost = elRealismRetries[el.id] ? realismBoost([]) : undefined;
       const res = await api(`/projects/${projectId}/elements`, {
         method: "POST",
-        body: JSON.stringify({ action: "generate_image", element_id: el.id }),
+        body: JSON.stringify({ action: "generate_image", element_id: el.id, realism_boost: elBoost }),
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         // Content-blocked plates shouldn't stall the run: skip after 1 retry
         if ((failures[el.id] || 0) >= 1) {
@@ -520,7 +523,19 @@ async function executeStep(
           progress: { ...progress, element_image_failures: { ...failures, [el.id]: 1 } },
         };
       }
-      return { work: `Element ${el.name}: reference plate generated`, nextStep: "elements", progress };
+      // Realism gate on the plate (diagnostic v3): re-roll once with the
+      // correction boost, then accept whatever the boosted roll produced.
+      const realism = data.realism as { score: number; style: string; issues: string[] } | null;
+      if (realism && realism.score < REALISM_PASS_SCORE && !elRealismRetries[el.id]) {
+        await supabase.from("project_elements").update({ status: "planned" }).eq("id", el.id);
+        return {
+          work: `Element ${el.name}: plate realism ${realism.score}/10 (${realism.style}) — re-rolling with boost`,
+          nextStep: "elements",
+          progress: { ...progress, element_realism_retries: { ...elRealismRetries, [el.id]: 1 } },
+        };
+      }
+      const realismNote = realism ? ` (realism ${realism.score}/10${elRealismRetries[el.id] ? " after boost" : ""})` : "";
+      return { work: `Element ${el.name}: reference plate generated${realismNote}`, nextStep: "elements", progress };
     }
 
     // ── Phase 9: first frames (one panel per call, auto-approve) ──

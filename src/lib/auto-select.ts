@@ -114,12 +114,18 @@ export async function selectBest(
 }
 
 /** Casting brief (best of 10) */
+// Every selected reference feeds video generation downstream — the most
+// expensive step. The realism mandate (diagnostic v3) rides in every brief
+// so illustration-style variations lose BEFORE money is spent animating.
+const REALISM_MANDATE = `PHOTOREALISM IS MANDATORY: the image must read as a real photograph (DSLR/cinema camera on a practical set) — natural skin texture, physically correct lighting, tactile materials, filmic color. If it reads as concept art, digital illustration, painting, or cel shading, cap the score at 4 regardless of other merits.`;
+
 export function castingBrief(characterName: string, description: string): string {
   return [
     `Rate this casting headshot 1-10 on how well it matches this character.`,
     `Character: ${characterName}.`,
     `Description: ${description || "No description provided"}.`,
-    `Consider: age accuracy, physical description match, casting quality, photorealism.`,
+    `Consider: age accuracy, physical description match, casting quality.`,
+    REALISM_MANDATE,
   ].join(" ");
 }
 
@@ -132,6 +138,7 @@ export function locationBrief(name: string, description: string, timeOfDay: stri
     timeOfDay ? `Time of day: ${timeOfDay}.` : "",
     mood ? `Mood: ${mood}.` : "",
     `Consider: setting accuracy, lighting/time-of-day match, mood, production usability.`,
+    REALISM_MANDATE,
   ].filter(Boolean).join(" ");
 }
 
@@ -144,5 +151,6 @@ export function sceneScoutBrief(actionSummary: string, location: string, mood: s
     mood ? `Mood: ${mood}.` : "",
     charactersPresent.length > 0 ? `Characters who should feel present: ${charactersPresent.join(", ")}.` : "",
     `Consider: atmosphere match, location accuracy, emotional tone, cinematic quality.`,
+    REALISM_MANDATE,
   ].filter(Boolean).join(" ");
 }

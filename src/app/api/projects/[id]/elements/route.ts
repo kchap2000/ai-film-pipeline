@@ -1,5 +1,6 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generatePropImage } from "@/lib/generate-image";
+import { scoreRealism } from "@/lib/realism-gate";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -56,6 +57,7 @@ export async function POST(
 
   if (action === "generate_image") {
     const elementId = body.element_id as string;
+    const boost = (body.realism_boost as string | undefined) || undefined;
     if (!elementId) return NextResponse.json({ error: "element_id required" }, { status: 400 });
     const { data: el } = await supabase
       .from("project_elements")
@@ -65,7 +67,7 @@ export async function POST(
       .single();
     if (!el) return NextResponse.json({ error: "Element not found" }, { status: 404 });
 
-    const result = await generatePropImage(el.name, el.description, el.kind);
+    const result = await generatePropImage(el.name, el.description, el.kind, boost);
     if (result.url.startsWith("data:image/svg")) {
       return NextResponse.json({ error: "Reference image generation was blocked — try editing the description" }, { status: 502 });
     }
@@ -80,11 +82,20 @@ export async function POST(
       if (upErr) return NextResponse.json({ error: `Upload failed: ${upErr.message}` }, { status: 500 });
       publicUrl = supabase.storage.from("project-uploads").getPublicUrl(path).data.publicUrl;
     }
+    // Realism gate: element plates feed Higgsfield elements which anchor
+    // EVERY clip — score before they get that far. The orchestrator
+    // re-rolls failures with realism_boost.
+    const verdict = await scoreRealism(publicUrl);
     await supabase
       .from("project_elements")
       .update({ ref_image_url: publicUrl, status: "image_ready" })
       .eq("id", el.id);
-    return NextResponse.json({ success: true, element_id: el.id, ref_image_url: publicUrl });
+    return NextResponse.json({
+      success: true,
+      element_id: el.id,
+      ref_image_url: publicUrl,
+      realism: verdict ? { score: verdict.score, style: verdict.style, issues: verdict.issues } : null,
+    });
   }
 
   // ── action: derive ───────────────────────────────────────────
@@ -167,6 +178,54 @@ export async function POST(
         { onConflict: "project_id,kind,name", ignoreDuplicates: true }
       );
     if (!error) inserted++;
+  }
+
+  // Locations are elements too — the set recurs across every scene shot
+  // there. Each approved location plate becomes an environment element row
+  // that starts at image_ready (no generation needed: the approved scout
+  // plate IS the reference). Fulfillment creates the Higgsfield element
+  // and stamps locations.higgsfield_element_id + this row.
+  const { data: locs } = await supabase
+    .from("locations")
+    .select("id, name, description, approved_image_url")
+    .eq("project_id", id)
+    .not("approved_image_url", "is", null);
+  for (const loc of locs || []) {
+    const name = `${prefix}-${slugify(loc.name)}-Set`;
+    const { data: existing } = await supabase
+      .from("project_elements")
+      .select("id, status")
+      .eq("project_id", id)
+      .eq("kind", "environment")
+      .eq("name", name)
+      .maybeSingle();
+    if (existing && existing.status !== "planned") continue; // already staged
+
+    // Upload the approved plate (base64 in DB) to the public bucket
+    const m = (loc.approved_image_url as string).match(/^data:([^;]+);base64,(.+)$/);
+    let refUrl: string | null = loc.approved_image_url.startsWith("http") ? loc.approved_image_url : null;
+    if (m && !m[1].includes("svg")) {
+      const path = `elements/${id}/environment-${slugify(loc.name).toLowerCase()}.jpg`;
+      const { error: upErr } = await supabase.storage
+        .from("project-uploads")
+        .upload(path, Buffer.from(m[2], "base64"), { contentType: m[1], upsert: true });
+      if (!upErr) refUrl = supabase.storage.from("project-uploads").getPublicUrl(path).data.publicUrl;
+    }
+    if (!refUrl) continue;
+    await supabase.from("project_elements").upsert(
+      {
+        project_id: id,
+        kind: "environment",
+        name,
+        match_terms: [loc.name],
+        description: `${loc.name} — the ONE canonical set${loc.description ? `: ${loc.description}` : ""}. Same architecture, set dressing, and layout in every shot. No redesign between shots.`,
+        scene_numbers: [],
+        ref_image_url: refUrl,
+        status: "image_ready",
+      },
+      { onConflict: "project_id,kind,name", ignoreDuplicates: false }
+    );
+    inserted++;
   }
 
   const { data: all } = await supabase
