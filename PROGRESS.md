@@ -195,6 +195,7 @@ first_frames (auto-approve) → video_clips (auto-approve) → assemble → qa
 | 2026-03-28 | Verified both Google AI and Anthropic APIs working with billing enabled |
 | 2026-03-28 | Claude extraction confirmed working end-to-end (claude-sonnet-4-6) — 5 chars, 3 scenes from WAYW Ep2 |
 | 2026-06-10 | Round 3: PROMPTING.md knowledge base + cinematic prompt engine (`src/lib/prompt-engine.ts`) + element registry (`project_elements` table, `/api/projects/:id/elements` derive/generate_image/PATCH). Everything crossing scenes becomes a Higgsfield element: props (princess phone), outfits (Donna loungewear), environments, characters. WAYW proved end-to-end: phone planned→image_ready→element_ready; Jeff/Rob elements upgraded to headshot+pose-sheet medias |
+| 2026-06-11 | APEX HUNTER BENCHMARK (project 35387c49, 9:16 auto mode) vs Khalil's hand-made DramaBox demo: auto pipeline produced 36 verbatim-dialogue panels (demo: 23 shots), 13 element-locked multi-shot sequence clips, 138s assembled episode (demo: 95s), QA 61/100 first pass. System fixes shipped en route (PRs #16-19): sequence clips + covered_panel_ids, elements orchestrator step, creature casting, cast_select backfill resilience, script_text verbatim dialogue, storyboard insert-all-rows-before-art (root cause of half-scene truncation). Known issues: Rayne-archetype IP flag is probabilistic (re-roll works, element-only fallback proven), character-name/noun collision ("Ash"), ~4 reference-element practical cap per generation with start_image |
 
 ---
 
