@@ -186,7 +186,7 @@ export async function POST(
     // Use Claude to break the scene into shots
     const shotBreakdown = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 8000,
+      max_tokens: 16000,
       system: `You are a film storyboard artist breaking a scene into individual shots for a premium vertical-drama episode (DramaBox-style pacing).
 For each shot, provide: shot_type (wide/medium/close-up/extreme-close-up/OTS/POV/two-shot/insert), camera_angle (eye-level/low/high/dutch/bird's-eye/worm's-eye), camera_movement (static/pan-left/pan-right/tilt-up/tilt-down/dolly-in/dolly-out/crane-up/crane-down/handheld/steadicam), action_description (what happens in this shot — ONE clear action beat, not several), dialogue (the dialogue spoken during this shot, empty string if none), characters_in_shot (array of character names visible), duration_seconds (2.0-6.0; up to 9.0 only for a major set-piece beat).
 
@@ -200,6 +200,11 @@ DIALOGUE FIDELITY — non-negotiable:
 - When the script text is provided, use its dialogue VERBATIM. Never invent, paraphrase, trim, or merge lines.
 - Format each line with speaker attribution and tone: NAME (tone): "exact line". Keep (V.O.) / (cont'd) markers.
 - Chants, crowd lines, and repeated shouts are dialogue too — keep their build (whisper to roar) across shots.
+
+FULL COVERAGE — non-negotiable:
+- The shot list must cover the ENTIRE scene, from its first scripted moment to its last. Do not stop partway.
+- Before finishing, verify your LAST shot depicts the scene's final scripted beat. If the scene ends in celebration, the last shot is the celebration — not the midpoint.
+- Keep action_description tight (1-2 sentences) so the full scene fits.
 
 Return ONLY valid JSON: { "shots": [...] }.`,
       messages: [
