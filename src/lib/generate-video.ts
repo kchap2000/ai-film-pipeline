@@ -117,10 +117,16 @@ function authHeader(): string | null {
  */
 export async function generateVideoClip(
   firstFrameUrl: string,
-  req: VideoGenRequest
+  req: VideoGenRequest,
+  /**
+   * Pre-built prompt (e.g. a multi-shot sequence prompt from
+   * buildSequencePrompt). Submitted verbatim instead of rebuilding from
+   * req — avoids double-wrapping in the house structure.
+   */
+  promptOverride?: string
 ): Promise<VideoGenResult> {
   const model = selectVideoModel(req);
-  const prompt = buildMotionPrompt(req);
+  const prompt = promptOverride || buildMotionPrompt(req);
   const auth = authHeader();
 
   if (!auth) {

@@ -102,28 +102,40 @@ export async function POST(
 
   const planned: Array<{ kind: string; name: string; match_terms: string[]; description: string; scene_numbers: number[] }> = [];
 
-  // Props crossing scenes: normalize names, count scene occurrences
-  const propScenes: Record<string, { label: string; scenes: Set<number> }> = {};
+  // "Anything used more than once": with 2+ scenes that means props
+  // crossing scenes. A single-scene script (a one-scene episode) is shot
+  // as MANY panels, so every scripted prop recurs across shots — the
+  // recurrence threshold drops to 1.
+  const minScenes = scenes.length >= 2 ? 2 : 1;
+  // "Ashen Blade (Rayne's glowing sword)" → name "Ashen Blade"; keep the
+  // parenthetical as description detail.
+  const splitParen = (raw: string): { label: string; detail: string | null } => {
+    const m = raw.match(/^([^(]+?)\s*\(([^)]+)\)\s*$/);
+    return m ? { label: m[1].trim(), detail: m[2].trim() } : { label: raw.trim(), detail: null };
+  };
+
+  const propScenes: Record<string, { label: string; detail: string | null; scenes: Set<number> }> = {};
   for (const s of scenes) {
     for (const prop of s.props || []) {
-      const key = prop.toLowerCase().trim();
+      const { label, detail } = splitParen(prop);
+      const key = label.toLowerCase();
       if (!key) continue;
-      if (!propScenes[key]) propScenes[key] = { label: prop.trim(), scenes: new Set() };
+      if (!propScenes[key]) propScenes[key] = { label, detail, scenes: new Set() };
       propScenes[key].scenes.add(s.scene_number);
     }
   }
   for (const [key, info] of Object.entries(propScenes)) {
-    if (info.scenes.size < 2) continue; // "anything used more than once"
+    if (info.scenes.size < minScenes) continue;
     planned.push({
       kind: "prop",
       name: `${prefix}-${slugify(info.label)}`,
-      match_terms: [info.label, key],
-      description: `${info.label} — recurring prop. Identical in every shot it appears in: same model, color, wear, and details as the reference.`,
+      match_terms: Array.from(new Set([info.label, key])),
+      description: `${info.label}${info.detail ? ` (${info.detail})` : ""} — recurring prop. Identical in every shot it appears in: same model, color, wear, and details as the reference.`,
       scene_numbers: [...info.scenes].sort((a, b) => a - b),
     });
   }
 
-  // Outfits crossing scenes: same character with wardrobe noted in ≥2 scenes
+  // Outfits: same character with wardrobe noted across the scene threshold
   const outfitScenes: Record<string, { character: string; desc: string; scenes: Set<number> }> = {};
   for (const s of scenes) {
     const wardrobe = Array.isArray(s.wardrobe) ? s.wardrobe : [];
@@ -135,7 +147,7 @@ export async function POST(
     }
   }
   for (const info of Object.values(outfitScenes)) {
-    if (info.scenes.size < 2) continue;
+    if (info.scenes.size < minScenes) continue;
     planned.push({
       kind: "outfit",
       name: `${prefix}-${slugify(info.character)}-Outfit`,

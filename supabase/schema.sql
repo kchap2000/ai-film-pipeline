@@ -909,3 +909,14 @@ create table if not exists project_elements (
 create unique index if not exists idx_project_elements_unique
   on project_elements(project_id, kind, name);
 create index if not exists idx_project_elements_project on project_elements(project_id);
+
+-- ============================================================
+-- Migration: sequence clips (2026-06-10)
+-- (already applied live via MCP migration video_clips_covered_panels)
+-- ============================================================
+-- Multi-shot sequence clips: one Seedance generation covers up to 3
+-- consecutive same-scene panels (numbered Shot 1/2/3 prompt syntax).
+-- The clip row attaches to the group's head panel; the siblings it
+-- absorbs are listed here so coverage/skip logic and QA regens treat
+-- them as fulfilled.
+alter table video_clips add column if not exists covered_panel_ids uuid[] not null default '{}';

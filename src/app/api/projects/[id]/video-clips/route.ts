@@ -1,8 +1,16 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateVideoClip, pollHiggsfieldJob, buildMotionPrompt, selectVideoModel, VideoGenRequest } from "@/lib/generate-video";
+import { buildSequencePrompt } from "@/lib/prompt-engine";
 import { recordProvenance } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
+
+// Multi-shot sequence grouping (PROMPTING.md): consecutive same-scene
+// panels are generated as ONE Seedance clip with numbered Shot 1/2/3
+// syntax — real cut rhythm inside the clip instead of disconnected
+// 4-second beats. Caps per Seedance limits.
+const MAX_SEQUENCE_SHOTS = 3;
+const MAX_SEQUENCE_SECONDS = 15;
 
 /**
  * Higgsfield's image2video input takes an image_url — it can't ingest our
@@ -108,6 +116,11 @@ export async function POST(
   const body = await req.json().catch(() => ({}));
   const singlePanelId = body.panel_id as string | undefined;
   const motionOverride = body.motion_prompt as string | undefined;
+  // no_group: force a single-shot clip even when neighbors could join
+  // (used for QA regens of one flagged beat). replace: demote any active
+  // clip that covers this panel before generating its replacement.
+  const noGroup = body.no_group === true || !!motionOverride;
+  const replaceCovering = body.replace === true;
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -118,15 +131,19 @@ export async function POST(
     .single();
   const productionNotes: string = projectRow?.production_notes || "";
 
-  let panelsQuery = supabase
+  // Always fetch ALL panels (ordered) — sequence grouping needs to look
+  // ahead at a target panel's neighbors even in single-panel mode.
+  const { data: allPanels, error: panelErr } = await supabase
     .from("storyboard_panels")
     .select("id, scene_id, panel_number, shot_type, camera_angle, camera_movement, action_description, dialogue, characters_in_shot, duration_seconds, approved_first_frame_id")
     .eq("project_id", id)
     .order("panel_number", { ascending: true });
-  if (singlePanelId) panelsQuery = panelsQuery.eq("id", singlePanelId);
-  const { data: panels, error: panelErr } = await panelsQuery;
-  if (panelErr || !panels || panels.length === 0) {
+  if (panelErr || !allPanels || allPanels.length === 0) {
     return NextResponse.json({ error: "No storyboard panels found" }, { status: 400 });
+  }
+  const panels = singlePanelId ? allPanels.filter((p) => p.id === singlePanelId) : allPanels;
+  if (panels.length === 0) {
+    return NextResponse.json({ error: "Panel not found" }, { status: 404 });
   }
 
   // Scene metadata: mood + scene_number + the scene's location name so we
@@ -190,13 +207,36 @@ export async function POST(
     .single();
   const aspectRatio: string = projectAspect?.aspect_ratio || "16:9";
 
-  // Skip panels that already have a non-failed clip when running bulk
+  // Skip panels that already have a non-failed clip when running bulk —
+  // including panels covered by a multi-shot sequence clip on a sibling.
   const { data: existingClips } = await supabase
     .from("video_clips")
-    .select("panel_id, status")
+    .select("id, panel_id, status, covered_panel_ids")
     .eq("project_id", id)
     .in("status", ["pending", "generating", "completed", "approved"]);
   const panelsWithClip = new Set((existingClips || []).map((c) => c.panel_id));
+  for (const c of existingClips || []) {
+    for (const covered of (c.covered_panel_ids as string[] | null) || []) panelsWithClip.add(covered);
+  }
+
+  // QA regen path: demote whatever active clip currently covers the target
+  // panel BEFORE computing coverage, so the replacement sequence can
+  // re-absorb the freed sibling panels.
+  if (replaceCovering && singlePanelId) {
+    const coveringClips = (existingClips || []).filter(
+      (c) => c.panel_id === singlePanelId || ((c.covered_panel_ids as string[] | null) || []).includes(singlePanelId)
+    );
+    if (coveringClips.length > 0) {
+      await supabase
+        .from("video_clips")
+        .update({ status: "replaced" })
+        .in("id", coveringClips.map((c) => c.id));
+      for (const c of coveringClips) {
+        panelsWithClip.delete(c.panel_id);
+        for (const cid of (c.covered_panel_ids as string[] | null) || []) panelsWithClip.delete(cid);
+      }
+    }
+  }
 
   let clipsCreated = 0;
   let clipsCompleted = 0;
@@ -263,6 +303,35 @@ export async function POST(
       locationElementByName[locKey] ||
       Object.entries(locationElementByName).find(([name]) => name.includes(locKey) || locKey.includes(name))?.[1] ||
       null;
+
+    // ── Sequence grouping: extend forward from this panel ─────
+    // Take consecutive same-scene neighbors (panel_number + 1, +2) that
+    // have approved frames and no active clip, until shot/second caps.
+    const group = [panel];
+    if (!noGroup) {
+      const startIdx = allPanels.findIndex((p) => p.id === panel.id);
+      let total = Number(panel.duration_seconds) || 5;
+      for (let j = startIdx + 1; j < allPanels.length && group.length < MAX_SEQUENCE_SHOTS; j++) {
+        const next = allPanels[j];
+        const prev = group[group.length - 1];
+        const nextDur = Number(next.duration_seconds) || 5;
+        if (
+          next.scene_id !== panel.scene_id ||
+          next.panel_number !== prev.panel_number + 1 ||
+          !next.approved_first_frame_id ||
+          panelsWithClip.has(next.id) ||
+          total + nextDur > MAX_SEQUENCE_SECONDS
+        ) break;
+        group.push(next);
+        total += nextDur;
+      }
+    }
+    const groupDuration = Math.min(
+      MAX_SEQUENCE_SECONDS,
+      group.reduce((s, p) => s + (Number(p.duration_seconds) || 5), 0)
+    );
+    const allCharacters = Array.from(new Set(group.flatMap((p) => p.characters_in_shot || [])));
+
     const genReq: VideoGenRequest = {
       panelNumber: panel.panel_number,
       sceneNumber: scene.scene_number,
@@ -271,8 +340,8 @@ export async function POST(
       cameraMovement: panel.camera_movement || "",
       actionDescription: panel.action_description || "",
       mood: scene.mood,
-      durationSeconds: Number(panel.duration_seconds) || 5,
-      charactersInShot: panel.characters_in_shot || [],
+      durationSeconds: groupDuration,
+      charactersInShot: allCharacters,
       productionNotes,
       dialogue: panel.dialogue || "",
       registryElements,
@@ -280,7 +349,30 @@ export async function POST(
       aspectRatio,
     };
 
-    const prompt = motionOverride || buildMotionPrompt(genReq);
+    // Multi-shot groups get the numbered Shot 1/2/3 sequence prompt;
+    // single panels keep the per-shot house prompt.
+    const sequencePrompt =
+      group.length > 1
+        ? buildSequencePrompt(
+            group.map((p) => ({
+              shotType: p.shot_type || "Medium",
+              cameraMovement: p.camera_movement || "",
+              actionDescription: p.action_description || "",
+              dialogue: p.dialogue || "",
+            })),
+            {
+              mood: scene.mood,
+              durationSeconds: groupDuration,
+              aspectRatio,
+              productionNotes,
+              elements: registryElements,
+              locationElementId,
+              charactersInShot: allCharacters,
+            }
+          )
+        : undefined;
+
+    const prompt = motionOverride || sequencePrompt || buildMotionPrompt(genReq);
     const model = selectVideoModel(genReq);
 
     // Higgsfield needs an HTTPS image URL — upload data-URL frames to the
@@ -289,10 +381,12 @@ export async function POST(
     const result = httpFrameUrl
       ? await generateVideoClip(
           httpFrameUrl,
-          motionOverride ? { ...genReq, actionDescription: motionOverride } : genReq
+          motionOverride ? { ...genReq, actionDescription: motionOverride } : genReq,
+          motionOverride ? undefined : sequencePrompt
         )
       : { status: "failed" as const, videoUrl: null, jobId: null, model, prompt, error: "First frame is a placeholder or could not be uploaded for video generation" };
 
+    const coveredIds = group.slice(1).map((p) => p.id);
     const { data: inserted, error: insertErr } = await supabase
       .from("video_clips")
       .insert({
@@ -302,10 +396,14 @@ export async function POST(
         higgsfield_job_id: result.jobId,
         status: result.status === "completed" ? "completed" : result.status === "failed" ? "failed" : "pending",
         video_url: result.videoUrl,
-        duration_seconds: genReq.durationSeconds,
+        duration_seconds: groupDuration,
         model_used: result.model,
         prompt_used: result.prompt,
-        motion_description: `${genReq.cameraMovement || "static"} — ${genReq.actionDescription}`,
+        covered_panel_ids: coveredIds,
+        motion_description:
+          group.length > 1
+            ? `Sequence: panels ${group[0].panel_number}–${group[group.length - 1].panel_number} (${group.length} shots)`
+            : `${genReq.cameraMovement || "static"} — ${genReq.actionDescription}`,
       })
       .select("id")
       .single();
@@ -314,6 +412,11 @@ export async function POST(
       errors.push(`Panel ${panel.panel_number}: insert failed — ${insertErr?.message}`);
       continue;
     }
+
+    // Mark the whole group covered so later iterations of the bulk loop
+    // (and re-entrant calls) skip the sibling panels.
+    panelsWithClip.add(panel.id);
+    for (const cid of coveredIds) panelsWithClip.add(cid);
 
     await recordProvenance(supabase, {
       projectId: id,
