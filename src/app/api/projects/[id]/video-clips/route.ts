@@ -139,13 +139,25 @@ export async function POST(
   const sceneById: Record<string, { scene_number: number; mood: string; location: string }> = {};
   for (const s of scenes || []) sceneById[s.id] = { scene_number: s.scene_number, mood: s.mood || "", location: s.location || "" };
 
-  // Higgsfield element IDs: characters (identity lock) + locations (set lock)
+  // Element registry: characters + locations carry their element ids
+  // directly; project_elements adds props, outfits, and any extra
+  // environments derived from the script. All of them feed the prompt
+  // engine's <<<element_id>>> placeholder swaps.
+  const registryElements: import("@/lib/prompt-engine").RegistryElement[] = [];
+
   const { data: charRows } = await supabase
     .from("characters")
     .select("name, higgsfield_element_id")
     .eq("project_id", id)
     .not("higgsfield_element_id", "is", null);
-  const characterElements = (charRows || []).map((c) => ({ name: c.name, elementId: c.higgsfield_element_id as string }));
+  for (const c of charRows || []) {
+    registryElements.push({
+      kind: "character",
+      name: c.name,
+      elementId: c.higgsfield_element_id as string,
+      matchTerms: [c.name],
+    });
+  }
 
   const { data: locRows } = await supabase
     .from("locations")
@@ -154,6 +166,29 @@ export async function POST(
     .not("higgsfield_element_id", "is", null);
   const locationElementByName: Record<string, string> = {};
   for (const l of locRows || []) locationElementByName[(l.name || "").toLowerCase().trim()] = l.higgsfield_element_id as string;
+
+  const { data: extraElements } = await supabase
+    .from("project_elements")
+    .select("kind, name, match_terms, description, higgsfield_element_id")
+    .eq("project_id", id)
+    .eq("status", "element_ready")
+    .not("higgsfield_element_id", "is", null);
+  for (const el of extraElements || []) {
+    registryElements.push({
+      kind: el.kind as "character" | "prop" | "outfit" | "environment",
+      name: el.name,
+      elementId: el.higgsfield_element_id as string,
+      matchTerms: (el.match_terms || []).length > 0 ? el.match_terms : [el.name],
+      description: el.description || undefined,
+    });
+  }
+
+  const { data: projectAspect } = await supabase
+    .from("projects")
+    .select("aspect_ratio")
+    .eq("id", id)
+    .single();
+  const aspectRatio: string = projectAspect?.aspect_ratio || "16:9";
 
   // Skip panels that already have a non-failed clip when running bulk
   const { data: existingClips } = await supabase
@@ -240,8 +275,9 @@ export async function POST(
       charactersInShot: panel.characters_in_shot || [],
       productionNotes,
       dialogue: panel.dialogue || "",
-      characterElements,
+      registryElements,
       locationElementId,
+      aspectRatio,
     };
 
     const prompt = motionOverride || buildMotionPrompt(genReq);

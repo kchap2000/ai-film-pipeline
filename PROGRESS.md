@@ -194,6 +194,7 @@ first_frames (auto-approve) → video_clips (auto-approve) → assemble → qa
 | 2026-03-28 | DB cleanup: deleted 11 SVG placeholder cast_variations, deleted Test project, cleared approved_cast_id |
 | 2026-03-28 | Verified both Google AI and Anthropic APIs working with billing enabled |
 | 2026-03-28 | Claude extraction confirmed working end-to-end (claude-sonnet-4-6) — 5 chars, 3 scenes from WAYW Ep2 |
+| 2026-06-10 | Round 3: PROMPTING.md knowledge base + cinematic prompt engine (`src/lib/prompt-engine.ts`) + element registry (`project_elements` table, `/api/projects/:id/elements` derive/generate_image/PATCH). Everything crossing scenes becomes a Higgsfield element: props (princess phone), outfits (Donna loungewear), environments, characters. WAYW proved end-to-end: phone planned→image_ready→element_ready; Jeff/Rob elements upgraded to headshot+pose-sheet medias |
 
 ---
 
