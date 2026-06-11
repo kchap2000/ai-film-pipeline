@@ -880,3 +880,32 @@ create index if not exists idx_qa_reports_project on qa_reports(project_id);
 -- locked reference image — preventing face/wardrobe/set drift.
 alter table characters add column if not exists higgsfield_element_id text;
 alter table locations add column if not exists higgsfield_element_id text;
+
+-- ============================================================
+-- Migration: project_elements registry (2026-06-10)
+-- (already applied to live DB via MCP migration project_elements_registry)
+-- ============================================================
+-- Everything that crosses scenes becomes an element (PROMPTING.md round 3):
+-- recurring props (scenes.props in ≥2 scenes), recurring outfits
+-- (scenes.wardrobe), environments. Characters are tracked on the
+-- characters table directly. Lifecycle:
+--   planned → image_ready (Gemini reference plate uploaded to the public
+--   bucket) → element_ready (Higgsfield element created via MCP, id stored).
+-- match_terms are swapped for <<<higgsfield_element_id>>> placeholders by
+-- the prompt engine (src/lib/prompt-engine.ts).
+create table if not exists project_elements (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  kind text not null, -- prop, outfit, environment
+  name text not null,
+  match_terms text[] not null default '{}',
+  description text,
+  scene_numbers integer[] not null default '{}',
+  ref_image_url text,
+  higgsfield_element_id text,
+  status text not null default 'planned', -- planned, image_ready, element_ready
+  created_at timestamp with time zone default now()
+);
+create unique index if not exists idx_project_elements_unique
+  on project_elements(project_id, kind, name);
+create index if not exists idx_project_elements_project on project_elements(project_id);

@@ -597,6 +597,34 @@ export async function generateFirstFrame(opts: {
 }
 
 /**
+ * Generate a clean reference image for a prop or outfit element (round 3).
+ * Product-photography style on neutral background — the same plate style
+ * Khalil's manual prop elements use (e.g. the Ashen Blade close-up).
+ */
+export async function generatePropImage(
+  name: string,
+  description: string,
+  kind: string
+): Promise<GeneratedImage> {
+  const apiKey = process.env.GOOGLE_AI_API_KEY;
+  const subject = kind === "outfit"
+    ? `Full outfit laid out / worn on a neutral mannequin: ${description}`
+    : `${description}`;
+  const prompt = [
+    `Raw photographic reference plate for film production continuity.`,
+    `Subject: ${name} — ${subject}.`,
+    `Single subject, centered, fills most of the frame.`,
+    `Clean neutral light-gray studio background, soft even lighting, no shadows on background.`,
+    `Photorealistic, tactile material textures, high resolution. No text, no watermarks, no people${kind === "outfit" ? " (mannequin or flat-lay only)" : ""}.`,
+  ].join(" ");
+
+  if (!apiKey || apiKey === "your-key-here") {
+    return generatePlaceholder(name, prompt, 1);
+  }
+  return await generateWithGemini(apiKey, prompt, name, 1);
+}
+
+/**
  * Generate a character pose sheet using an approved headshot as a visual reference.
  * Passes the reference image + the pose sheet prompt to Gemini multimodal.
  *
