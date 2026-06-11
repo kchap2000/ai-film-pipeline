@@ -233,10 +233,12 @@ async function executeStep(
       if (!res.ok) return { work: "", nextStep: step, progress, failed: data.error || `Cast gen failed for ${char.name} #${vi}` };
 
       const nextVi = vi + 1;
+      // Preserve cast_backfilled / cast_skip across the generate loop so a
+      // cast_select backfill pass can't repeat forever.
       const next =
         nextVi > AUTO_CAST_VARIATIONS
-          ? { character_index: ci + 1, variation: 1 }
-          : { character_index: ci, variation: nextVi };
+          ? { ...progress, character_index: ci + 1, variation: 1 }
+          : { ...progress, character_index: ci, variation: nextVi };
       return {
         work: `${char.name}: variation ${vi}/${AUTO_CAST_VARIATIONS}${data.skipped ? " (existed)" : ""}`,
         nextStep: ci + 1 >= castable.length && nextVi > AUTO_CAST_VARIATIONS ? "cast_select" : "cast_generate",
@@ -252,11 +254,13 @@ async function executeStep(
         .eq("project_id", projectId)
         .eq("voice_only", false)
         .order("name");
-      const castable = (chars || []).filter((c) => !c.approved_cast_id);
+      const castSkip = (progress.cast_skip as string[]) || [];
+      const castable = (chars || []).filter((c) => !c.approved_cast_id && !castSkip.includes(c.id));
       if (castable.length === 0) {
         // All selected — lock everyone and move on
         await api(`/projects/${projectId}/lock`, { method: "PATCH", body: JSON.stringify({ lock_all: true }) });
-        return { work: "All characters locked", nextStep: "pose_sheets", progress: {} };
+        const skippedNote = castSkip.length > 0 ? ` (${castSkip.length} skipped — no castable images)` : "";
+        return { work: `All characters locked${skippedNote}`, nextStep: "pose_sheets", progress: {} };
       }
       const char = castable[0];
       const { data: variations } = await supabase
@@ -265,7 +269,29 @@ async function executeStep(
         .eq("character_id", char.id)
         .eq("status", "pending");
       if (!variations || variations.length === 0) {
-        return { work: "", nextStep: step, progress, failed: `No pending variations for ${char.name}` };
+        // A character with no variations (added mid-run, or every image
+        // content-blocked) gets ONE backfill pass through cast_generate
+        // pointed at its index, then is skipped rather than failing the run.
+        const backfilled = (progress.cast_backfilled as Record<string, boolean>) || {};
+        if (!backfilled[char.id]) {
+          const { data: allCastable } = await supabase
+            .from("characters")
+            .select("id")
+            .eq("project_id", projectId)
+            .eq("voice_only", false)
+            .order("name");
+          const idx = (allCastable || []).findIndex((c) => c.id === char.id);
+          return {
+            work: `${char.name}: no variations — backfilling casting for this character`,
+            nextStep: "cast_generate",
+            progress: { character_index: Math.max(0, idx), variation: 1, cast_backfilled: { ...backfilled, [char.id]: true }, cast_skip: castSkip },
+          };
+        }
+        return {
+          work: `${char.name}: still no castable images after backfill — skipping`,
+          nextStep: "cast_select",
+          progress: { ...progress, cast_skip: [...castSkip, char.id] },
+        };
       }
       const { winner, all } = await selectBest(castingBrief(char.name, char.description || ""), variations.map((v) => ({ id: v.id, imageUrl: v.image_url })));
       if (!winner) return { work: "", nextStep: step, progress, failed: `Scoring produced no winner for ${char.name}` };
@@ -277,7 +303,8 @@ async function executeStep(
       return {
         work: `${char.name}: selected best of ${all.length} (score ${winner.score}/10 — ${winner.reasoning})`,
         nextStep: "cast_select",
-        progress: {},
+        // Keep skip/backfill bookkeeping for the characters still queued
+        progress: { cast_backfilled: progress.cast_backfilled, cast_skip: castSkip },
       };
     }
 
