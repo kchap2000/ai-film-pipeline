@@ -592,7 +592,7 @@ async function executeStep(
       // gets skipped after 2 attempts instead of looping forever.
       const { data: allClips } = await supabase
         .from("video_clips")
-        .select("id, panel_id, status, covered_panel_ids")
+        .select("id, panel_id, status, covered_panel_ids, higgsfield_job_id")
         .eq("project_id", projectId);
       const clips = (allClips || []).filter((c) => ["pending", "completed", "approved"].includes(c.status));
       const failedCount: Record<string, number> = {};
@@ -625,8 +625,12 @@ async function executeStep(
         // All panels have a clip row — but some may be stuck 'pending' with a
         // Higgsfield job id (submit timed out mid-poll). Make up to 3 resume
         // passes (the video-clips POST resume path re-polls the job) before
-        // moving on to assembly.
-        const pendingPanels = (clips || []).filter((c) => c.status === "pending").map((c) => c.panel_id);
+        // moving on to assembly. Job-LESS pending clips are external
+        // fulfillment (CLI runner / MCP) — resume passes can't help those
+        // and re-POSTing their panel would mint duplicate clips, so skip.
+        const pendingPanels = (clips || [])
+          .filter((c) => c.status === "pending" && c.higgsfield_job_id)
+          .map((c) => c.panel_id);
         const resumeRounds = Number(progress.video_resume_rounds) || 0;
         if (pendingPanels.length > 0 && resumeRounds < 3) {
           const panelId = pendingPanels[0];
