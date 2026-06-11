@@ -146,6 +146,31 @@ export async function generateProjectFirstFrames(
       if (imageUrl) characterReferences.push({ name, imageUrl });
     }
 
+    // Cross-panel continuity (diagnostic v2 fix 6): fetch the immediately
+    // preceding panel's APPROVED frame as a state reference. In auto mode
+    // frames generate + approve in panel order, so panel N-1's frame
+    // exists by the time panel N generates. Missing/SVG frames skip
+    // silently — continuity never blocks generation.
+    let previousFrameUrl: string | null = null;
+    if (panel.panel_number > 1) {
+      const { data: prevPanel } = await supabase
+        .from("storyboard_panels")
+        .select("approved_first_frame_id")
+        .eq("scene_id", panel.scene_id)
+        .eq("panel_number", panel.panel_number - 1)
+        .maybeSingle();
+      if (prevPanel?.approved_first_frame_id) {
+        const { data: prevFrame } = await supabase
+          .from("first_frames")
+          .select("image_url")
+          .eq("id", prevPanel.approved_first_frame_id)
+          .maybeSingle();
+        if (prevFrame?.image_url && !prevFrame.image_url.startsWith("data:image/svg")) {
+          previousFrameUrl = prevFrame.image_url;
+        }
+      }
+    }
+
     const brainPrompt = await getProjectBrainPrompt(supabase, projectId, {
       targetType: "storyboard_panel",
       targetId: panel.id,
@@ -169,6 +194,7 @@ export async function generateProjectFirstFrames(
         cameraMovement: panel.camera_movement || "",
         characterReferences,
         sceneReferenceImageUrl: scene.approved_scout_image_url || null,
+        previousFrameUrl,
         locationName: scene.location || "",
         timeOfDay: scene.time_of_day || "",
         mood: scene.mood || "",
