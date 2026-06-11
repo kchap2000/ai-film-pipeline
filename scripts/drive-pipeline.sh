@@ -18,7 +18,13 @@ except Exception as e:
   echo "[$i] $STEP"
   CUR=$(echo "$STEP" | awk '{print $1}')
   STATUS=$(echo "$STEP" | awk '{print $2}')
-  if [ "$CUR" = "$STOP" ] || [ "$CUR" = "done" ] || [ "$STATUS" = "failed" ] || [ "$STATUS" = "paused" ] || [ "$CUR" = "PARSE_ERR" ]; then
+  if [ "$CUR" = "PARSE_ERR" ]; then
+    # Cold starts / proxy hiccups return HTML — wait and keep going
+    echo "  (transient non-JSON response — retrying in 15s)"
+    sleep 15
+    continue
+  fi
+  if [ "$CUR" = "$STOP" ] || [ "$CUR" = "done" ] || [ "$STATUS" = "failed" ] || [ "$STATUS" = "paused" ]; then
     echo "STOPPING at step=$CUR status=$STATUS"
     echo "$RES" | head -c 1500
     break

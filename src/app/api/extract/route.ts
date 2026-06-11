@@ -114,10 +114,24 @@ export async function POST(req: NextRequest) {
 
   // Persist the parsed script so downstream phases (storyboard shot
   // breakdown especially) can quote dialogue VERBATIM instead of working
-  // from the 2-4 sentence scene summaries.
+  // from the 2-4 sentence scene summaries. PDF extraction leaves
+  // page-margin junk (asterisk revision columns, bare page numbers)
+  // between pages — models read those walls as scene breaks and stop
+  // covering the script there, so strip them.
+  const cleanedScript = combinedText
+    .split("\n")
+    .filter((l) => {
+      const t = l.trim();
+      if (!t) return true;
+      if (/^[*\s]+$/.test(t)) return false; // asterisk revision-column junk
+      if (/^\d+\.?$/.test(t)) return false; // bare page numbers ("2.")
+      return true;
+    })
+    .join("\n")
+    .replace(/\n{4,}/g, "\n\n\n");
   await supabase
     .from("projects")
-    .update({ script_text: combinedText.slice(0, 200_000) })
+    .update({ script_text: cleanedScript.slice(0, 200_000) })
     .eq("id", project_id);
 
   // 4. Run Claude extraction

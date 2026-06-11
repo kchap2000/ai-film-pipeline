@@ -269,7 +269,6 @@ ${scriptText}`
       ];
     }
 
-    // Generate panel images and save
     const locKey = (scene.location || "").toLowerCase().trim();
     const locInfo = locMap[locKey] || {
       id: scene.location_id || "",
@@ -278,13 +277,66 @@ ${scriptText}`
       mood: scene.mood || "",
     };
 
+    // ── Phase 1: insert ALL panel rows first ──────────────────
+    // Coverage is sacred: a 24-shot breakdown must land 24 rows. Panel ART
+    // rendering takes ~20s/panel via Gemini, which blows the 300s function
+    // limit around panel 14 and silently truncates the scene — so art is a
+    // second pass with a hard time budget, and unrendered panels keep an
+    // empty image_url (first_frames generates the real frames regardless).
+    const insertedPanels: Array<{ rowId: string; shot: (typeof shots)[number]; panelNumber: number }> = [];
     for (let i = 0; i < shots.length; i++) {
       const shot = shots[i];
       const panelNumber = i + 1;
+      const { data: inserted } = await supabase
+        .from("storyboard_panels")
+        .insert({
+          project_id: id,
+          scene_id: scene.id,
+          panel_number: panelNumber,
+          shot_type: shot.shot_type,
+          camera_angle: shot.camera_angle,
+          camera_movement: shot.camera_movement,
+          action_description: shot.action_description,
+          dialogue: shot.dialogue || "",
+          characters_in_shot: shot.characters_in_shot || [],
+          image_url: "",
+          prompt_used: "",
+          aspect_ratio: aspectRatio,
+          duration_seconds: shot.duration_seconds || 3.0,
+        })
+        .select("id")
+        .single();
+      if (!inserted) continue;
+      insertedPanels.push({ rowId: inserted.id, shot, panelNumber });
+      totalPanels++;
 
-      // Build per-shot identity refs: each character in the shot gets their
-      // approved headshot URL piped in as a multimodal ref. Unknown / voice-
-      // only names silently drop.
+      const sources: ProvenanceSource[] = [
+        { sourceType: "scene", sourceId: scene.id, relationship: "shot_breakdown" },
+        { sourceType: "project", sourceId: id, relationship: "production_notes" },
+      ];
+      if (locInfo.id) {
+        sources.push({ sourceType: "location", sourceId: locInfo.id, relationship: "location_context" });
+      }
+      for (const name of shot.characters_in_shot || []) {
+        const charId = charIdByName[name];
+        if (charId) {
+          sources.push({ sourceType: "character", sourceId: charId, relationship: "character_identity" });
+        }
+      }
+      await recordProvenance(supabase, {
+        projectId: id,
+        assetType: "storyboard_panel",
+        assetId: inserted.id,
+        sources,
+        metadata: { scene_number: scene.scene_number, panel_number: panelNumber, aspect_ratio: aspectRatio },
+      });
+    }
+
+    // ── Phase 2: render panel art within the time budget ──────
+    const ART_DEADLINE_MS = 220_000; // leave headroom inside maxDuration
+    const artStart = Date.now();
+    for (const { rowId, shot, panelNumber } of insertedPanels) {
+      if (Date.now() - artStart > ART_DEADLINE_MS) break; // rest stay preview-less
       const characterReferences = (shot.characters_in_shot || [])
         .map((name: string) => {
           const imageUrl = headshotUrlByName[name];
@@ -316,54 +368,12 @@ ${scriptText}`
           aspectRatio,
           characterReferences,
         });
-
-        const { data: inserted } = await supabase
+        await supabase
           .from("storyboard_panels")
-          .insert({
-            project_id: id,
-            scene_id: scene.id,
-            panel_number: panelNumber,
-            shot_type: shot.shot_type,
-            camera_angle: shot.camera_angle,
-            camera_movement: shot.camera_movement,
-            action_description: shot.action_description,
-            dialogue: shot.dialogue || "",
-            characters_in_shot: shot.characters_in_shot || [],
-            image_url: result.url,
-            prompt_used: result.prompt,
-            aspect_ratio: aspectRatio,
-            duration_seconds: shot.duration_seconds || 3.0,
-          })
-          .select("id")
-          .single();
-
-        if (inserted) {
-          const sources: ProvenanceSource[] = [
-            { sourceType: "scene", sourceId: scene.id, relationship: "shot_breakdown" },
-            { sourceType: "project", sourceId: id, relationship: "production_notes" },
-          ];
-          if (locInfo.id) {
-            sources.push({ sourceType: "location", sourceId: locInfo.id, relationship: "location_context" });
-          }
-          for (const name of shot.characters_in_shot || []) {
-            const charId = charIdByName[name];
-            if (charId) {
-              sources.push({ sourceType: "character", sourceId: charId, relationship: "character_identity" });
-            }
-          }
-
-          await recordProvenance(supabase, {
-            projectId: id,
-            assetType: "storyboard_panel",
-            assetId: inserted.id,
-            sources,
-            metadata: { scene_number: scene.scene_number, panel_number: panelNumber, aspect_ratio: aspectRatio },
-          });
-        }
-
-        totalPanels++;
+          .update({ image_url: result.url, prompt_used: result.prompt })
+          .eq("id", rowId);
       } catch (err) {
-        console.error(`Failed to generate panel ${panelNumber} for scene ${scene.scene_number}:`, err);
+        console.error(`Failed to render panel art ${panelNumber} for scene ${scene.scene_number}:`, err);
       }
     }
   }
