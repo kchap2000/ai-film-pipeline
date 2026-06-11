@@ -119,12 +119,15 @@ export async function POST(
       .eq("project_id", id),
     supabase
       .from("projects")
-      .select("production_notes, aspect_ratio")
+      .select("production_notes, aspect_ratio, script_text")
       .eq("id", id)
       .single(),
   ]);
   const productionNotes: string = projectRes.data?.production_notes || "";
   const aspectRatio = normalizeProjectAspectRatio(projectRes.data?.aspect_ratio);
+  // The actual script — the shot breakdown quotes dialogue VERBATIM from
+  // here. Truncated for prompt budget; scene summaries still cover the rest.
+  const scriptText: string = (projectRes.data?.script_text || "").slice(0, 30_000);
 
   const scenes = scenesRes.data || [];
   const charDescMap: Record<string, string> = {};
@@ -183,10 +186,22 @@ export async function POST(
     // Use Claude to break the scene into shots
     const shotBreakdown = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 2000,
-      system: `You are a film storyboard artist breaking a scene into individual shots.
-For each shot, provide: shot_type (wide/medium/close-up/extreme-close-up/OTS/POV/two-shot/insert), camera_angle (eye-level/low/high/dutch/bird's-eye/worm's-eye), camera_movement (static/pan-left/pan-right/tilt-up/tilt-down/dolly-in/dolly-out/crane-up/crane-down/handheld/steadicam), action_description (what happens in this shot), dialogue (any dialogue in this shot, empty string if none), characters_in_shot (array of character names visible), duration_seconds (estimated duration 1.0-10.0).
-Return ONLY valid JSON: { "shots": [...] }. Aim for 3-8 shots per scene depending on complexity.`,
+      max_tokens: 8000,
+      system: `You are a film storyboard artist breaking a scene into individual shots for a premium vertical-drama episode (DramaBox-style pacing).
+For each shot, provide: shot_type (wide/medium/close-up/extreme-close-up/OTS/POV/two-shot/insert), camera_angle (eye-level/low/high/dutch/bird's-eye/worm's-eye), camera_movement (static/pan-left/pan-right/tilt-up/tilt-down/dolly-in/dolly-out/crane-up/crane-down/handheld/steadicam), action_description (what happens in this shot — ONE clear action beat, not several), dialogue (the dialogue spoken during this shot, empty string if none), characters_in_shot (array of character names visible), duration_seconds (2.0-6.0; up to 9.0 only for a major set-piece beat).
+
+SHOT DENSITY — match TV-drama pacing:
+- Action/set-piece scenes: 14-24 shots. Dialogue scenes: 8-14 shots.
+- EVERY scripted dialogue line gets its own shot of its speaker (or a reaction shot carrying the line as off-screen audio).
+- Key reactions get their own shots. Big action beats split into multiple shots (approach / impact / aftermath).
+- Alternate framings: wide for geography, medium for action, close-up for emotion, extreme-close-up as punctuation (an eye, a weapon, a hand).
+
+DIALOGUE FIDELITY — non-negotiable:
+- When the script text is provided, use its dialogue VERBATIM. Never invent, paraphrase, trim, or merge lines.
+- Format each line with speaker attribution and tone: NAME (tone): "exact line". Keep (V.O.) / (cont'd) markers.
+- Chants, crowd lines, and repeated shouts are dialogue too — keep their build (whisper to roar) across shots.
+
+Return ONLY valid JSON: { "shots": [...] }.`,
       messages: [
         {
           role: "user",
@@ -198,7 +213,15 @@ Mood: ${scene.mood || "Neutral"}
 Action: ${scene.action_summary || "No action described"}
 Characters present: ${(scene.characters_present || []).join(", ") || "None specified"}
 Props: ${(scene.props || []).join(", ") || "None"}
-Wardrobe: ${(scene.wardrobe || []).join(", ") || "None"}`,
+Wardrobe: ${(scene.wardrobe || []).join(", ") || "None"}${
+            scriptText
+              ? `
+
+--- FULL SCRIPT (quote dialogue verbatim from here; use only the parts belonging to this scene) ---
+
+${scriptText}`
+              : ""
+          }`,
         },
       ],
     });
