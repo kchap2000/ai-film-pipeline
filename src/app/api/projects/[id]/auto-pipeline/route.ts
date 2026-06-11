@@ -435,12 +435,64 @@ async function executeStep(
       const { data: panels } = await supabase.from("storyboard_panels").select("scene_id").eq("project_id", projectId);
       const covered = new Set((panels || []).map((p) => p.scene_id));
       const pending = scenes.filter((s) => !covered.has(s.id));
-      if (pending.length === 0) return { work: "Storyboard complete", nextStep: "first_frames", progress: {} };
+      if (pending.length === 0) return { work: "Storyboard complete", nextStep: "elements", progress: {} };
       const scene = pending[0];
       const res = await api(`/projects/${projectId}/storyboard`, { method: "POST", body: JSON.stringify({ scene_id: scene.id }) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return { work: "", nextStep: step, progress, failed: data.error || `Storyboard failed for scene ${scene.scene_number}` };
-      return { work: `Scene ${scene.scene_number}: ${data.panelsGenerated ?? "?"} panels`, nextStep: pending.length <= 1 ? "first_frames" : "storyboard", progress };
+      return { work: `Scene ${scene.scene_number}: ${data.panelsGenerated ?? "?"} panels`, nextStep: pending.length <= 1 ? "elements" : "storyboard", progress };
+    }
+
+    // ── Phase 9.5: element registry (PROMPTING.md round 3) ──
+    // Derive everything that crosses scenes/shots, then generate one
+    // reference plate per tick. Higgsfield element creation itself happens
+    // through the connector (or REST when configured) — rows progress
+    // planned → image_ready here; video generation uses whatever has
+    // reached element_ready and degrades gracefully for the rest.
+    case "elements": {
+      if (!progress.elements_derived) {
+        const res = await api(`/projects/${projectId}/elements`, { method: "POST", body: JSON.stringify({ action: "derive" }) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) return { work: "", nextStep: step, progress, failed: data.error || "Element derivation failed" };
+        return {
+          work: `Element registry: ${data.derived ?? 0} elements planned`,
+          nextStep: "elements",
+          progress: { ...progress, elements_derived: true },
+        };
+      }
+      const { data: planned } = await supabase
+        .from("project_elements")
+        .select("id, name, kind")
+        .eq("project_id", projectId)
+        .eq("status", "planned")
+        .in("kind", ["prop", "outfit"])
+        .order("created_at")
+        .limit(1);
+      if (!planned || planned.length === 0) {
+        const next = { ...progress };
+        delete next.elements_derived;
+        delete next.element_image_failures;
+        return { work: "Element reference plates complete", nextStep: "first_frames", progress: next };
+      }
+      const el = planned[0];
+      const failures = (progress.element_image_failures as Record<string, number>) || {};
+      const res = await api(`/projects/${projectId}/elements`, {
+        method: "POST",
+        body: JSON.stringify({ action: "generate_image", element_id: el.id }),
+      });
+      if (!res.ok) {
+        // Content-blocked plates shouldn't stall the run: skip after 1 retry
+        if ((failures[el.id] || 0) >= 1) {
+          await supabase.from("project_elements").update({ status: "skipped" }).eq("id", el.id);
+          return { work: `Element ${el.name}: reference image blocked twice — skipped`, nextStep: "elements", progress };
+        }
+        return {
+          work: `Element ${el.name}: reference image failed — retrying once`,
+          nextStep: "elements",
+          progress: { ...progress, element_image_failures: { ...failures, [el.id]: 1 } },
+        };
+      }
+      return { work: `Element ${el.name}: reference plate generated`, nextStep: "elements", progress };
     }
 
     // ── Phase 9: first frames (one panel per call, auto-approve) ──
@@ -513,18 +565,34 @@ async function executeStep(
       // gets skipped after 2 attempts instead of looping forever.
       const { data: allClips } = await supabase
         .from("video_clips")
-        .select("panel_id, status")
+        .select("id, panel_id, status, covered_panel_ids")
         .eq("project_id", projectId);
       const clips = (allClips || []).filter((c) => ["pending", "completed", "approved"].includes(c.status));
       const failedCount: Record<string, number> = {};
       for (const c of allClips || []) {
         if (c.status === "failed") failedCount[c.panel_id] = (failedCount[c.panel_id] || 0) + 1;
       }
+      // A panel counts as covered if it has its own clip OR is folded into
+      // a sibling's multi-shot sequence clip.
       const covered = new Set(clips.map((c) => c.panel_id));
+      for (const c of clips) {
+        for (const cid of (c.covered_panel_ids as string[] | null) || []) covered.add(cid);
+      }
       const skippedFailed = (panels || []).filter((p) => !covered.has(p.id) && (failedCount[p.id] || 0) >= 2);
       for (const p of skippedFailed) covered.add(p.id);
+      // QA regens: a flagged panel that lives inside a sequence clip maps
+      // to that clip's HEAD panel — regenerating the head (with replace)
+      // re-rolls the whole sequence so coverage is never lost.
+      let effectiveRegen = regenTargets;
+      if (regenTargets) {
+        const headByPanel: Record<string, string> = {};
+        for (const c of clips) {
+          for (const cid of (c.covered_panel_ids as string[] | null) || []) headByPanel[cid] = c.panel_id;
+        }
+        effectiveRegen = Array.from(new Set(regenTargets.map((t) => headByPanel[t] || t)));
+      }
       const targets = (panels || []).filter((p) =>
-        p.approved_first_frame_id && (regenTargets ? regenTargets.includes(p.id) : !covered.has(p.id))
+        p.approved_first_frame_id && (effectiveRegen ? effectiveRegen.includes(p.id) : !covered.has(p.id))
       );
       if (targets.length === 0) {
         // All panels have a clip row — but some may be stuck 'pending' with a
@@ -565,14 +633,19 @@ async function executeStep(
         return { work: `Video clips complete${notes ? ` (${notes})` : ""}`, nextStep: "assemble", progress: next };
       }
       const panel = targets[0];
-      const res = await api(`/projects/${projectId}/video-clips`, { method: "POST", body: JSON.stringify({ panel_id: panel.id }) });
+      const res = await api(`/projects/${projectId}/video-clips`, {
+        method: "POST",
+        // Regens replace the existing covering clip (the route re-rolls the
+        // whole sequence the panel belonged to, keeping coverage intact).
+        body: JSON.stringify(effectiveRegen ? { panel_id: panel.id, replace: true } : { panel_id: panel.id }),
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return { work: "", nextStep: step, progress, failed: data.error || `Clip failed for panel ${panel.panel_number}` };
 
       // Auto-approve completed clips
       const { data: newClip } = await supabase
         .from("video_clips")
-        .select("id, status")
+        .select("id, status, covered_panel_ids")
         .eq("panel_id", panel.id)
         .order("created_at", { ascending: false })
         .limit(1)
@@ -582,7 +655,10 @@ async function executeStep(
       }
       let nextProgress = progress;
       if (regenTargets) {
-        nextProgress = { ...progress, regen_clip_panel_ids: regenTargets.filter((t) => t !== panel.id) };
+        // The new clip satisfies its head panel AND every panel its
+        // sequence covers — clear all of them from the regen list.
+        const satisfied = new Set([panel.id, ...(((newClip?.covered_panel_ids as string[] | null) || []))]);
+        nextProgress = { ...progress, regen_clip_panel_ids: regenTargets.filter((t) => !satisfied.has(t)) };
       }
       const pendingNote = newClip?.status === "pending" ? " (queued for Higgsfield fulfillment)" : "";
       return { work: `Panel ${panel.panel_number}: clip generated${pendingNote}`, nextStep: "video_clips", progress: nextProgress };

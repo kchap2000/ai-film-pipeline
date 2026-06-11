@@ -273,6 +273,7 @@ export type PipelineStep =
   | "scenes_generate"
   | "scenes_select"
   | "storyboard"
+  | "elements"
   | "first_frames"
   | "video_clips"
   | "assemble"
@@ -289,6 +290,7 @@ export const PIPELINE_STEP_ORDER: PipelineStep[] = [
   "scenes_generate",
   "scenes_select",
   "storyboard",
+  "elements",
   "first_frames",
   "video_clips",
   "assemble",
@@ -306,6 +308,7 @@ export const PIPELINE_STEP_LABELS: Record<PipelineStep, string> = {
   scenes_generate: "Scene Scouts — Generate",
   scenes_select: "Scene Scouts — Auto-Select",
   storyboard: "Storyboard Breakdown",
+  elements: "Element Registry",
   first_frames: "First Frames",
   video_clips: "Video Generation",
   assemble: "Video Assembly",
