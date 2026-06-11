@@ -637,19 +637,22 @@ export async function generateFirstFrame(opts: {
 export async function generatePropImage(
   name: string,
   description: string,
-  kind: string
+  kind: string,
+  /** Realism-gate correction addendum on re-roll (diagnostic v3) */
+  realismBoost?: string
 ): Promise<GeneratedImage> {
   const apiKey = process.env.GOOGLE_AI_API_KEY;
   const subject = kind === "outfit"
     ? `Full outfit laid out / worn on a neutral mannequin: ${description}`
     : `${description}`;
   const prompt = [
-    `Raw photographic reference plate for film production continuity.`,
+    `A raw photographic reference plate for film production continuity, captured with a full-frame camera and 85mm macro lens in a product studio.`,
     `Subject: ${name} — ${subject}.`,
     `Single subject, centered, fills most of the frame.`,
-    `Clean neutral light-gray studio background, soft even lighting, no shadows on background.`,
-    `Photorealistic, tactile material textures, high resolution. No text, no watermarks, no people${kind === "outfit" ? " (mannequin or flat-lay only)" : ""}.`,
-  ].join(" ");
+    `Clean neutral light-gray studio background, three-point softbox lighting, soft even illumination, no shadows on background.`,
+    `Every material reads tactile and physically real — metal wear and specular highlights, fabric weave, leather grain, stone chips. No text, no watermarks, no people${kind === "outfit" ? " (mannequin or flat-lay only)" : ""}. Never an illustration, render, or concept art.`,
+    realismBoost || "",
+  ].filter(Boolean).join(" ");
 
   if (!apiKey || apiKey === "your-key-here") {
     return generatePlaceholder(name, prompt, 1);
