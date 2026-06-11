@@ -693,7 +693,9 @@ async function executeStep(
 
     // ── Phase 11: assembly ─────────────────────────────────
     case "assemble": {
-      const res = await api(`/projects/${projectId}/assembly`, { method: "POST" });
+      // force: auto mode assembles whatever exists (clips may still be
+      // pending external fulfillment); the coverage warning rides along.
+      const res = await api(`/projects/${projectId}/assembly`, { method: "POST", body: JSON.stringify({ force: true }) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         // No clips with video (all pending external) — complete the run

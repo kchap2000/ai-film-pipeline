@@ -46,17 +46,19 @@ export async function GET(
 // POST /api/projects/:id/assembly — assemble approved/completed clips into
 // per-scene manifests + one full-project manifest.
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   const { id } = params;
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const body = await req.json().catch(() => ({}));
+  const force = body.force === true;
 
   const [clipsRes, panelsRes, scenesRes] = await Promise.all([
     supabase
       .from("video_clips")
-      .select("id, panel_id, status, video_url, duration_seconds")
+      .select("id, panel_id, status, video_url, duration_seconds, covered_panel_ids")
       .eq("project_id", id)
       .in("status", ["approved", "completed"])
       .not("video_url", "is", null),
@@ -115,6 +117,32 @@ export async function POST(
     return NextResponse.json({ error: "No clips could be mapped to panels" }, { status: 400 });
   }
 
+  // Coverage validation (diagnostic v2 fix 13). Sequence clips cover
+  // their absorbed sibling panels too. Below 30% the cut is mostly holes —
+  // block unless force:true; below 70% assemble but warn.
+  const totalPanels = (panelsRes.data || []).length;
+  const coveredPanelIds = new Set<string>();
+  for (const clip of Object.values(bestByPanel)) {
+    coveredPanelIds.add(clip.panel_id);
+    for (const cid of ((clip as { covered_panel_ids?: string[] }).covered_panel_ids || [])) {
+      coveredPanelIds.add(cid);
+    }
+  }
+  const coverage = totalPanels > 0 ? coveredPanelIds.size / totalPanels : 1;
+  if (coverage < 0.3 && !force) {
+    return NextResponse.json(
+      {
+        error: `Only ${coveredPanelIds.size}/${totalPanels} panels (${Math.round(coverage * 100)}%) have clips — assembling now would be mostly holes. Generate more clips or pass force:true.`,
+        coverage: Math.round(coverage * 100),
+      },
+      { status: 400 }
+    );
+  }
+  const coverageWarning =
+    coverage < 0.7
+      ? `${totalPanels - coveredPanelIds.size} of ${totalPanels} panels have no clip — the cut will skip those beats`
+      : null;
+
   const totalDuration = manifest.reduce((acc, m) => acc + (m.duration || 0), 0);
 
   // Per-scene assemblies
@@ -163,5 +191,7 @@ export async function POST(
     clip_count: manifest.length,
     duration_seconds: totalDuration,
     scene_count: Object.keys(sceneGroups).length,
+    coverage: Math.round(coverage * 100),
+    warning: coverageWarning,
   });
 }

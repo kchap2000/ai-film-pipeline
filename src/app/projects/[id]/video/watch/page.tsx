@@ -78,12 +78,18 @@ export default function WatchPage() {
     }
   };
 
-  // Autoplay on index change while in "playing" mode
+  // Autoplay on index change while in "playing" mode. The <video> element
+  // is PERSISTENT (no key prop): React only swaps src, so the original
+  // user-gesture autoplay permission survives across clips. load() forces
+  // the new src to actually load before play().
   useEffect(() => {
-    if (playing && videoRef.current) {
-      videoRef.current.play().catch(() => setPlaying(false));
+    const v = videoRef.current;
+    if (playing && v) {
+      v.load();
+      v.play().catch(() => setPlaying(false));
     }
-  }, [clipIndex, playing]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clipIndex]);
 
   const runQA = async () => {
     setRunningQA(true);
@@ -154,14 +160,21 @@ export default function WatchPage() {
                   {assembly.video_url ? (
                     <video key="stitched" src={assembly.video_url} controls className="w-full h-full" />
                   ) : current ? (
+                    // No key prop — remounting the element on clip change
+                    // breaks the browser's autoplay gesture chain (Play All
+                    // bug, diagnostic v2 fix 2)
                     <video
                       ref={videoRef}
-                      key={current.clip_id}
                       src={current.video_url}
                       controls
                       onEnded={handleEnded}
                       onPlay={() => setPlaying(true)}
-                      onPause={() => setPlaying(false)}
+                      onPause={() => {
+                        // Natural end + src swaps fire pause too — only a
+                        // real user pause should stop the Play All chain
+                        const v = videoRef.current;
+                        if (v && !v.ended && v.readyState >= 2) setPlaying(false);
+                      }}
                       className="w-full h-full"
                     />
                   ) : (

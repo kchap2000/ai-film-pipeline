@@ -54,7 +54,7 @@ Vercel auto-deploys on every push to `main`. No manual deploy step needed.
 ## Stack
 - **Framework:** Next.js 14 App Router, TypeScript, Tailwind CSS
 - **Database:** Supabase (Postgres) — base64 images stored directly in DB columns
-- **AI:** Anthropic Claude API (`claude-sonnet-4-6`, `claude-haiku-4-5-20251001`) + Google Gemini (`gemini-2.5-flash-preview-05-20` with `responseModalities: [Modality.IMAGE, Modality.TEXT]`)
+- **AI:** Anthropic Claude API (`claude-sonnet-4-6`, `claude-haiku-4-5-20251001`) + Google Gemini (`gemini-3.1-flash-image-preview` with `responseModalities: [Modality.IMAGE, Modality.TEXT]`)
 - **Deployment:** Vercel (auto-deploy on push to main)
 - **Auth:** Stub only — `createRouteClient()` returns anonymous user until Google Auth is wired up
 
@@ -90,7 +90,7 @@ All API routes that read from the DB must have `export const dynamic = "force-dy
 ## Known Gotchas
 
 - **pdf-parse on Vercel:** Use `require("pdf-parse/lib/pdf-parse.js")` — NOT `require("pdf-parse")`. The default import runs test-file initialization that crashes in serverless.
-- **Gemini image generation:** Uses `responseModalities: [Modality.IMAGE, Modality.TEXT]` from `@google/genai`. Model: `gemini-2.5-flash-preview-05-20`. Real-person likenesses are often blocked (HTTP 200 but no image parts in response) — always check for empty `imageParts` and fall back to a text-only retry.
+- **Gemini image generation:** Uses `responseModalities: [Modality.IMAGE, Modality.TEXT]` from `@google/genai`. Model: `gemini-3.1-flash-image-preview`. Real-person likenesses are often blocked (HTTP 200 but no image parts in response) — always check for empty `imageParts` and fall back to a text-only retry.
 - **Pose sheet SVG placeholder:** When Gemini blocks image generation, `generatePoseSheet()` returns a base64 SVG. The posesheet route checks `result.url.startsWith("data:image/svg+xml")` and retries text-only. Returns `is_placeholder: boolean` in response.
 - **Git index.lock:** The sandbox cannot delete `.git/index.lock`. Khalil pushes all commits from his own terminal. Write commit messages and file lists clearly so he can push.
 - **Supabase payload limit:** If a Supabase query returns > ~5MB, `data` silently comes back `null`. This is why all bulk queries must exclude image columns.
