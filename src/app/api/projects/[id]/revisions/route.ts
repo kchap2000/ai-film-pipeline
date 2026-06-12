@@ -52,14 +52,43 @@ export async function POST(
 ) {
   const { id } = params;
   const body = await req.json().catch(() => ({}));
+  const { supabase, user } = await createRouteClient();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // ── Hub cascade: a swap/recast/element change happened in the workspace
+  // and the user clicked "Regenerate affected". The plan is built
+  // deterministically (no Claude) from the dependency graph (R5).
+  if (body.cascade && typeof body.cascade === "object") {
+    const cascade = body.cascade as { source_type: string; source_id: string; reason?: string };
+    try {
+      const plan = await buildCascadePlan(supabase, id, cascade);
+      if (!plan) {
+        return NextResponse.json({ error: "No downstream shots found for that change — nothing to regenerate." }, { status: 422 });
+      }
+      const { data: revision, error: insErr } = await supabase
+        .from("revisions")
+        .insert({
+          project_id: id,
+          status: "planned",
+          raw_feedback: [{ text: cascade.reason || `${cascade.source_type} updated from the hub`, via: "hub_action" }],
+          plan,
+        })
+        .select("*")
+        .single();
+      if (insErr) {
+        return NextResponse.json({ error: `Could not save revision (run the R1 migration?): ${insErr.message}` }, { status: 500 });
+      }
+      return NextResponse.json({ revision, plan });
+    } catch (err) {
+      return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
+    }
+  }
+
   const rawFeedback = (body.raw_feedback || []) as RawFeedbackNote[];
   const sourceAssemblyId = (body.source_assembly_id as string) || null;
   if (!Array.isArray(rawFeedback) || rawFeedback.length === 0) {
     return NextResponse.json({ error: "raw_feedback notes required" }, { status: 400 });
   }
-
-  const { supabase, user } = await createRouteClient();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // Create the draft row first so feedback is never lost even if resolution fails
   const { data: revision, error: insertErr } = await supabase
@@ -204,6 +233,105 @@ export async function PATCH(
   }
 
   return NextResponse.json({ error: `Unknown action: ${action}` }, { status: 400 });
+}
+
+// ──────────────────────────────────────────────────────────────
+// Cascade plan — deterministic dependency walk for hub actions (R5).
+// character → every panel the character appears in
+// location  → every panel of every scene at that location
+// scene     → that scene's panels
+// element   → panels of the scenes the element appears in
+// ──────────────────────────────────────────────────────────────
+async function buildCascadePlan(
+  supabase: Awaited<ReturnType<typeof createRouteClient>>["supabase"],
+  projectId: string,
+  cascade: { source_type: string; source_id: string; reason?: string }
+) {
+  const { data: panels } = await supabase
+    .from("storyboard_panels")
+    .select("id, scene_id, panel_number, characters_in_shot")
+    .eq("project_id", projectId)
+    .order("panel_number");
+  const { data: scenes } = await supabase
+    .from("scenes")
+    .select("id, scene_number, location_id")
+    .eq("project_id", projectId);
+  const allPanels = panels || [];
+  const allScenes = scenes || [];
+
+  let panelIds: string[] = [];
+  let label = "";
+
+  switch (cascade.source_type) {
+    case "character": {
+      const { data: ch } = await supabase
+        .from("characters")
+        .select("name")
+        .eq("id", cascade.source_id)
+        .single();
+      if (!ch) throw new Error("Character not found");
+      label = ch.name;
+      const nameLc = ch.name.toLowerCase();
+      panelIds = allPanels
+        .filter((p) => (p.characters_in_shot || []).some((c: string) => c.toLowerCase() === nameLc))
+        .map((p) => p.id);
+      break;
+    }
+    case "location": {
+      const { data: loc } = await supabase
+        .from("locations")
+        .select("name")
+        .eq("id", cascade.source_id)
+        .single();
+      if (!loc) throw new Error("Location not found");
+      label = loc.name;
+      const sceneIds = new Set(allScenes.filter((s) => s.location_id === cascade.source_id).map((s) => s.id));
+      panelIds = allPanels.filter((p) => sceneIds.has(p.scene_id)).map((p) => p.id);
+      break;
+    }
+    case "scene": {
+      const scene = allScenes.find((s) => s.id === cascade.source_id);
+      if (!scene) throw new Error("Scene not found");
+      label = `Scene ${scene.scene_number}`;
+      panelIds = allPanels.filter((p) => p.scene_id === cascade.source_id).map((p) => p.id);
+      break;
+    }
+    case "element": {
+      const { data: el } = await supabase
+        .from("project_elements")
+        .select("name, scene_numbers")
+        .eq("id", cascade.source_id)
+        .single();
+      if (!el) throw new Error("Element not found");
+      label = el.name;
+      const sceneIds = new Set(
+        allScenes.filter((s) => (el.scene_numbers || []).includes(s.scene_number)).map((s) => s.id)
+      );
+      // Empty scene_numbers (e.g. environment elements) → all panels
+      panelIds = (sceneIds.size > 0 ? allPanels.filter((p) => sceneIds.has(p.scene_id)) : allPanels).map((p) => p.id);
+      break;
+    }
+    default:
+      throw new Error(`Unknown cascade source_type: ${cascade.source_type}`);
+  }
+
+  if (panelIds.length === 0) return null;
+
+  const correction =
+    cascade.reason ||
+    `${label} was updated in the workspace — regenerate to match the new approved reference exactly.`;
+
+  return validatePlan({
+    targets: [
+      {
+        action: "reframe_and_reclip",
+        panel_ids: panelIds,
+        correction,
+      },
+    ],
+    summary: `${label} changed — regenerate the ${panelIds.length} affected shot${panelIds.length === 1 ? "" : "s"} (frames + clips), re-assemble, and build a new film version.`,
+    lessons: [],
+  });
 }
 
 // ──────────────────────────────────────────────────────────────
