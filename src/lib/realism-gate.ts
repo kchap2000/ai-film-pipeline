@@ -16,9 +16,18 @@ export interface RealismVerdict {
   score: number;
   style: "photorealistic" | "mixed" | "illustration";
   issues: string[];
+  /**
+   * 1-10 beat fidelity (two-axis gate) — only set when a beat description
+   * was provided. 10 = the frame IS the scripted moment: right subject,
+   * right framing, right action. Clip A/B showed fidelity regressing while
+   * realism climbed — frames got prettier but drifted off-script.
+   */
+  beatScore?: number;
+  beatIssues?: string[];
 }
 
 export const REALISM_PASS_SCORE = 7;
+export const BEAT_PASS_SCORE = 7;
 
 const SCORING_MODEL = "claude-haiku-4-5-20251001";
 
@@ -41,7 +50,12 @@ export async function scoreRealism(
    * project's setting profile (learning system) — modern gear in a
    * medieval world fails the gate even if it renders photorealistically.
    */
-  settingProfile?: { era?: string; forbidden?: string[] } | null
+  settingProfile?: { era?: string; forbidden?: string[] } | null,
+  /**
+   * When provided, the gate also scores BEAT FIDELITY against the scripted
+   * shot (second axis). Pass the panel's shot type + action description.
+   */
+  beat?: { shotType?: string; action?: string; characters?: string[] } | null
 ): Promise<RealismVerdict | null> {
   const dataMatch = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
   let imageBlock: Anthropic.ImageBlockParam | null = null;
@@ -76,7 +90,11 @@ export async function scoreRealism(
                 settingProfile?.era
                   ? `\n\nALSO screen for ANACHRONISMS: the setting is ${settingProfile.era}.${settingProfile.forbidden?.length ? ` These must never appear: ${settingProfile.forbidden.join("; ")}.` : ""} If ANY anachronistic item is visible, cap the score at 5 and name it in issues prefixed "ANACHRONISM:".`
                   : ""
-              }\n\nReturn ONLY valid JSON: {"score": <1-10>, "style": "photorealistic"|"mixed"|"illustration", "issues": ["<specific tell>", ...]}`,
+              }${
+                beat?.action
+                  ? `\n\nSECOND AXIS — BEAT FIDELITY (scored separately as beat_score): does this frame depict THIS scripted shot?\nShot type: ${beat.shotType || "unspecified"}. Scripted action: ${beat.action}. Characters in shot: ${beat.characters?.length ? beat.characters.join(", ") : "as scripted"}.\n10 = this IS the moment — right subject, right framing/shot-size, action clearly underway. 7 = the moment is recognizable but framing or emphasis drifts (e.g. close-up rendered as a wide, secondary character dominates). 4 = subject present but the scripted action is not happening. 1 = wrong subject or wrong moment entirely. Penalize unscripted extra characters that change the shot's meaning. List specific drifts in beat_issues.`
+                  : ""
+              }\n\nReturn ONLY valid JSON: {"score": <1-10>, "style": "photorealistic"|"mixed"|"illustration", "issues": ["<specific tell>", ...]${beat?.action ? `, "beat_score": <1-10>, "beat_issues": ["<specific drift>", ...]` : ""}}`,
             },
           ],
         },
@@ -88,12 +106,21 @@ export async function scoreRealism(
       .join("");
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) return null;
-    const parsed = JSON.parse(match[0]) as Partial<RealismVerdict>;
+    const parsed = JSON.parse(match[0]) as Partial<RealismVerdict> & {
+      beat_score?: number;
+      beat_issues?: string[];
+    };
     if (typeof parsed.score !== "number") return null;
     return {
       score: Math.max(1, Math.min(10, parsed.score)),
       style: parsed.style === "photorealistic" || parsed.style === "illustration" ? parsed.style : "mixed",
       issues: Array.isArray(parsed.issues) ? parsed.issues.slice(0, 6).map(String) : [],
+      ...(typeof parsed.beat_score === "number"
+        ? {
+            beatScore: Math.max(1, Math.min(10, parsed.beat_score)),
+            beatIssues: Array.isArray(parsed.beat_issues) ? parsed.beat_issues.slice(0, 6).map(String) : [],
+          }
+        : {}),
     };
   } catch (err) {
     console.error("realism-gate: scoring failed:", err instanceof Error ? err.message : err);
@@ -107,6 +134,20 @@ export async function scoreRealism(
  * the research-backed realism directives (narrative hardware/film/texture
  * language — never keyword spam).
  */
+/**
+ * Beat-fidelity addendum for re-rolls that failed the second axis: restate
+ * the scripted moment as non-negotiable and name the specific drifts.
+ */
+export function beatBoost(beat: { shotType?: string; action?: string; characters?: string[] }, beatIssues: string[]): string {
+  return [
+    `BEAT CORRECTION — the previous attempt drifted from the scripted shot${beatIssues.length ? ` (${beatIssues.join("; ")})` : ""}.`,
+    `This frame must depict EXACTLY this moment: ${beat.action || "the scripted action"}.`,
+    beat.shotType ? `Shot size is non-negotiable: ${beat.shotType} — frame the subject accordingly, not wider or tighter.` : "",
+    beat.characters?.length ? `Only these characters appear: ${beat.characters.join(", ")}. No unscripted figures.` : "",
+    `The scripted action must be clearly underway in the frame, not implied or about to happen.`,
+  ].filter(Boolean).join(" ");
+}
+
 export function realismBoost(issues: string[]): string {
   return [
     `REALISM CORRECTION — the previous attempt failed photorealism review${issues.length ? ` (${issues.join("; ")})` : ""}.`,
