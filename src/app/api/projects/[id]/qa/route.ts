@@ -117,6 +117,10 @@ export async function POST(
   const sceneNumberById: Record<string, number> = {};
   for (const s of scenes) sceneNumberById[s.id] = s.scene_number;
 
+  // Gemini 3 Pro frames run 2-5MB base64 each — cap cumulative image
+  // bytes so the Anthropic request stays under its ~32MB size limit
+  const MAX_IMAGE_BYTES = 22 * 1024 * 1024;
+  let imageBytes = 0;
   const content: Anthropic.ContentBlockParam[] = [];
   for (const panel of sampled) {
     const { data: frame } = await supabase
@@ -125,6 +129,8 @@ export async function POST(
       .eq("id", panel.approved_first_frame_id as string)
       .single();
     if (!frame?.image_url) continue;
+    if (imageBytes + frame.image_url.length > MAX_IMAGE_BYTES) break;
+    imageBytes += frame.image_url.length;
     const block = toImageBlock(frame.image_url);
     if (!block) continue;
     const clip = clipByPanel[panel.id];

@@ -101,6 +101,31 @@ try {
   );
 }
 
+// 3b. Storage caps uploads at 50MB (project-wide limit). If the concat
+// exceeds it, re-encode with a bitrate budgeted to fit under the cap.
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
+const { statSync } = await import("node:fs");
+if (statSync(outFile).size > MAX_UPLOAD_BYTES) {
+  const durationSec = Math.max(1, Math.round(latest_full.duration_seconds || 120));
+  // Target 47MB total; subtract audio (128k) and leave mux overhead headroom
+  const videoKbps = Math.floor(((47 * 8192) / durationSec) - 128 - 50);
+  console.log(`Output exceeds 50MB cap — re-encoding at ${videoKbps}k video to fit…`);
+  const fitFile = join(dir, "film-fit.mp4");
+  execFileSync(
+    FFMPEG,
+    [
+      "-y", "-i", outFile,
+      "-c:v", "libx264", "-preset", "medium", "-b:v", `${videoKbps}k`,
+      "-maxrate", `${videoKbps}k`, "-bufsize", `${videoKbps * 2}k`, "-pix_fmt", "yuv420p",
+      "-c:a", "aac", "-b:a", "128k",
+      "-movflags", "+faststart",
+      fitFile,
+    ],
+    { stdio: "inherit" }
+  );
+  execFileSync("mv", [fitFile, outFile]);
+}
+
 // 4. Upload + stamp the assembly row
 const storagePath = `films/${projectId}/${latest_full.id}.mp4`;
 const bytes = readFileSync(outFile);
@@ -122,3 +147,7 @@ if (dbErr) {
 }
 console.log(`\n✅ Stitched film: ${pub.publicUrl}`);
 console.log(`Screening Room will now serve the single file.`);
+
+// Temp dirs hold ~100MB of clips each — leaking them fills the disk
+const { rmSync } = await import("node:fs");
+rmSync(dir, { recursive: true, force: true });

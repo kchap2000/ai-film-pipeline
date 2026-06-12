@@ -17,16 +17,21 @@ const supabase = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPA
 const PROJECT_ID = "35387c49-5a98-42ca-8e3a-7580db5e1591";
 
 // Backfill script_text (extraction predates the script_text migration)
-const pdfParse = require("pdf-parse/lib/pdf-parse.js");
-const pdfData = await pdfParse(fs.readFileSync("/Users/khalilchapman/Downloads/Demo Script (2).pdf"));
-await supabase.from("projects").update({ script_text: pdfData.text.slice(0, 200000) }).eq("id", PROJECT_ID);
-console.log("script_text backfilled:", pdfData.text.length, "chars");
+const SKIP_BACKFILL = true;
+const pdfParse = SKIP_BACKFILL ? null : require("pdf-parse/lib/pdf-parse.js");
+const pdfData = SKIP_BACKFILL ? null : await pdfParse(fs.readFileSync("/Users/khalilchapman/Downloads/Demo Script (2).pdf"));
+if (!SKIP_BACKFILL) await supabase.from("projects").update({ script_text: pdfData.text.slice(0, 200000) }).eq("id", PROJECT_ID);
+if (!SKIP_BACKFILL) console.log("script_text backfilled:", pdfData.text.length, "chars");
 
-const { data: chars, error } = await supabase
+// Optional name filter: node script.mjs Name1,Name2
+const ONLY = process.argv[2] ? process.argv[2].split(",") : null;
+let charsQuery = supabase
   .from("characters")
   .select("id, name, approved_cast_id, pose_sheet_url")
   .eq("project_id", PROJECT_ID)
   .not("approved_cast_id", "is", null);
+if (ONLY) charsQuery = charsQuery.in("name", ONLY);
+const { data: chars, error } = await charsQuery;
 if (error) throw error;
 
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -45,7 +50,10 @@ for (const c of chars) {
   ]) {
     const m = url?.match(/^data:([^;]+);base64,(.+)$/);
     if (!m || m[1].includes("svg")) continue;
-    const path = `elements/${PROJECT_ID}/${kind}-${slug(c.name)}.jpg`;
+    // Versioned path: anon role can INSERT but not UPDATE storage objects,
+    // so refreshed references get new paths instead of overwriting
+    const version = process.argv[3] || "";
+    const path = `elements/${PROJECT_ID}/${kind}-${slug(c.name)}${version ? `-${version}` : ""}.jpg`;
     const { error: upErr } = await supabase.storage
       .from("project-uploads")
       .upload(path, Buffer.from(m[2], "base64"), { contentType: m[1], upsert: true });
