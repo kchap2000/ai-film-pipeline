@@ -929,3 +929,30 @@ alter table video_clips add column if not exists covered_panel_ids uuid[] not nu
 -- shot breakdown can quote dialogue VERBATIM (DramaBox-fidelity rule)
 -- instead of working from 2-4 sentence scene summaries.
 alter table projects add column if not exists script_text text;
+
+-- ============================================================
+-- Migration: learning system (2026-06-11)
+-- (already applied live via MCP migration learning_system)
+-- ============================================================
+-- 1. projects.setting_profile — the world's physical rules derived at
+--    extraction (era, technology level, wardrobe rules, forbidden
+--    anachronisms). Injected into every generation prompt and enforced
+--    by the realism gate's anachronism screen.
+-- 2. pipeline_lessons — durable corrections written by QA and the gates,
+--    read back into prompts on every later run. 'project' scope refines
+--    this film; 'global' scope makes every future film better.
+alter table projects add column if not exists setting_profile jsonb;
+create table if not exists pipeline_lessons (
+  id uuid primary key default uuid_generate_v4(),
+  scope text not null default 'global',
+  project_id uuid references projects(id) on delete cascade,
+  category text not null,
+  lesson text not null,
+  evidence text,
+  times_confirmed integer not null default 1,
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+create unique index if not exists idx_lessons_unique
+  on pipeline_lessons(scope, coalesce(project_id, '00000000-0000-0000-0000-000000000000'::uuid), category, md5(lesson));
+create index if not exists idx_lessons_scope on pipeline_lessons(scope, category);

@@ -1,4 +1,5 @@
 import { createRouteClient } from "@/lib/supabase-route";
+import { recordLesson } from "@/lib/lessons";
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -186,6 +187,38 @@ export async function POST(
 
   if (saveErr) {
     return NextResponse.json({ error: saveErr.message }, { status: 500 });
+  }
+
+  // ── Learning system: QA findings become durable lessons ─────
+  // Each flag turns into an avoid-rule injected into all future prompts.
+  // Period/anachronism findings go GLOBAL (they apply to every film);
+  // character/mood specifics stay project-scoped.
+  try {
+    for (const flag of (report.character_flags || []) as Array<{ character?: string; issue?: string }>) {
+      if (!flag.issue) continue;
+      const isPeriod = /anachron|modern|tactical|contemporary|out of period|wrong era/i.test(flag.issue);
+      await recordLesson(supabase, {
+        scope: isPeriod ? "global" : "project",
+        projectId: id,
+        category: isPeriod ? "period" : "continuity",
+        lesson: isPeriod
+          ? `Wardrobe/props must match the declared era — reviewers previously caught: ${flag.issue}`
+          : `${flag.character ? `${flag.character}: ` : ""}avoid — ${flag.issue}`,
+        evidence: `QA report ${saved.id}`,
+      });
+    }
+    for (const flag of (report.mood_flags || []) as Array<{ scene_number?: number; expected?: string; observed?: string }>) {
+      if (!flag.expected || !flag.observed) continue;
+      await recordLesson(supabase, {
+        scope: "project",
+        projectId: id,
+        category: "continuity",
+        lesson: `Scene ${flag.scene_number ?? "?"}: deliver "${flag.expected}" — prior attempt drifted to "${flag.observed}"`,
+        evidence: `QA report ${saved.id}`,
+      });
+    }
+  } catch (err) {
+    console.error("qa: lesson recording failed (non-fatal):", err instanceof Error ? err.message : err);
   }
 
   return NextResponse.json({ success: true, report: saved });
