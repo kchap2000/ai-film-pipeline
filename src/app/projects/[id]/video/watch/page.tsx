@@ -52,6 +52,10 @@ export default function WatchPage() {
   const [runningQA, setRunningQA] = useState(false);
   const [qaError, setQaError] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  // Version compare (REVISION_VISION R6): a second player pinned to
+  // another version so a fix can be checked shot-against-shot.
+  const [compareVersionId, setCompareVersionId] = useState<string | null>(null);
+  const [compareClipIndex, setCompareClipIndex] = useState(0);
 
   const fetchData = useCallback(async () => {
     const [assemblyRes, qaRes] = await Promise.all([
@@ -280,6 +284,100 @@ export default function WatchPage() {
                   </button>
                 ))}
               </div>
+
+              {/* Version compare (REVISION_VISION R6) */}
+              {fullVersions.length > 1 && (
+                <div className="mb-6">
+                  {!compareVersionId ? (
+                    <button
+                      onClick={() => {
+                        const other = fullVersions.find((v) => v.id !== viewedAssembly.id);
+                        if (other) {
+                          setCompareVersionId(other.id);
+                          setCompareClipIndex(0);
+                        }
+                      }}
+                      className="text-[10px] uppercase tracking-widest px-4 py-2"
+                      style={{ color: "var(--brand-cyan)", border: "1px solid rgba(76,201,240,0.35)" }}
+                    >
+                      ⇄ Compare with another version
+                    </button>
+                  ) : (
+                    (() => {
+                      const compareAssembly = fullVersions.find((v) => v.id === compareVersionId) || null;
+                      const compareManifest = compareAssembly?.manifest || [];
+                      const compareCurrent = compareManifest[compareClipIndex] || null;
+                      return (
+                        <div className="rounded-xl p-4" style={{ background: "var(--brand-mid)", border: "1px solid rgba(76,201,240,0.35)" }}>
+                          <div className="flex items-center justify-between mb-3 gap-3 flex-wrap">
+                            <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-cyan)" }}>
+                              Comparing against:
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <select
+                                value={compareVersionId}
+                                onChange={(e) => {
+                                  setCompareVersionId(e.target.value);
+                                  setCompareClipIndex(0);
+                                }}
+                                className="text-xs px-2 py-1.5 rounded-md outline-none"
+                                style={{ background: "var(--brand-navy)", color: "var(--brand-white)", border: "1px solid var(--brand-steel)" }}
+                              >
+                                {fullVersions
+                                  .filter((v) => v.id !== viewedAssembly.id)
+                                  .map((v) => (
+                                    <option key={v.id} value={v.id}>
+                                      v{v.version ?? "?"}{v.label ? ` — ${v.label}` : ""} · {new Date(v.created_at).toLocaleDateString()}
+                                    </option>
+                                  ))}
+                              </select>
+                              <button onClick={() => setCompareVersionId(null)} className="text-xs" style={{ color: "var(--brand-gray)" }}>
+                                ✕ Close
+                              </button>
+                            </div>
+                          </div>
+                          <div className="aspect-video rounded-lg overflow-hidden" style={{ background: "black" }}>
+                            {compareAssembly?.video_url ? (
+                              <video key={compareAssembly.id} src={compareAssembly.video_url} controls className="w-full h-full" />
+                            ) : compareCurrent ? (
+                              <video
+                                key={compareCurrent.clip_id}
+                                src={compareCurrent.video_url}
+                                controls
+                                onEnded={() => {
+                                  if (compareClipIndex < compareManifest.length - 1) setCompareClipIndex((i) => i + 1);
+                                }}
+                                className="w-full h-full"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-xs" style={{ color: "var(--brand-gray)" }}>
+                                No clips in that version
+                              </div>
+                            )}
+                          </div>
+                          {!compareAssembly?.video_url && compareManifest.length > 0 && (
+                            <div className="flex gap-1.5 overflow-x-auto pt-2">
+                              {compareManifest.map((m, i) => (
+                                <button
+                                  key={m.clip_id}
+                                  onClick={() => setCompareClipIndex(i)}
+                                  className="flex-shrink-0 text-[8px] uppercase tracking-widest px-2 py-1.5 rounded"
+                                  style={{
+                                    color: i === compareClipIndex ? "var(--brand-cyan)" : "var(--brand-gray)",
+                                    border: i === compareClipIndex ? "1px solid rgba(76,201,240,0.5)" : "1px solid var(--brand-steel)",
+                                  }}
+                                >
+                                  S{m.scene_number}·P{m.panel_number}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()
+                  )}
+                </div>
+              )}
 
               {/* What changed in this version (REVISION_VISION A5) */}
               {viewedAssembly.changelog && viewedAssembly.changelog.length > 0 && (
