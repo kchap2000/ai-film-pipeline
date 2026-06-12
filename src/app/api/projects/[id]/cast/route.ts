@@ -102,12 +102,14 @@ export async function POST(
     );
   }
 
-  // Skip if this variation already exists
+  // Skip if this variation already exists — rejected variations
+  // (reference-gate failures) don't count, so gated re-casts regenerate
   const { count } = await supabase
     .from("cast_variations")
     .select("*", { count: "exact", head: true })
     .eq("character_id", character_id)
-    .eq("variation_number", variationNum);
+    .eq("variation_number", variationNum)
+    .neq("status", "rejected");
 
   if (count && count > 0) {
     return NextResponse.json({

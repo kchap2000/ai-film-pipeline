@@ -211,10 +211,13 @@ export async function POST(
   let totalGenerated = 0;
 
   for (const loc of locations || []) {
+    // Rejected variations (reference-gate failures) don't count toward
+    // the cap — gate rejections must trigger fresh generation.
     const { count } = await supabase
       .from("location_variations")
       .select("*", { count: "exact", head: true })
-      .eq("location_id", loc.id);
+      .eq("location_id", loc.id)
+      .neq("status", "rejected");
 
     const existing = count || 0;
     const needed = VARIATIONS_PER_LOCATION - existing;
