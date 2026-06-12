@@ -264,6 +264,7 @@ export interface GenerationJob {
 export type ProjectMode = "auto" | "manual";
 
 export type PipelineStep =
+  | "revision_edits"
   | "extract"
   | "cast_generate"
   | "cast_select"
@@ -299,6 +300,7 @@ export const PIPELINE_STEP_ORDER: PipelineStep[] = [
 ];
 
 export const PIPELINE_STEP_LABELS: Record<PipelineStep, string> = {
+  revision_edits: "Revision — Apply Edits",
   extract: "Script Extraction",
   cast_generate: "Casting — Generate Variations",
   cast_select: "Casting — Auto-Select & Lock",

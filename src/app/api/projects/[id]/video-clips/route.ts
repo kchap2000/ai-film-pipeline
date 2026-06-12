@@ -117,6 +117,12 @@ export async function POST(
   const body = await req.json().catch(() => ({}));
   const singlePanelId = body.panel_id as string | undefined;
   const motionOverride = body.motion_prompt as string | undefined;
+  // revision_note: a director correction appended to the production
+  // directive for THIS generation only (REVISION_VISION R3). Unlike
+  // motion_prompt it does not replace the prompt or break sequence
+  // grouping — it rides into buildMotionPrompt/buildSequencePrompt via
+  // productionNotes.
+  const revisionNote = body.revision_note as string | undefined;
   // no_group: force a single-shot clip even when neighbors could join
   // (used for QA regens of one flagged beat). replace: demote any active
   // clip that covers this panel before generating its replacement.
@@ -133,7 +139,11 @@ export async function POST(
   // World rules + lessons flow into every video prompt's PRODUCTION
   // DIRECTIVE (learning system)
   const worldDirectives = await getWorldDirectives(supabase, id);
-  const productionNotes: string = [projectRow?.production_notes || "", worldDirectives]
+  const productionNotes: string = [
+    projectRow?.production_notes || "",
+    worldDirectives,
+    revisionNote ? `REVISION DIRECTIVE (must be honored this take): ${revisionNote}` : "",
+  ]
     .filter(Boolean)
     .join(" ");
 
