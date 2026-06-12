@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import ProjectNav from "@/components/ProjectNav";
+import DirectorNotes from "@/components/DirectorNotes";
 
 interface ManifestEntry {
   clip_id: string;
@@ -22,6 +23,10 @@ interface Assembly {
   duration_seconds: number | null;
   clip_count: number;
   status: string;
+  version?: number;
+  label?: string | null;
+  parent_assembly_id?: string | null;
+  changelog?: Array<{ panel_id?: string; action: string; reason: string }> | null;
   created_at: string;
 }
 
@@ -38,6 +43,8 @@ interface QAReportRow {
 export default function WatchPage() {
   const { id } = useParams<{ id: string }>();
   const [assembly, setAssembly] = useState<Assembly | null>(null);
+  const [fullVersions, setFullVersions] = useState<Assembly[]>([]);
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [qaReport, setQaReport] = useState<QAReportRow | null>(null);
   const [loading, setLoading] = useState(true);
   const [clipIndex, setClipIndex] = useState(0);
@@ -54,6 +61,8 @@ export default function WatchPage() {
     if (assemblyRes.ok) {
       const data = await assemblyRes.json();
       setAssembly(data.latest_full || null);
+      const versions: Assembly[] = data.full_versions || (data.latest_full ? [data.latest_full] : []);
+      setFullVersions(versions);
     }
     if (qaRes.ok) {
       const data = await qaRes.json();
@@ -66,7 +75,12 @@ export default function WatchPage() {
     fetchData();
   }, [fetchData]);
 
-  const manifest = assembly?.manifest || [];
+  // Version dropdown — newest first; selecting an older version swaps the
+  // player + manifest to that cut (REVISION_VISION A5).
+  const viewedAssembly =
+    (selectedVersionId && fullVersions.find((v) => v.id === selectedVersionId)) || assembly;
+
+  const manifest = viewedAssembly?.manifest || [];
   const current = manifest[clipIndex] || null;
 
   // Sequential playback — when a clip ends, advance to the next one.
@@ -127,14 +141,32 @@ export default function WatchPage() {
               <div>
                 <h1 className="text-3xl font-bold tracking-tight" style={{ color: "var(--brand-white)" }}>Screening Room</h1>
                 <p className="text-xs mt-2" style={{ color: "var(--brand-gray)" }}>
-                  {assembly
-                    ? `${assembly.clip_count} clips · ~${Math.round(Number(assembly.duration_seconds) || 0)}s · assembled ${new Date(assembly.created_at).toLocaleString()}`
+                  {viewedAssembly
+                    ? `${viewedAssembly.clip_count} clips · ~${Math.round(Number(viewedAssembly.duration_seconds) || 0)}s · assembled ${new Date(viewedAssembly.created_at).toLocaleString()}`
                     : "No assembly yet"}
                 </p>
               </div>
+              {fullVersions.length > 1 && (
+                <select
+                  value={viewedAssembly?.id || ""}
+                  onChange={(e) => {
+                    setSelectedVersionId(e.target.value);
+                    setClipIndex(0);
+                    setPlaying(false);
+                  }}
+                  className="text-xs px-3 py-2 rounded-md outline-none"
+                  style={{ background: "var(--brand-mid)", color: "var(--brand-white)", border: "1px solid var(--brand-steel)" }}
+                >
+                  {fullVersions.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      v{v.version ?? "?"}{v.label ? ` — ${v.label}` : ""} · {new Date(v.created_at).toLocaleDateString()}
+                    </option>
+                  ))}
+                </select>
+              )}
               <button
                 onClick={runQA}
-                disabled={runningQA || !assembly}
+                disabled={runningQA || !viewedAssembly}
                 className="text-xs uppercase tracking-widest px-5 py-2.5 transition-colors disabled:opacity-40"
                 style={{ color: "var(--brand-cyan)", border: "1px solid rgba(76,201,240,0.35)" }}
               >
@@ -143,7 +175,7 @@ export default function WatchPage() {
             </div>
           </header>
 
-          {!assembly ? (
+          {!viewedAssembly ? (
             <div className="rounded-xl p-12 text-center" style={{ border: "1px solid var(--brand-steel)", background: "var(--brand-mid)" }}>
               <p className="text-sm mb-3" style={{ color: "var(--brand-gray)" }}>Nothing assembled yet.</p>
               <Link href={`/projects/${id}/video`} className="text-xs" style={{ color: "var(--brand-orange)" }}>
@@ -157,8 +189,8 @@ export default function WatchPage() {
                   sequential playlist. */}
               <div className="rounded-xl overflow-hidden mb-4" style={{ border: "1px solid var(--brand-steel)" }}>
                 <div className="aspect-video" style={{ background: "black" }}>
-                  {assembly.video_url ? (
-                    <video key="stitched" src={assembly.video_url} controls className="w-full h-full" />
+                  {viewedAssembly.video_url ? (
+                    <video key={viewedAssembly.id} src={viewedAssembly.video_url} controls className="w-full h-full" />
                   ) : current ? (
                     // No key prop — remounting the element on clip change
                     // breaks the browser's autoplay gesture chain (Play All
@@ -184,13 +216,13 @@ export default function WatchPage() {
                   )}
                 </div>
               </div>
-              {assembly.video_url && (
+              {viewedAssembly.video_url && (
                 <div className="flex items-center justify-between mb-8">
                   <span className="text-[10px] uppercase tracking-widest text-green-400">
                     Stitched film — single file
                   </span>
                   <a
-                    href={assembly.video_url}
+                    href={viewedAssembly.video_url}
                     download
                     className="text-[10px] uppercase tracking-widest px-3 py-1.5"
                     style={{ color: "var(--brand-cyan)", border: "1px solid rgba(76,201,240,0.35)" }}
@@ -199,7 +231,7 @@ export default function WatchPage() {
                   </a>
                 </div>
               )}
-              {!assembly.video_url && (
+              {!viewedAssembly.video_url && (
               <div className="flex items-center justify-between mb-8">
                 <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
                   {current ? `Scene ${current.scene_number} · Panel ${String(current.panel_number).padStart(2, "0")} · Clip ${clipIndex + 1}/${manifest.length}` : ""}
@@ -232,7 +264,7 @@ export default function WatchPage() {
               )}
 
               {/* Clip strip */}
-              <div className="flex gap-2 overflow-x-auto pb-2 mb-10">
+              <div className="flex gap-2 overflow-x-auto pb-2 mb-6">
                 {manifest.map((m, i) => (
                   <button
                     key={m.clip_id}
@@ -248,6 +280,33 @@ export default function WatchPage() {
                   </button>
                 ))}
               </div>
+
+              {/* What changed in this version (REVISION_VISION A5) */}
+              {viewedAssembly.changelog && viewedAssembly.changelog.length > 0 && (
+                <div className="rounded-xl p-4 mb-6" style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>
+                  <p className="text-[10px] uppercase tracking-widest mb-2" style={{ color: "var(--brand-gray)" }}>
+                    Changed in v{viewedAssembly.version ?? "?"}
+                  </p>
+                  {viewedAssembly.changelog.map((c, i) => (
+                    <p key={i} className="text-[11px] mb-1" style={{ color: "var(--brand-white)" }}>
+                      <span className="uppercase text-[9px] tracking-widest mr-2" style={{ color: "var(--brand-cyan)" }}>{c.action.replace(/_/g, " ")}</span>
+                      {c.reason}
+                    </p>
+                  ))}
+                </div>
+              )}
+
+              {/* Director's Notes — feedback → targeted revision (REVISION_VISION A1) */}
+              <DirectorNotes
+                projectId={id}
+                sourceAssemblyId={viewedAssembly.id}
+                currentClip={
+                  !viewedAssembly.video_url && current
+                    ? { clip_id: current.clip_id, scene_number: current.scene_number, panel_number: current.panel_number }
+                    : null
+                }
+                currentTime={videoRef.current?.currentTime ?? null}
+              />
             </>
           )}
 
