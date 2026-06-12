@@ -296,16 +296,60 @@ async function executeStep(
       }
       const { winner, all } = await selectBest(castingBrief(char.name, char.description || ""), variations.map((v) => ({ id: v.id, imageUrl: v.image_url })));
       if (!winner) return { work: "", nextStep: step, progress, failed: `Scoring produced no winner for ${char.name}` };
+
+      // ── REFERENCE GATE ──────────────────────────────────────
+      // The locked headshot becomes the identity anchor for every frame
+      // and element downstream — gate it for photorealism AND world-rule
+      // anachronisms BEFORE approval. One re-cast pass (the casting
+      // prompts now carry world directives), then accept the best.
+      const winnerVariation = variations.find((v) => v.id === winner.id);
+      const refGateRetries = (progress.ref_gate_retries as Record<string, number>) || {};
+      if (winnerVariation && !refGateRetries[char.id]) {
+        const { data: proj } = await supabase
+          .from("projects")
+          .select("setting_profile")
+          .eq("id", projectId)
+          .single();
+        const verdict = await scoreRealism(winnerVariation.image_url, proj?.setting_profile || null);
+        const anachronism = verdict?.issues.some((i) => i.toUpperCase().includes("ANACHRONISM"));
+        if (verdict && (verdict.score < REALISM_PASS_SCORE || anachronism)) {
+          // Reject this whole batch and re-cast under current world rules
+          await supabase
+            .from("cast_variations")
+            .update({ status: "rejected" })
+            .eq("character_id", char.id)
+            .eq("status", "pending");
+          const { data: allCastable } = await supabase
+            .from("characters")
+            .select("id")
+            .eq("project_id", projectId)
+            .eq("voice_only", false)
+            .order("name");
+          const idx = (allCastable || []).findIndex((c) => c.id === char.id);
+          return {
+            work: `${char.name}: REFERENCE GATE failed (realism ${verdict.score}/10${anachronism ? ", anachronism detected" : ""}: ${verdict.issues[0] || ""}) — re-casting under world rules`,
+            nextStep: "cast_generate",
+            progress: {
+              character_index: Math.max(0, idx),
+              variation: 1,
+              cast_backfilled: progress.cast_backfilled,
+              cast_skip: castSkip,
+              ref_gate_retries: { ...refGateRetries, [char.id]: 1 },
+            },
+          };
+        }
+      }
+
       const res = await api(`/projects/${projectId}/cast`, {
         method: "PATCH",
         body: JSON.stringify({ variation_id: winner.id, status: "approved", character_id: char.id }),
       });
       if (!res.ok) return { work: "", nextStep: step, progress, failed: `Approve failed for ${char.name}` };
       return {
-        work: `${char.name}: selected best of ${all.length} (score ${winner.score}/10 — ${winner.reasoning})`,
+        work: `${char.name}: selected best of ${all.length} (score ${winner.score}/10 — ${winner.reasoning})${refGateRetries[char.id] ? " [post-gate re-cast]" : " [gate passed]"}`,
         nextStep: "cast_select",
-        // Keep skip/backfill bookkeeping for the characters still queued
-        progress: { cast_backfilled: progress.cast_backfilled, cast_skip: castSkip },
+        // Keep skip/backfill/gate bookkeeping for the characters still queued
+        progress: { cast_backfilled: progress.cast_backfilled, cast_skip: castSkip, ref_gate_retries: refGateRetries },
       };
     }
 
@@ -335,7 +379,33 @@ async function executeStep(
           progress: { ...progress, [`skip_${char.id}`]: true },
         };
       }
-      return { work: `${char.name}: pose sheet generated`, nextStep: "pose_sheets", progress };
+      // ── REFERENCE GATE: pose sheets feed character elements ──
+      const poseGateRetries = (progress.pose_gate_retries as Record<string, number>) || {};
+      if (!poseGateRetries[char.id]) {
+        const { data: refreshed } = await supabase
+          .from("characters")
+          .select("pose_sheet_url")
+          .eq("id", char.id)
+          .single();
+        if (refreshed?.pose_sheet_url && !refreshed.pose_sheet_url.startsWith("data:image/svg")) {
+          const { data: proj } = await supabase
+            .from("projects")
+            .select("setting_profile")
+            .eq("id", projectId)
+            .single();
+          const verdict = await scoreRealism(refreshed.pose_sheet_url, proj?.setting_profile || null);
+          const anachronism = verdict?.issues.some((i) => i.toUpperCase().includes("ANACHRONISM"));
+          if (verdict && (verdict.score < REALISM_PASS_SCORE || anachronism)) {
+            await supabase.from("characters").update({ pose_sheet_url: null }).eq("id", char.id);
+            return {
+              work: `${char.name}: pose sheet REFERENCE GATE failed (realism ${verdict.score}/10${anachronism ? ", anachronism" : ""}) — regenerating`,
+              nextStep: "pose_sheets",
+              progress: { ...progress, pose_gate_retries: { ...poseGateRetries, [char.id]: 1 } },
+            };
+          }
+        }
+      }
+      return { work: `${char.name}: pose sheet generated [gate ${poseGateRetries[char.id] ? "re-roll" : "passed"}]`, nextStep: "pose_sheets", progress };
     }
 
     // ── Phase 6: locations (bulk init then one location per call) ──
@@ -390,12 +460,37 @@ async function executeStep(
       }
       const { winner, all } = await selectBest(locationBrief(loc.name, loc.description || "", loc.time_of_day || "", loc.mood || ""), variations.map((v) => ({ id: v.id, imageUrl: v.image_url })));
       if (!winner) return { work: "", nextStep: step, progress, failed: `No winner for location ${loc.name}` };
+
+      // ── REFERENCE GATE: the approved plate becomes the set element ──
+      const locGateRetries = (progress.loc_gate_retries as Record<string, number>) || {};
+      const winnerLoc = variations.find((v) => v.id === winner.id);
+      if (winnerLoc && !locGateRetries[loc.id]) {
+        const { data: proj } = await supabase
+          .from("projects")
+          .select("setting_profile")
+          .eq("id", projectId)
+          .single();
+        const verdict = await scoreRealism(winnerLoc.image_url, proj?.setting_profile || null);
+        const anachronism = verdict?.issues.some((i) => i.toUpperCase().includes("ANACHRONISM"));
+        if (verdict && (verdict.score < REALISM_PASS_SCORE || anachronism)) {
+          await supabase
+            .from("location_variations")
+            .update({ status: "rejected" })
+            .eq("location_id", loc.id)
+            .eq("status", "pending");
+          return {
+            work: `${loc.name}: REFERENCE GATE failed (realism ${verdict.score}/10${anachronism ? ", anachronism" : ""}) — regenerating location set`,
+            nextStep: "locations_generate",
+            progress: { loc_gate_retries: { ...locGateRetries, [loc.id]: 1 } },
+          };
+        }
+      }
       const res = await api(`/projects/${projectId}/locations`, {
         method: "PATCH",
         body: JSON.stringify({ variation_id: winner.id, status: "approved", location_id: loc.id }),
       });
       if (!res.ok) return { work: "", nextStep: step, progress, failed: `Approve failed for location ${loc.name}` };
-      return { work: `${loc.name}: best of ${all.length} selected (${winner.score}/10)`, nextStep: "locations_select", progress: {} };
+      return { work: `${loc.name}: best of ${all.length} selected (${winner.score}/10) [gate ${locGateRetries[loc.id] ? "re-roll" : "passed"}]`, nextStep: "locations_select", progress: { loc_gate_retries: locGateRetries } };
     }
 
     // ── Phase 7: scene scouts (one scene per call) ─────────
@@ -599,7 +694,12 @@ async function executeStep(
       let approveFrameId = frame?.id || null;
       let realismNote = "";
       if (frame && !isPlaceholder) {
-        const verdict = await scoreRealism(frame.image_url);
+        const { data: proj } = await supabase
+          .from("projects")
+          .select("setting_profile")
+          .eq("id", projectId)
+          .single();
+        const verdict = await scoreRealism(frame.image_url, proj?.setting_profile || null);
         if (verdict) {
           if (verdict.score < REALISM_PASS_SCORE && !priorAttempt) {
             return {
