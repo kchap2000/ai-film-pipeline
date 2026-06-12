@@ -209,13 +209,14 @@ export async function PATCH(
         .eq("id", body.variation_id)
         .single();
 
-      // Reject all other pending variations for this scene
+      // Supersede all other live variations for this scene (kept swappable
+      // from the hub; REVISION_VISION R1)
       await supabase
         .from("scene_variations")
-        .update({ status: "rejected" })
+        .update({ status: "superseded" })
         .eq("scene_id", body.scene_id)
         .neq("id", body.variation_id)
-        .eq("status", "pending");
+        .in("status", ["pending", "approved"]);
 
       // Store approved scout image on the scene
       await supabase

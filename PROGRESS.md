@@ -1,5 +1,15 @@
 # AI Film Pipeline — Progress Log
 
+## 🔄 Next Up: REVISION VISION (planned 2026-06-12 — read REVISION_VISION.md first)
+Two pillars, one shared engine: (A) post-render feedback loop — watch the film, type or
+dictate notes ("last scene's dragon looks fake"), system resolves notes → targeted
+frame/clip regen → re-assemble → re-stitch → versioned v2 film; (B) Project Workspace
+(`/hub`) — all characters/locations/scenes/elements/film versions in one interface with
+recast-after-lock, swap-approved-image, element version management, and cascade
+"regenerate affected" — even for Auto Mode projects. Both feed the same RevisionPlan →
+revision-run orchestrator path. Sprint order R1→R6 in REVISION_VISION.md; start with R1
+(migration: assembled_videos versioning, revisions table, run_type, element versions).
+
 ## ✅ SHIPPED: First full script→video E2E run (2026-06-10)
 
 **The FINAL_VISION.md loop is closed.** WAYW Ep2 went from uploaded script to an
