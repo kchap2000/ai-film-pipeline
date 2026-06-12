@@ -1,5 +1,6 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateVideoClip, pollHiggsfieldJob, buildMotionPrompt, selectVideoModel, VideoGenRequest } from "@/lib/generate-video";
+import { getWorldDirectives } from "@/lib/lessons";
 import { buildSequencePrompt } from "@/lib/prompt-engine";
 import { recordProvenance } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
@@ -129,7 +130,12 @@ export async function POST(
     .select("production_notes")
     .eq("id", id)
     .single();
-  const productionNotes: string = projectRow?.production_notes || "";
+  // World rules + lessons flow into every video prompt's PRODUCTION
+  // DIRECTIVE (learning system)
+  const worldDirectives = await getWorldDirectives(supabase, id);
+  const productionNotes: string = [projectRow?.production_notes || "", worldDirectives]
+    .filter(Boolean)
+    .join(" ");
 
   // Always fetch ALL panels (ordered) — sequence grouping needs to look
   // ahead at a target panel's neighbors even in single-panel mode.

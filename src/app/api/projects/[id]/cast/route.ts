@@ -1,5 +1,6 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateCastingImage } from "@/lib/generate-image";
+import { getWorldDirectives } from "@/lib/lessons";
 import { bumpVersion, recordProvenance } from "@/lib/provenance";
 import { getProjectBrainPrompt } from "@/lib/project-brain";
 import { evaluateProjectAutomation, recordProjectDecision } from "@/lib/workflow";
@@ -124,7 +125,11 @@ export async function POST(
       targetId: char.id,
       characterNames: [char.name],
     });
-    const descriptionWithBrain = [char.description, brainPrompt].filter(Boolean).join("\n\n");
+    // World rules ride into CASTING — this is exactly where a medieval
+    // soldier got modern tactical gear: nothing told the headshot
+    // generator what era it was casting for.
+    const worldDirectives = await getWorldDirectives(supabase, id);
+    const descriptionWithBrain = [char.description, brainPrompt, worldDirectives].filter(Boolean).join("\n\n");
     result = await generateCastingImage(char.name, descriptionWithBrain, variationNum);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

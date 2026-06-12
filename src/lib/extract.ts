@@ -47,6 +47,12 @@ Extract the following:
    - "logline": string — one punchy sentence
    - "themes": string[]
 
+5. **setting_profile** — the world's physical rules, enforced in every generated image. Derive from the script's era, technology, and genre:
+   - "era": string — e.g. "medieval high fantasy", "1992 American suburb", "near-future Mars colony"
+   - "technology_level": string — what exists in this world (e.g. "pre-gunpowder: swords, catapults, torches, magic")
+   - "wardrobe_rules": string[] — what characters wear in this world (materials, silhouettes, period cues)
+   - "forbidden": string[] — CONCRETE anachronisms that must NEVER appear. Be exhaustive for the era, e.g. for medieval fantasy: ["modern military gear / tactical vests / camouflage", "firearms", "zippers, velcro, plastics", "wristwatches, eyeglasses with modern frames", "contemporary haircuts/products", "cars, power lines, modern buildings", "printed text, logos"]
+
 If information is absent, use null or [] — never invent. Apply scene grouping strictly.
 
 Output format:
@@ -54,7 +60,8 @@ Output format:
   "characters": [...],
   "scenes": [...],
   "locations": [...],
-  "structure": { "acts": [...], "episode_title": ..., "genre": ..., "logline": ..., "themes": [...] }
+  "structure": { "acts": [...], "episode_title": ..., "genre": ..., "logline": ..., "themes": [...] },
+  "setting_profile": { "era": ..., "technology_level": ..., "wardrobe_rules": [...], "forbidden": [...] }
 }`;
 
 export interface ExtractedCharacter {
@@ -102,11 +109,19 @@ export interface ExtractedStructure {
   themes: string[];
 }
 
+export interface SettingProfile {
+  era: string;
+  technology_level: string;
+  wardrobe_rules: string[];
+  forbidden: string[];
+}
+
 export interface ExtractionResult {
   characters: ExtractedCharacter[];
   scenes: ExtractedScene[];
   locations?: ExtractedLocation[];
   structure: ExtractedStructure;
+  setting_profile?: SettingProfile;
 }
 
 export async function extractFromText(

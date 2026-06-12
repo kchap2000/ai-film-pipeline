@@ -3,6 +3,7 @@ import {
   generateFirstFrame,
   ReferenceImageUnreachableError,
 } from "@/lib/generate-image";
+import { getWorldDirectives } from "@/lib/lessons";
 import { getProjectBrainPrompt } from "@/lib/project-brain";
 import { recordProvenance, type ProvenanceSource } from "@/lib/provenance";
 import { normalizeProjectAspectRatio } from "@/lib/types";
@@ -44,7 +45,12 @@ export async function generateProjectFirstFrames(
     .select("production_notes, phase_status, aspect_ratio")
     .eq("id", projectId)
     .single();
-  const productionNotes: string = projectRow?.production_notes || "";
+  // World rules + accumulated lessons (learning system) ride with the
+  // production notes into every frame prompt
+  const worldDirectives = await getWorldDirectives(supabase, projectId);
+  const productionNotes: string = [projectRow?.production_notes || "", worldDirectives]
+    .filter(Boolean)
+    .join("\n\n");
   const aspectRatio = normalizeProjectAspectRatio(projectRow?.aspect_ratio);
 
   let panelsQuery = supabase

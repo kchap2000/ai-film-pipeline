@@ -134,6 +134,10 @@ export async function POST(req: NextRequest) {
     .update({ script_text: cleanedScript.slice(0, 200_000) })
     .eq("id", project_id);
 
+  // Setting profile (learning system): the world's physical rules —
+  // saved after extraction below so anachronisms (modern gear in a
+  // medieval world) are banned in every downstream generation prompt.
+
   // 4. Run Claude extraction
   let extraction;
   try {
@@ -262,6 +266,12 @@ export async function POST(req: NextRequest) {
     structure: extraction.structure,
     raw_response: JSON.stringify(extraction),
   });
+  if (extraction.setting_profile) {
+    await supabase
+      .from("projects")
+      .update({ setting_profile: extraction.setting_profile })
+      .eq("id", project_id);
+  }
 
   // 9. Advance project phase to 'extraction'
   await supabase

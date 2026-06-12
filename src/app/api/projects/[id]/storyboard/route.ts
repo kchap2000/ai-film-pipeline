@@ -1,5 +1,6 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateStoryboardPanel } from "@/lib/generate-image";
+import { getWorldDirectives } from "@/lib/lessons";
 import { bumpVersion, recordProvenance, type ProvenanceSource } from "@/lib/provenance";
 import { getProjectBrainPrompt } from "@/lib/project-brain";
 import { normalizeProjectAspectRatio } from "@/lib/types";
@@ -123,7 +124,12 @@ export async function POST(
       .eq("id", id)
       .single(),
   ]);
-  const productionNotes: string = projectRes.data?.production_notes || "";
+  // World rules + lessons (learning system) constrain both the shot
+  // breakdown text AND the panel art prompts
+  const worldDirectives = await getWorldDirectives(supabase, id);
+  const productionNotes: string = [projectRes.data?.production_notes || "", worldDirectives]
+    .filter(Boolean)
+    .join("\n\n");
   const aspectRatio = normalizeProjectAspectRatio(projectRes.data?.aspect_ratio);
   // The actual script — the shot breakdown quotes dialogue VERBATIM from
   // here. Truncated for prompt budget; scene summaries still cover the rest.
@@ -210,7 +216,7 @@ Return ONLY valid JSON: { "shots": [...] }.`,
       messages: [
         {
           role: "user",
-          content: `Break this scene into individual storyboard shots:
+          content: `${worldDirectives ? `${worldDirectives}\n\n` : ""}Break this scene into individual storyboard shots:
 
 Scene ${scene.scene_number}: ${scene.location || "Unknown Location"}
 Time: ${scene.time_of_day || "Day"}

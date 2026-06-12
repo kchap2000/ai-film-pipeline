@@ -34,7 +34,15 @@ Evaluate specifically: skin texture (pores, subsurface scattering vs airbrushed)
 
 Genre is NOT the question — a dragon can be photorealistic (think practical-effects blockbuster VFX plate) and a kitchen can be illustrated. Judge rendering style only.`;
 
-export async function scoreRealism(imageUrl: string): Promise<RealismVerdict | null> {
+export async function scoreRealism(
+  imageUrl: string,
+  /**
+   * When provided, the gate also screens for anachronisms against the
+   * project's setting profile (learning system) — modern gear in a
+   * medieval world fails the gate even if it renders photorealistically.
+   */
+  settingProfile?: { era?: string; forbidden?: string[] } | null
+): Promise<RealismVerdict | null> {
   const dataMatch = imageUrl.match(/^data:([^;]+);base64,(.+)$/);
   let imageBlock: Anthropic.ImageBlockParam | null = null;
   if (dataMatch) {
@@ -64,7 +72,11 @@ export async function scoreRealism(imageUrl: string): Promise<RealismVerdict | n
             imageBlock,
             {
               type: "text",
-              text: `${RUBRIC}\n\nReturn ONLY valid JSON: {"score": <1-10>, "style": "photorealistic"|"mixed"|"illustration", "issues": ["<specific tell>", ...]}`,
+              text: `${RUBRIC}${
+                settingProfile?.era
+                  ? `\n\nALSO screen for ANACHRONISMS: the setting is ${settingProfile.era}.${settingProfile.forbidden?.length ? ` These must never appear: ${settingProfile.forbidden.join("; ")}.` : ""} If ANY anachronistic item is visible, cap the score at 5 and name it in issues prefixed "ANACHRONISM:".`
+                  : ""
+              }\n\nReturn ONLY valid JSON: {"score": <1-10>, "style": "photorealistic"|"mixed"|"illustration", "issues": ["<specific tell>", ...]}`,
             },
           ],
         },
