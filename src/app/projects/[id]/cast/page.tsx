@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import BrainTargetButton from "@/components/BrainTargetButton";
 import ProjectNav from "@/components/ProjectNav";
+import ZoomableImage from "@/components/ZoomableImage";
 import DirectorChat from "@/components/DirectorChat";
 import { createClient } from "@/lib/supabase-browser";
 
@@ -663,9 +664,10 @@ export default function CastingPage() {
                     >
                       <div className="aspect-square relative" style={{ background: "var(--brand-navy)" }}>
                         {imageCache[v.id] ? (
-                          <img
+                          <ZoomableImage
                             src={imageCache[v.id]}
                             alt={`${activeChar.name} variation ${v.variation_number}`}
+                            caption={`${activeChar.name} — variation ${v.variation_number}`}
                             className="w-full h-full object-cover"
                           />
                         ) : (
