@@ -321,13 +321,13 @@ export async function PATCH(
         .eq("id", body.variation_id)
         .single();
 
-      // Reject others
+      // Supersede others (kept swappable from the hub; REVISION_VISION R1)
       await supabase
         .from("location_variations")
-        .update({ status: "rejected" })
+        .update({ status: "superseded" })
         .eq("location_id", body.location_id)
         .neq("id", body.variation_id)
-        .eq("status", "pending");
+        .in("status", ["pending", "approved"]);
 
       // Set approved image on location
       await supabase

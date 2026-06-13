@@ -24,6 +24,8 @@ const NAV_STEPS: Array<
   { type: "custom", key: "video", label: "Video", path: "video", unlockedAfter: 6 },
   // Auto Pilot control room: always reachable — it can start a run from any phase
   { type: "custom", key: "pipeline", label: "Auto Pilot", path: "pipeline", unlockedAfter: -1 },
+  // Workspace (REVISION_VISION R4): every asset + film version in one place
+  { type: "custom", key: "hub", label: "Workspace", path: "hub", unlockedAfter: -1 },
 ];
 
 interface ProjectNavProps {
