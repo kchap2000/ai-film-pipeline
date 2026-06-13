@@ -1,5 +1,38 @@
 # AI Film Pipeline — Progress Log
 
+## ✅ BUILT: REALISM + CONSISTENCY pass (2026-06-13, branch feature/realism-consistency)
+
+From Khalil's review notes (REALISM_NOTES_v5.md). Targets a 10/10 production on
+realism + character consistency + world-rule fidelity. Independent PR off main.
+
+- **Photoreal storyboard (the core fix):** one shared `PHOTOREAL_STILL_BLOCK` now
+  drives casting, pose, storyboard AND first-frame prompts. Storyboard panels were
+  literally prompted as "storyboard illustration" on Gemini **Flash** — rewritten to
+  a photoreal frame on **gemini-3-pro-image** (Nano Banana Pro) with identity refs,
+  the same engine as first frames. The whole pipeline now renders as one film.
+- **Pose sheets → Pro** (the Rayne headshot↔sheet mismatch was Flash drift) + an
+  identity gate: pose sheet is scored against the headshot and re-rolled once if the
+  face drifts.
+- **Three-axis first-frame gate:** realism + beat fidelity + **identity** (new
+  `scoreIdentity` compares the frame to the lead's locked headshot; drift re-rolls
+  with an identity correction). Inconsistent faces were throwing off the video gen.
+- **Anachronism hardening (Ash modern clothes, Corin's suit):** the realism gate now
+  screens `wardrobe_rules` not just the forbidden list, caps out-of-era wardrobe at
+  3/10 (auto-fail), and the realism pass bar is 7→8. Casting + pose prompts state
+  era/wardrobe as mandatory.
+- **Learning loop:** `recordWin()` banks top-tier (≥9) approaches as reinforced
+  "WORKS:" lessons that inject into future prompts — learning what works, not just
+  what fails.
+- **Click-to-expand:** `ZoomableImage` lightbox on Bible (pose sheets + scene
+  scouts), First Frames, and Cast.
+- **Research:** REALISM_MODEL_RESEARCH.md — Gemini 3 Pro (14-img/5-identity window)
+  vs GPT Image 2; highest-leverage = re-assert identity every generation + keep
+  locks on Pro (exactly what this pass does).
+
+**Validation:** these are generation-time behaviors — needs one live auto run (Apex
+Hunter) to confirm the realism/identity lift end-to-end. Set `GEMINI_FRAME_MODEL` to
+override the Pro model if needed. Cost note: storyboard + pose now use Pro (~$0.13/img
+vs Flash ~$0.067) — more spend for the realism floor; casting stays Flash×10.
 ## ✅ BUILT: REVISION VISION R1–R6 (2026-06-12, branch feature/revision-vision)
 
 Both pillars of REVISION_VISION.md are implemented end-to-end:

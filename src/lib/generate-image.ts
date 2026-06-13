@@ -143,6 +143,22 @@ function productionDirectivePrefix(notes?: string): string {
   return `PRODUCTION DIRECTIVE (locked — these rules override any conflicting style guidance below): ${trimmed}`;
 }
 
+/**
+ * The single source of truth for photoreal rendering language. Every
+ * still in the pipeline — casting headshots, pose sheets, storyboard
+ * panels, first frames — runs through this same block so the WHOLE
+ * pipeline looks like one shot film, not a stylized board feeding a
+ * photoreal frame (REALISM_NOTES_v5 #1). Cinematographer/hardware
+ * direction pushes toward photograph; "masterpiece"-style quality tags
+ * and "illustration/storyboard" framing push toward concept art.
+ */
+export const PHOTOREAL_STILL_BLOCK =
+  `This is a real photograph captured on an ARRI Alexa 65 with anamorphic prime lenses on a practical film set — never an illustration, painting, 3D render, storyboard sketch, or concept art. ` +
+  `Physical realism is non-negotiable: skin shows pores, oil, and subsurface scattering (never airbrushed); metal carries wear, scratches, and physically correct specular highlights; fabric shows its weave, leather its grain, stone its chips and dust. ` +
+  `Lighting obeys real physics — motivated practical sources, soft penumbra shadows, natural falloff. ` +
+  `Graded like developed film negative: slightly desaturated, filmic contrast, subtle halation, natural grain. ` +
+  `No oversaturated fantasy palettes, no clean vector edges, no flat color fills, no painterly brushwork, no cel shading, no perfect symmetry.`;
+
 function buildLocationPrompt(
   name: string,
   description: string,
@@ -287,14 +303,11 @@ function buildPosePrompt(
   const pose = poseInstructions[poseType] || poseInstructions.front;
 
   return [
-    `Generate a high-quality character reference pose photograph.`,
+    `A canonical character reference photograph for film production — a real photo of a real person.`,
     `Character: ${name}.`,
-    `Physical description: ${description}.`,
-    `Pose: ${pose}.`,
-    `Purpose: This is a canonical reference image for film production.`,
-    `Style: Full upper body visible, clean neutral gray background,`,
-    `even studio lighting, no shadows on background, photorealistic,`,
-    `high resolution, consistent with a professional character reference sheet.`,
+    `Physical description (render exactly, including era-correct wardrobe): ${description}.`,
+    `Pose: ${pose}. Full upper body visible, clean neutral gray studio background, even studio lighting, no shadows on background.`,
+    PHOTOREAL_STILL_BLOCK,
   ].join(" ");
 }
 
@@ -319,14 +332,17 @@ function buildCastingPrompt(
   const angle = angles[(variation - 1) % angles.length];
 
   return [
-    `Generate a high-quality cinematic casting headshot photograph.`,
+    `A professional casting headshot — a real photograph of a real person, captured on a cinema camera with an 85mm portrait lens, shallow depth of field, clean neutral studio background.`,
     `Character: ${name}.`,
-    `Physical description: ${description}.`,
+    `Physical description (this is the identity — render it exactly): ${description}.`,
     `Pose: ${angle}.`,
-    `Style: Professional casting photo, cinematic lighting, shallow depth of field,`,
-    `clean neutral background, photorealistic, high resolution.`,
-    `This is variation ${variation} of 10 — make this distinctly different from other variations`,
-    `while staying true to the character description.`,
+    // Era/wardrobe enforcement: the description carries the project's world
+    // directives (era + forbidden anachronisms). A casting headshot is the
+    // identity anchor for the ENTIRE film — if it's wrong era/wardrobe, every
+    // downstream frame inherits the error (REALISM_NOTES_v5 #3).
+    `WARDROBE & ERA ARE MANDATORY: dress and groom this person strictly per the era and wardrobe rules in the description above. Never modern/contemporary clothing, hairstyles, or accessories unless the era explicitly is modern. If in doubt, favor period-correct over stylish.`,
+    PHOTOREAL_STILL_BLOCK,
+    `This is variation ${variation} of 10 — distinctly different angle/expression/lighting from other variations, but the SAME person, same wardrobe, same era.`,
   ].join(" ");
 }
 
@@ -404,7 +420,10 @@ export async function generateStoryboardPanel(opts: {
     const ai = new GoogleGenAI({ apiKey });
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-image-preview",
+        // Pro tier (Nano Banana Pro) for storyboard panels too — same model
+        // as first frames so panels are genuinely photoreal and identity-
+        // locked, not stylized (REALISM_NOTES_v5 #1). Env-overridable.
+        model: process.env.GEMINI_FRAME_MODEL || "gemini-3-pro-image",
         contents: [{ role: "user", parts }],
         config: { responseModalities: [Modality.IMAGE, Modality.TEXT] },
       });
@@ -453,21 +472,21 @@ function buildStoryboardPrompt(opts: {
     })
     .join("; ");
 
+  // The storyboard panel is now a PHOTOREAL frame, not stylized panel art —
+  // it uses the exact same rendering language, identity refs, and Pro model
+  // as the first frame (REALISM_NOTES_v5 #1). The whole pipeline reads as one
+  // film, and a panel can stand in as a first frame without a realism gap.
   return [
     productionDirectivePrefix(opts.productionNotes),
-    `Generate a cinematic storyboard panel for a film production.`,
-    `Shot type: ${opts.shotType || "medium shot"}.`,
-    `Camera angle: ${opts.cameraAngle || "eye-level"}.`,
-    opts.cameraMovement ? `Camera movement: ${opts.cameraMovement}.` : "",
-    `Action: ${opts.actionDescription}.`,
-    opts.charactersInShot.length > 0 ? `Characters in shot: ${charDetails}.` : "",
-    `Location: ${opts.locationName}.`,
-    opts.locationDescription ? `Setting: ${opts.locationDescription}.` : "",
-    opts.timeOfDay ? `Time of day: ${opts.timeOfDay}.` : "",
-    opts.mood ? `Mood: ${opts.mood}.` : "",
-    `Aspect ratio: ${aspect}. Compose for the final ${aspect} panel with no letterboxing, pillarboxing, or unused borders.`,
-    `Style: Professional storyboard illustration with cinematic framing,`,
-    `dramatic lighting, film-quality composition, photorealistic.`,
+    `A production still captured on an ARRI Alexa 65 with anamorphic prime lenses during a film shoot.`,
+    `The shot: a ${opts.shotType || "medium shot"} from a ${opts.cameraAngle || "eye-level"} angle${opts.cameraMovement ? `, composed for a ${opts.cameraMovement} move` : ""}, shallow depth of field with optically soft bokeh.`,
+    `In the frame: ${opts.actionDescription}.`,
+    opts.charactersInShot.length > 0
+      ? `The people in shot are the exact individuals from the attached reference photographs (match faces, hair, build, and era-correct wardrobe precisely): ${charDetails}.`
+      : "",
+    `The setting is ${opts.locationName}${opts.locationDescription ? ` — ${opts.locationDescription}` : ""}${opts.timeOfDay ? ` at ${opts.timeOfDay}` : ""}${opts.mood ? `; the atmosphere reads ${opts.mood}` : ""}.`,
+    `Aspect ratio: ${aspect}. Compose for the final ${aspect} frame with no letterboxing, pillarboxing, or unused borders.`,
+    PHOTOREAL_STILL_BLOCK,
     `This is panel ${opts.panelNumber} in the sequence.`,
   ].filter(Boolean).join(" ");
 }
@@ -698,7 +717,10 @@ export async function generatePoseSheet(
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-image-preview",
+      // Pro tier for pose sheets — the headshot↔pose-sheet identity mismatch
+      // (Rayne) traces to Flash drifting from the reference. Pro's reasoning
+      // pass + larger reference window holds identity far better.
+      model: process.env.GEMINI_FRAME_MODEL || "gemini-3-pro-image",
       contents: [
         {
           role: "user",
