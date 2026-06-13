@@ -95,6 +95,29 @@ export async function PATCH(
     return NextResponse.json({ success: true });
   }
 
+  // REVISION_VISION R5 — unlock for recast. Locks are no longer one-way:
+  // the hub can unlock a character, swap/regenerate the headshot, and
+  // relock. Downstream assets go stale via the version bump; the cascade
+  // banner offers targeted regeneration.
+  if (character_id && body.unlock === true) {
+    await supabase
+      .from("characters")
+      .update({ locked: false })
+      .eq("id", character_id)
+      .eq("project_id", id);
+    await bumpVersion(supabase, "characters", character_id, id);
+    await recordProjectDecision(supabase, {
+      projectId: id,
+      decisionType: "character_lock",
+      subjectType: "character",
+      subjectId: character_id,
+      status: "approved",
+      metadata: { unlock: true },
+      user,
+    });
+    return NextResponse.json({ success: true, unlocked: true });
+  }
+
   if (character_id) {
     // Lock a single character — only requires approved cast
     await supabase

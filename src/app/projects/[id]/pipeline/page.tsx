@@ -168,10 +168,19 @@ export default function PipelinePage() {
             </Link>
             <div className="flex items-end justify-between mt-4 gap-4 flex-wrap">
               <div>
-                <h1 className="text-3xl font-bold tracking-tight" style={{ color: "var(--brand-white)" }}>Auto Pipeline</h1>
+                <h1 className="text-3xl font-bold tracking-tight" style={{ color: "var(--brand-white)" }}>
+                  {run?.run_type === "revision" ? "Revision Run" : "Auto Pipeline"}
+                </h1>
                 <p className="text-xs mt-2" style={{ color: "var(--brand-gray)" }}>
-                  Script in → video out. Every gate auto-selected by AI. {run ? `Run status: ${run.status}` : "No run yet."}
+                  {run?.run_type === "revision"
+                    ? `Targeted fix from Director's Notes — only flagged shots regenerate, then the film re-stitches as a new version. Run status: ${run.status}`
+                    : `Script in → video out. Every gate auto-selected by AI. ${run ? `Run status: ${run.status}` : "No run yet."}`}
                 </p>
+                {run?.run_type === "revision" && ["completed"].includes(run.status) && (
+                  <Link href={`/projects/${id}/video/watch`} className="inline-block mt-2 text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-cyan)" }}>
+                    → Watch the new version in the Screening Room
+                  </Link>
+                )}
               </div>
               <div className="flex gap-3">
                 {!run || ["completed", "failed"].includes(run.status) ? (

@@ -3,7 +3,11 @@
  * Fulfill pending video clips via the Higgsfield CLI — closes the auto-mode
  * loop without REST API keys or a Cowork session.
  *
- * Usage:  node scripts/fulfill-clips.mjs <project_id> [--base url] [--finish]
+ * Usage:  node scripts/fulfill-clips.mjs <project_id> [--base url] [--finish] [--revision <id>]
+ *
+ * --revision <id>: only fulfill clips for the panels in that revision's
+ * plan (REVISION_VISION R3); with --finish the assembly is stamped with
+ * the revision id + changelog so the new film version carries lineage.
  *
  * Requires `higgsfield auth login` once per session (device login). For each
  * video_clips row in status 'pending' with no video_url:
@@ -29,6 +33,8 @@ const projectId = process.argv[2];
 const baseFlag = process.argv.indexOf("--base");
 const BASE = baseFlag > -1 ? process.argv[baseFlag + 1] : "https://ai-film-pipeline-git-main-khalil-chapmans-projects.vercel.app";
 const FINISH = process.argv.includes("--finish");
+const revisionFlag = process.argv.indexOf("--revision");
+const REVISION_ID = revisionFlag > -1 ? process.argv[revisionFlag + 1] : null;
 const CONCURRENCY = 4; // Higgsfield plan cap on concurrent jobs
 
 if (!projectId) {
@@ -54,14 +60,44 @@ const { createClient } = await import("@supabase/supabase-js");
 const supabase = createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
 
 // Pending clips that still need a video
-const { data: clips, error } = await supabase
+const { data: allPending, error } = await supabase
   .from("video_clips")
-  .select("id, panel_id, first_frame_id, duration_seconds, prompt_used")
+  .select("id, panel_id, first_frame_id, duration_seconds, prompt_used, covered_panel_ids")
   .eq("project_id", projectId)
   .eq("status", "pending")
   .is("video_url", null)
   .order("created_at");
 if (error) throw error;
+
+// --revision: only the panels named in the revision's plan
+let clips = allPending || [];
+let revisionChangelog = null;
+if (REVISION_ID) {
+  const { data: revision, error: revErr } = await supabase
+    .from("revisions")
+    .select("plan")
+    .eq("id", REVISION_ID)
+    .single();
+  if (revErr || !revision?.plan) {
+    console.error(`Revision ${REVISION_ID} not found or has no plan.`);
+    process.exit(1);
+  }
+  const targetPanelIds = new Set(
+    (revision.plan.targets || []).flatMap((t) => t.panel_ids || [])
+  );
+  clips = clips.filter(
+    (c) =>
+      targetPanelIds.has(c.panel_id) ||
+      (c.covered_panel_ids || []).some((pid) => targetPanelIds.has(pid))
+  );
+  revisionChangelog = (revision.plan.targets || []).map((t) => ({
+    action: t.action,
+    reason: t.correction || "",
+    panel_id: (t.panel_ids || [])[0],
+  }));
+  console.log(`Revision ${REVISION_ID}: ${clips.length}/${allPending?.length || 0} pending clip(s) belong to this revision.`);
+}
+
 if (!clips?.length) {
   console.log("No pending clips to fulfill.");
 } else {
@@ -161,7 +197,10 @@ if (FINISH) {
   const asm = await fetch(`${BASE}/api/projects/${projectId}/assembly`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ force: true }),
+    body: JSON.stringify({
+      force: true,
+      ...(REVISION_ID ? { revision_id: REVISION_ID, changelog: revisionChangelog } : {}),
+    }),
   });
   const asmData = await asm.json().catch(() => ({}));
   console.log("Assembly:", JSON.stringify(asmData).slice(0, 200));
