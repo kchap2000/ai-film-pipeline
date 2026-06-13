@@ -1,6 +1,7 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { selectBest, castingBrief, locationBrief, sceneScoutBrief } from "@/lib/auto-select";
-import { scoreRealism, realismBoost, beatBoost, REALISM_PASS_SCORE, BEAT_PASS_SCORE } from "@/lib/realism-gate";
+import { scoreRealism, scoreIdentity, realismBoost, beatBoost, identityBoost, REALISM_PASS_SCORE, BEAT_PASS_SCORE, IDENTITY_PASS_SCORE } from "@/lib/realism-gate";
+import { recordWin } from "@/lib/lessons";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -653,7 +654,7 @@ async function executeStep(
       const panel = targets[0];
       // Two-axis gate retry: if the panel's prior frame failed realism or
       // beat fidelity, this pass regenerates with the targeted addendum.
-      const realismRetries = (progress.realism_retries as Record<string, { frame_id: string; score: number; beat_score?: number; issues: string[]; boost?: string }>) || {};
+      const realismRetries = (progress.realism_retries as Record<string, { frame_id: string; score: number; beat_score?: number; identity_score?: number; issues: string[]; boost?: string }>) || {};
       const priorAttempt = realismRetries[panel.id];
       const res = await api(`/projects/${projectId}/first-frames`, {
         method: "POST",
@@ -699,46 +700,86 @@ async function executeStep(
           .select("setting_profile")
           .eq("id", projectId)
           .single();
+        const inShot = ((panel as { characters_in_shot?: string[] }).characters_in_shot || []);
         const panelBeat = {
           shotType: (panel as { shot_type?: string }).shot_type,
           action: (panel as { action_description?: string }).action_description,
-          characters: (panel as { characters_in_shot?: string[] }).characters_in_shot || [],
+          characters: inShot,
         };
+        // THREE-AXIS GATE (REALISM_NOTES_v5): realism + beat fidelity +
+        // IDENTITY. An inconsistent face throws off the video generator, so
+        // the primary in-shot character's frame is compared to their locked
+        // headshot. Only the lead identity is checked (cheapest, matters most).
+        let primaryHeadshotUrl: string | null = null;
+        let primaryCharName = "";
+        if (inShot.length > 0) {
+          const { data: ch } = await supabase
+            .from("characters")
+            .select("name, approved_cast_id, voice_only")
+            .eq("project_id", projectId)
+            .eq("name", inShot[0])
+            .maybeSingle();
+          if (ch?.approved_cast_id && !ch.voice_only) {
+            const { data: cv } = await supabase
+              .from("cast_variations")
+              .select("image_url")
+              .eq("id", ch.approved_cast_id)
+              .maybeSingle();
+            primaryHeadshotUrl = cv?.image_url || null;
+            primaryCharName = ch.name;
+          }
+        }
         const verdict = await scoreRealism(frame.image_url, proj?.setting_profile || null, panelBeat);
+        const identityVerdict = primaryHeadshotUrl
+          ? await scoreIdentity(frame.image_url, primaryHeadshotUrl, primaryCharName)
+          : null;
         if (verdict) {
-          // Two-axis gate: a frame must be photoreal AND depict the
-          // scripted beat. Clip A/B showed fidelity falling (7→4) while
-          // realism climbed — pretty frames drifting off-script.
+          // Three-axis gate: a frame must be photoreal AND depict the
+          // scripted beat AND keep the locked character identity.
           const realismFail = verdict.score < REALISM_PASS_SCORE;
           const beatFail = typeof verdict.beatScore === "number" && verdict.beatScore < BEAT_PASS_SCORE;
-          if ((realismFail || beatFail) && !priorAttempt) {
+          const identityFail = identityVerdict ? identityVerdict.match < IDENTITY_PASS_SCORE : false;
+          if ((realismFail || beatFail || identityFail) && !priorAttempt) {
             const boost = [
               realismFail ? realismBoost(verdict.issues) : "",
               beatFail ? beatBoost(panelBeat, verdict.beatIssues || []) : "",
+              identityFail ? identityBoost(primaryCharName, identityVerdict!.issues) : "",
             ].filter(Boolean).join("\n\n");
             const axes = [
               realismFail ? `realism ${verdict.score}/10 (${verdict.style})` : "",
               beatFail ? `beat ${verdict.beatScore}/10` : "",
+              identityFail ? `identity ${identityVerdict!.match}/10` : "",
             ].filter(Boolean).join(", ");
             return {
               work: `Panel ${panel.panel_number}: gate failed — ${axes} — re-rolling with targeted boost`,
               nextStep: "first_frames",
               progress: {
                 ...progress,
-                realism_retries: { ...realismRetries, [panel.id]: { frame_id: frame.id, score: verdict.score, beat_score: verdict.beatScore, issues: verdict.issues, boost } },
+                realism_retries: { ...realismRetries, [panel.id]: { frame_id: frame.id, score: verdict.score, beat_score: verdict.beatScore, identity_score: identityVerdict?.match, issues: verdict.issues, boost } },
               },
             };
           }
-          // Better-of comparison across BOTH axes (sum; missing beat
-          // score falls back to the realism score so old entries compare)
-          const composite = verdict.score + (verdict.beatScore ?? verdict.score);
-          const priorComposite = priorAttempt ? priorAttempt.score + (priorAttempt.beat_score ?? priorAttempt.score) : -1;
+          // Better-of comparison across ALL THREE axes (sum; missing scores
+          // fall back to realism so old entries still compare)
+          const composite = verdict.score + (verdict.beatScore ?? verdict.score) + (identityVerdict?.match ?? verdict.score);
+          const priorComposite = priorAttempt ? priorAttempt.score + (priorAttempt.beat_score ?? priorAttempt.score) + (priorAttempt.identity_score ?? priorAttempt.score) : -1;
           if (priorAttempt && composite < priorComposite) {
             // Boosted retry came back worse — approve the original attempt
             approveFrameId = priorAttempt.frame_id;
-            realismNote = ` (realism ${priorAttempt.score}/10, beat ${priorAttempt.beat_score ?? "—"}/10; boost re-roll scored worse — kept original)`;
+            realismNote = ` (realism ${priorAttempt.score}/10, beat ${priorAttempt.beat_score ?? "—"}/10, identity ${priorAttempt.identity_score ?? "—"}/10; boost re-roll scored worse — kept original)`;
           } else {
-            realismNote = ` (realism ${verdict.score}/10, beat ${verdict.beatScore ?? "—"}/10${priorAttempt ? ` after boost, was ${priorAttempt.score}/${priorAttempt.beat_score ?? "—"}` : ""})`;
+            realismNote = ` (realism ${verdict.score}/10, beat ${verdict.beatScore ?? "—"}/10, identity ${identityVerdict?.match ?? "—"}/10${priorAttempt ? ` after boost` : ""})`;
+            // LEARNING LOOP: bank a top-tier frame's approach as a win so it
+            // reinforces future prompts (REALISM_NOTES_v5 #6).
+            if (verdict.score >= 9 && (identityVerdict?.match ?? 9) >= 9) {
+              await recordWin(supabase, {
+                scope: "project",
+                projectId,
+                category: "first_frame_realism",
+                pattern: `${panelBeat.shotType || "shot"} of ${primaryCharName || "subject"} held photoreal + on-identity with the locked headshot ref + photoreal still directive`,
+                score: verdict.score,
+              });
+            }
           }
         }
       }

@@ -26,8 +26,13 @@ export interface RealismVerdict {
   beatIssues?: string[];
 }
 
-export const REALISM_PASS_SCORE = 7;
+// Pass bars (REALISM_NOTES_v5 — target a 10/10 production). Raised from 7
+// to 8: the orchestrator gives every sub-bar frame one boosted re-roll, so
+// a higher bar just means more frames get a correction pass before they
+// seed a video clip.
+export const REALISM_PASS_SCORE = 8;
 export const BEAT_PASS_SCORE = 7;
+export const IDENTITY_PASS_SCORE = 7;
 
 const SCORING_MODEL = "claude-haiku-4-5-20251001";
 
@@ -49,8 +54,11 @@ export async function scoreRealism(
    * When provided, the gate also screens for anachronisms against the
    * project's setting profile (learning system) — modern gear in a
    * medieval world fails the gate even if it renders photorealistically.
+   * wardrobe_rules are screened too: a character in modern day-attire when
+   * the world is period (Ash, Corin) fails even without an item on the
+   * forbidden list (REALISM_NOTES_v5 #3).
    */
-  settingProfile?: { era?: string; forbidden?: string[] } | null,
+  settingProfile?: { era?: string; forbidden?: string[]; wardrobe_rules?: string[] } | null,
   /**
    * When provided, the gate also scores BEAT FIDELITY against the scripted
    * shot (second axis). Pass the panel's shot type + action description.
@@ -88,7 +96,7 @@ export async function scoreRealism(
               type: "text",
               text: `${RUBRIC}${
                 settingProfile?.era
-                  ? `\n\nALSO screen for ANACHRONISMS: the setting is ${settingProfile.era}.${settingProfile.forbidden?.length ? ` These must never appear: ${settingProfile.forbidden.join("; ")}.` : ""} If ANY anachronistic item is visible, cap the score at 5 and name it in issues prefixed "ANACHRONISM:".`
+                  ? `\n\nALSO screen for ANACHRONISMS — be strict: the setting is ${settingProfile.era}.${settingProfile.wardrobe_rules?.length ? ` Wardrobe in this world MUST follow: ${settingProfile.wardrobe_rules.join("; ")}.` : ""}${settingProfile.forbidden?.length ? ` These must NEVER appear: ${settingProfile.forbidden.join("; ")}.` : ""} If ANY anachronistic item OR out-of-period wardrobe/grooming is visible (e.g. a modern suit, contemporary day-clothes, or modern military gear in a period world), cap the score at 3 and name it in issues prefixed "ANACHRONISM:". A character dressed for the wrong era is an automatic fail even if photorealistic.`
                   : ""
               }${
                 beat?.action
@@ -145,6 +153,91 @@ export function beatBoost(beat: { shotType?: string; action?: string; characters
     beat.shotType ? `Shot size is non-negotiable: ${beat.shotType} — frame the subject accordingly, not wider or tighter.` : "",
     beat.characters?.length ? `Only these characters appear: ${beat.characters.join(", ")}. No unscripted figures.` : "",
     `The scripted action must be clearly underway in the frame, not implied or about to happen.`,
+  ].filter(Boolean).join(" ");
+}
+
+/**
+ * Identity-consistency check (REALISM_NOTES_v5 #2). Compares a generated
+ * frame/pose-sheet against the character's LOCKED headshot and scores how
+ * faithfully the face/hair/build match. Inconsistent characters in first
+ * frames throw off the video generator downstream, so a drift below
+ * IDENTITY_PASS_SCORE triggers a re-roll with an identity-correction boost.
+ *
+ * Returns null if either image can't be loaded (skip the check — never block).
+ */
+export interface IdentityVerdict {
+  /** 1-10; 10 = unmistakably the same person as the reference */
+  match: number;
+  issues: string[];
+}
+
+export async function scoreIdentity(
+  generatedImageUrl: string,
+  referenceHeadshotUrl: string,
+  characterName: string
+): Promise<IdentityVerdict | null> {
+  const toBlock = (url: string): Anthropic.ImageBlockParam | null => {
+    const m = url.match(/^data:([^;]+);base64,(.+)$/);
+    if (m) {
+      if (m[1].includes("svg")) return null;
+      return {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: m[1] as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+          data: m[2],
+        },
+      };
+    }
+    if (url.startsWith("http")) return { type: "image", source: { type: "url", url } };
+    return null;
+  };
+  const refBlock = toBlock(referenceHeadshotUrl);
+  const genBlock = toBlock(generatedImageUrl);
+  if (!refBlock || !genBlock) return null;
+
+  try {
+    const anthropic = new Anthropic();
+    const response = await anthropic.messages.create({
+      model: SCORING_MODEL,
+      max_tokens: 300,
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: `REFERENCE — the canonical locked likeness of ${characterName}:` },
+            refBlock,
+            { type: "text", text: `CANDIDATE — a generated frame that should depict the same ${characterName}:` },
+            genBlock,
+            {
+              type: "text",
+              text: `Is the person in the CANDIDATE unmistakably the SAME individual as in the REFERENCE? Judge face structure, features, hair, skin tone, age, and build — not pose, expression, lighting, or wardrobe (those may legitimately change shot to shot). 10 = clearly the same person. 7 = same person with minor drift. 4 = related but noticeably different face. 1 = a different person entirely. List the specific mismatches.\n\nReturn ONLY JSON: {"match": <1-10>, "issues": ["<specific facial mismatch>", ...]}`,
+            },
+          ],
+        },
+      ],
+    });
+    const text = response.content.filter((b) => b.type === "text").map((b) => (b.type === "text" ? b.text : "")).join("");
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    const parsed = JSON.parse(match[0]) as { match?: number; issues?: string[] };
+    if (typeof parsed.match !== "number") return null;
+    return {
+      match: Math.max(1, Math.min(10, parsed.match)),
+      issues: Array.isArray(parsed.issues) ? parsed.issues.slice(0, 6).map(String) : [],
+    };
+  } catch (err) {
+    console.error("realism-gate: identity scoring failed:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+/** Identity-correction addendum for a re-roll that drifted from the locked face. */
+export function identityBoost(characterName: string, issues: string[]): string {
+  return [
+    `IDENTITY CORRECTION — the previous attempt's ${characterName} drifted from the locked reference face${issues.length ? ` (${issues.join("; ")})` : ""}.`,
+    `Reproduce ${characterName} as the EXACT same individual shown in the attached identity reference: same face structure, same features, same hair, same skin tone, same age and build.`,
+    `Treat the reference as a photograph of a real actor who must be recognizable in this frame. Change only pose, expression, and framing — never the person's identity.`,
   ].filter(Boolean).join(" ");
 }
 
