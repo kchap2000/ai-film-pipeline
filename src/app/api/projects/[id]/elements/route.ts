@@ -55,6 +55,67 @@ export async function POST(
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  // REVISION_VISION R5 — element versioning. new_version retires the
+  // current row (active=false) and stages a fresh row (version+1, planned)
+  // to regenerate; set_active flips which version of a (kind,name) element
+  // the prompt engine uses.
+  if (action === "new_version") {
+    const elementId = body.element_id as string;
+    if (!elementId) return NextResponse.json({ error: "element_id required" }, { status: 400 });
+    const { data: el } = await supabase
+      .from("project_elements")
+      .select("*")
+      .eq("id", elementId)
+      .eq("project_id", id)
+      .single();
+    if (!el) return NextResponse.json({ error: "Element not found" }, { status: 404 });
+
+    await supabase.from("project_elements").update({ active: false }).eq("id", el.id);
+    const { data: created, error: insErr } = await supabase
+      .from("project_elements")
+      .insert({
+        project_id: id,
+        kind: el.kind,
+        name: el.name,
+        match_terms: el.match_terms,
+        description: (body.description as string) || el.description,
+        scene_numbers: el.scene_numbers,
+        status: "planned",
+        version: (Number(el.version) || 1) + 1,
+        parent_element_id: el.id,
+        active: true,
+      })
+      .select("id, version")
+      .single();
+    if (insErr) {
+      // Roll the old row back to active so the element isn't orphaned
+      await supabase.from("project_elements").update({ active: true }).eq("id", el.id);
+      return NextResponse.json({ error: insErr.message }, { status: 500 });
+    }
+    return NextResponse.json({ success: true, element_id: created?.id, version: created?.version });
+  }
+
+  if (action === "set_active") {
+    const elementId = body.element_id as string;
+    if (!elementId) return NextResponse.json({ error: "element_id required" }, { status: 400 });
+    const { data: el } = await supabase
+      .from("project_elements")
+      .select("id, kind, name")
+      .eq("id", elementId)
+      .eq("project_id", id)
+      .single();
+    if (!el) return NextResponse.json({ error: "Element not found" }, { status: 404 });
+    await supabase
+      .from("project_elements")
+      .update({ active: false })
+      .eq("project_id", id)
+      .eq("kind", el.kind)
+      .eq("name", el.name)
+      .neq("id", el.id);
+    await supabase.from("project_elements").update({ active: true }).eq("id", el.id);
+    return NextResponse.json({ success: true });
+  }
+
   if (action === "generate_image") {
     const elementId = body.element_id as string;
     const boost = (body.realism_boost as string | undefined) || undefined;

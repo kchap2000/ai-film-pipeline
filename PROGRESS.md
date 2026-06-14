@@ -22,6 +22,81 @@ a propose-then-execute creative collaborator. Independent PR off main.
 **Validation:** build clean + app boots; the propose→approve conversation needs a live
 run (API keys + a real project) to exercise end-to-end.
 
+## ✅ BUILT: REALISM + CONSISTENCY pass (2026-06-13, branch feature/realism-consistency)
+
+From Khalil's review notes (REALISM_NOTES_v5.md). Targets a 10/10 production on
+realism + character consistency + world-rule fidelity. Independent PR off main.
+
+- **Photoreal storyboard (the core fix):** one shared `PHOTOREAL_STILL_BLOCK` now
+  drives casting, pose, storyboard AND first-frame prompts. Storyboard panels were
+  literally prompted as "storyboard illustration" on Gemini **Flash** — rewritten to
+  a photoreal frame on **gemini-3-pro-image** (Nano Banana Pro) with identity refs,
+  the same engine as first frames. The whole pipeline now renders as one film.
+- **Pose sheets → Pro** (the Rayne headshot↔sheet mismatch was Flash drift) + an
+  identity gate: pose sheet is scored against the headshot and re-rolled once if the
+  face drifts.
+- **Three-axis first-frame gate:** realism + beat fidelity + **identity** (new
+  `scoreIdentity` compares the frame to the lead's locked headshot; drift re-rolls
+  with an identity correction). Inconsistent faces were throwing off the video gen.
+- **Anachronism hardening (Ash modern clothes, Corin's suit):** the realism gate now
+  screens `wardrobe_rules` not just the forbidden list, caps out-of-era wardrobe at
+  3/10 (auto-fail), and the realism pass bar is 7→8. Casting + pose prompts state
+  era/wardrobe as mandatory.
+- **Learning loop:** `recordWin()` banks top-tier (≥9) approaches as reinforced
+  "WORKS:" lessons that inject into future prompts — learning what works, not just
+  what fails.
+- **Click-to-expand:** `ZoomableImage` lightbox on Bible (pose sheets + scene
+  scouts), First Frames, and Cast.
+- **Research:** REALISM_MODEL_RESEARCH.md — Gemini 3 Pro (14-img/5-identity window)
+  vs GPT Image 2; highest-leverage = re-assert identity every generation + keep
+  locks on Pro (exactly what this pass does).
+
+**Validation:** these are generation-time behaviors — needs one live auto run (Apex
+Hunter) to confirm the realism/identity lift end-to-end. Set `GEMINI_FRAME_MODEL` to
+override the Pro model if needed. Cost note: storyboard + pose now use Pro (~$0.13/img
+vs Flash ~$0.067) — more spend for the realism floor; casting stays Flash×10.
+## ✅ BUILT: REVISION VISION R1–R6 (2026-06-12, branch feature/revision-vision)
+
+Both pillars of REVISION_VISION.md are implemented end-to-end:
+
+**Pillar A — Feedback & iteration loop:**
+- Screening Room **Director's Notes rail**: type or 🎙 dictate notes while watching;
+  every note auto-attaches the clip on screen (scene/panel/timestamp). Submit →
+  Claude resolver (`POST /api/projects/:id/revisions`) turns notes into a structured
+  RevisionPlan → confirm card shows exactly what regenerates + cost → **Run revision**
+  seeds a `pipeline_runs` row (`run_type: 'revision'`) driven from the Auto Pilot page.
+- Revision runs execute ONLY the plan: `revision_edits` step (swaps/recasts/element
+  fixes/metadata edits) → targeted `first_frames` (director note injected as prompt
+  addendum, composes with the two-axis gate) → targeted `video_clips` (`revision_note`
+  rides the production directive without breaking sequence grouping; full
+  `motion_override` supported) → `assemble` (new version, parent link, changelog) →
+  `qa` in VERIFY mode (score written to `revisions.qa_verify`, no auto-loop).
+- **Film versioning**: version dropdown + per-version changelog + side-by-side
+  version COMPARE in the Screening Room. Director notes become durable
+  `pipeline_lessons` (category `director_feedback`).
+- CLI: `node scripts/fulfill-clips.mjs <project> --revision <id> --finish` fulfills
+  only that revision's clips and stamps the assembly with revision lineage.
+
+**Pillar B — Project Workspace (`/projects/:id/hub`, in ProjectNav as "Workspace"):**
+- Tabs: Cast / Locations / Scenes / Elements / Films. Every casting variation ever
+  generated (superseded, not rejected — swappable), recast-after-lock (unlock →
+  "Use this" → relock), swap approved location/scene images, element registry UI
+  with versioning (regen reference / New Version / Make Active), film versions with
+  changelogs + revision history.
+- **Cascade banner** after every change: "X changed — regenerate affected & build new
+  version" → deterministic dependency-walk plan (`POST /revisions {cascade}`) →
+  same revision engine as Director's Notes.
+
+**⚠️ ACTION NEEDED (one paste in Supabase SQL Editor):** run the
+"Migration: REVISION VISION R1 foundations" block at the bottom of
+`supabase/schema.sql` (assembled_videos versioning, revisions table,
+pipeline_runs.run_type, project_elements versioning). The MCP migration was
+blocked by session permissions. App degrades gracefully until then (assembly
+falls back to pre-versioning inserts; revisions API returns a clear error).
+
+**Then:** merge `feature/revision-vision` → main (Vercel auto-deploys), and run the
+first live revision loop on the Apex Hunter project to validate resolver quality.
+
 ## ✅ SHIPPED: First full script→video E2E run (2026-06-10)
 
 **The FINAL_VISION.md loop is closed.** WAYW Ep2 went from uploaded script to an
@@ -223,6 +298,7 @@ first_frames (auto-approve) → video_clips (auto-approve) → assemble → qa
 | 2026-06-11 | CLI FULFILLMENT RUNNER (PR #23) closes the auto-mode loop: Higgsfield CLI device-login verified, element <<<id>>> placeholders resolve server-side via CLI (tested live), scripts/fulfill-clips.mjs fulfills pending clips in waves of 4 with content-block retry ladder and --finish chaining assembly+stitch. Proven across 3 fulfillment rounds (3, 7, 8 clips) including a mid-run interruption resume. Full Apex QA cycle exercised: 3 auto regen loops with continuity-referenced frames, score 61 → 72, final film 15 clips / 2:04 / 32 of 36 panels covered, stitched MP4 stamped. Resume passes now skip job-less pending clips (they're external fulfillment — re-POSTing minted duplicates). Auto mode end state: upload script → pipeline runs on Vercel → ONE local command (node scripts/fulfill-clips.mjs <id> --finish) → finished single-file MP4 |
 | 2026-06-11 | REALISM GATE (diagnostic v3 P0): first frames upgraded to gemini-3-pro-image (Nano Banana Pro — reasoning pass, 14-image reference window, GA-verified via models API; the report's suggested models don't exist) with a full photoreal prompt rewrite per Google's Nano Banana guidance: narrative cinematographer direction, ARRI Alexa 65 + anamorphic + f/2.0 hardware language, material-texture directives (pores/subsurface scattering/fabric weave/metal wear), filmic desaturated grading, explicit anti-illustration negatives. New src/lib/realism-gate.ts scores every frame 1-10 via Haiku vision; orchestrator re-rolls scores <7 ONCE with a correction addendum built from the scored issues, approves the better frame, logs scores in run output. Validated live: old Flash frame 6/mixed → boosted Pro re-roll 8/photorealistic. GEMINI_FRAME_MODEL env override supported |
 | 2026-06-11 | GATED RE-SHOOT + LEARNING LOOP VERIFIED: all 36 Apex frames regenerated through gemini-3-pro-image + realism gate (47 scorings, ceiling moved 6 to 9: 1x3 5x5 22x6 9x7 8x8 2x9, sub-7 auto re-rolled with targeted boosts). New film 11 clips / 1:57 stitched. Clip-level A/B old vs gated: realism 2 to 7, motion 3 to 6, consistency 5 to 8 (fidelity dipped 7 to 4 — beat adherence is the next lever). QA 62 with 6 targets; key finding: Caster wears modern camo because his LOCKED CASTING predates world rules — re-cast under setting profile is the identified fix. Learning loop confirmed: QA auto-wrote 6 lessons (project + global) that inject into all future prompts |
+| 2026-06-12 | REVISION VISION R1–R6 (branch feature/revision-vision, 4 commits): the human feedback loop + Project Workspace. R1 schema (film versioning, revisions table, run_type, element versions, superseded variations) · R2 Director's Notes rail in Screening Room w/ Web Speech dictation + Claude feedback→RevisionPlan resolver · R3 revision runs in the orchestrator (revision_edits step, targeted regen w/ correction addenda, assemble version stamping, QA verify mode, fulfill-clips --revision) · R4+R5 /hub Workspace (all variations/elements/films, recast-after-lock, swap approved images, element versioning, cascade-regen banner) · R6 version compare + revision history. NEEDS: R1 SQL block pasted in Supabase, then merge to main |
 | 2026-06-12 | REFERENCE REFRESH ROUND (PR #30): Caster/Soldier/Abyssal Dragon re-cast under world rules through the full gate chain (all 3 winners 9/10; pose gate caught a 2/10 anachronistic Soldier sheet and auto-regenerated). New v2 Higgsfield elements created from gate-passed refs (versioned bucket paths — anon role can INSERT but not UPDATE storage objects) and stamped onto characters. Full gated re-frame: 36/36 approved, distribution flipped to 7-9 dominated (five sub-7 panels auto-boosted, only two settled at 6). 13 sequence clips fulfilled via CLI with IP-block re-roll ladder (3 retries needed), 100% panel coverage, film 13 clips / 2:18. New plumbing fixed en route: stitch re-encodes to fit the 50MB storage cap + cleans its ~100MB temp dir (8 leaked dirs had filled the disk to 165MB free); QA caps cumulative frame payload at 22MB (Gemini 3 Pro frames are 2-5MB base64 — 20 of them 413'd the Anthropic request). QA TRAJECTORY: 61 → 72 → 62 → 71. Remaining gaps QA flags: dragon wings still drift fleshy in video (Seedance doesn't fully honor the bone-wing element), Ash reads middle-aged in one panel, beat-fidelity drift on 2 panels — two-axis frame gate (beat match + realism) is the next lever |
 
 ---

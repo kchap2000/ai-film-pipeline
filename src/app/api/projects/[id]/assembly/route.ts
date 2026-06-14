@@ -31,16 +31,29 @@ export async function GET(
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { data, error } = await supabase
+  // version/label/parent/changelog are REVISION_VISION R1 columns — select
+  // defensively so the route still works before the migration is applied.
+  let { data, error } = await supabase
     .from("assembled_videos")
-    .select("id, scope, scene_id, video_url, manifest, duration_seconds, clip_count, status, created_at")
+    .select("id, scope, scene_id, video_url, manifest, duration_seconds, clip_count, status, created_at, version, label, parent_assembly_id, revision_id, changelog")
     .eq("project_id", id)
     .order("created_at", { ascending: false });
+
+  if (error) {
+    const fallback = await supabase
+      .from("assembled_videos")
+      .select("id, scope, scene_id, video_url, manifest, duration_seconds, clip_count, status, created_at")
+      .eq("project_id", id)
+      .order("created_at", { ascending: false });
+    data = fallback.data;
+    error = fallback.error;
+  }
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   const latestFull = (data || []).find((v) => v.scope === "full") || null;
-  return NextResponse.json({ assemblies: data || [], latest_full: latestFull });
+  const fullVersions = (data || []).filter((v) => v.scope === "full");
+  return NextResponse.json({ assemblies: data || [], latest_full: latestFull, full_versions: fullVersions });
 }
 
 // POST /api/projects/:id/assembly — assemble approved/completed clips into
@@ -54,6 +67,10 @@ export async function POST(
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = await req.json().catch(() => ({}));
   const force = body.force === true;
+  // REVISION_VISION R1: revisions stamp lineage onto the new assembly
+  const revisionId = typeof body.revision_id === "string" ? body.revision_id : null;
+  const label = typeof body.label === "string" ? body.label : null;
+  const changelog = Array.isArray(body.changelog) ? body.changelog : null;
 
   const [clipsRes, panelsRes, scenesRes] = await Promise.all([
     supabase
@@ -154,7 +171,27 @@ export async function POST(
   const sceneIdByNumber: Record<number, string> = {};
   for (const s of scenesRes.data || []) sceneIdByNumber[s.scene_number] = s.id;
 
-  const inserts = [
+  // Version lineage: the new full assembly is version parent+1 of the
+  // latest existing full assembly (REVISION_VISION R1).
+  const { data: parentFull } = await supabase
+    .from("assembled_videos")
+    .select("id, version")
+    .eq("project_id", id)
+    .eq("scope", "full")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const nextVersion = (Number(parentFull?.version) || 0) + 1 || 1;
+
+  const versionCols = {
+    version: nextVersion,
+    label,
+    parent_assembly_id: parentFull?.id || null,
+    revision_id: revisionId,
+    changelog,
+  };
+
+  const buildInserts = (withVersionCols: boolean) => [
     {
       project_id: id,
       scope: "full",
@@ -163,6 +200,7 @@ export async function POST(
       duration_seconds: totalDuration,
       clip_count: manifest.length,
       status: "ready",
+      ...(withVersionCols ? versionCols : {}),
     },
     ...Object.entries(sceneGroups).map(([sceneNum, entries]) => ({
       project_id: id,
@@ -172,22 +210,43 @@ export async function POST(
       duration_seconds: entries.reduce((acc, m) => acc + (m.duration || 0), 0),
       clip_count: entries.length,
       status: "ready",
+      ...(withVersionCols ? { version: nextVersion } : {}),
     })),
   ];
 
-  const { data: created, error: insertErr } = await supabase
+  let { data: created, error: insertErr } = await supabase
     .from("assembled_videos")
-    .insert(inserts)
+    .insert(buildInserts(true))
     .select("id, scope, scene_id, clip_count, duration_seconds");
+
+  if (insertErr) {
+    // Pre-migration DB (version columns missing) — insert without them
+    const fallback = await supabase
+      .from("assembled_videos")
+      .insert(buildInserts(false))
+      .select("id, scope, scene_id, clip_count, duration_seconds");
+    created = fallback.data;
+    insertErr = fallback.error;
+  }
 
   if (insertErr) {
     return NextResponse.json({ error: insertErr.message }, { status: 500 });
   }
 
   const full = (created || []).find((v) => v.scope === "full");
+
+  // Link the revision to the assembly it produced
+  if (revisionId && full?.id) {
+    await supabase
+      .from("revisions")
+      .update({ result_assembly_id: full.id, updated_at: new Date().toISOString() })
+      .eq("id", revisionId);
+  }
+
   return NextResponse.json({
     success: true,
     assembled_video_id: full?.id || null,
+    version: nextVersion,
     clip_count: manifest.length,
     duration_seconds: totalDuration,
     scene_count: Object.keys(sceneGroups).length,

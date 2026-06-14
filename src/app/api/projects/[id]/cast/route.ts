@@ -217,14 +217,15 @@ export async function PATCH(
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // If approving, set as the character's approved cast and reject others
+    // If approving, set as the character's approved cast and supersede the
+    // rest (kept swappable from the hub — not rejected; REVISION_VISION R1)
     if (status === "approved" && character_id) {
       await supabase
         .from("cast_variations")
-        .update({ status: "rejected" })
+        .update({ status: "superseded" })
         .eq("character_id", character_id)
         .neq("id", variation_id)
-        .eq("status", "pending");
+        .in("status", ["pending", "approved"]);
 
       await supabase
         .from("characters")
@@ -328,13 +329,13 @@ export async function PUT(
       metadata: { storage_path: storagePath, variation_number: variationNumber },
     });
 
-    // Reject any other pending variations for this character
+    // Supersede any other live variations for this character (swappable later)
     await supabase
       .from("cast_variations")
-      .update({ status: "rejected" })
+      .update({ status: "superseded" })
       .eq("character_id", characterId)
       .neq("id", variation.id)
-      .eq("status", "pending");
+      .in("status", ["pending", "approved"]);
 
     // Set this as the character's approved cast
     await supabase

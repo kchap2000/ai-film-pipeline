@@ -10,6 +10,7 @@ import {
   PHASE_ORDER,
 } from "@/lib/types";
 import ProjectNav from "@/components/ProjectNav";
+import ZoomableImage from "@/components/ZoomableImage";
 
 interface ExtractionData {
   structure: {
@@ -537,10 +538,10 @@ export default function FilmBible() {
                               Regenerate
                             </button>
                           </div>
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
+                          <ZoomableImage
                             src={imageCache[`pose-${char.id}`]}
                             alt={`${char.name} character reference sheet`}
+                            caption={`${char.name} — reference sheet`}
                             style={{ width: "100%", display: "block", maxHeight: "480px", objectFit: "contain", background: "#0a0f18" }}
                           />
                         </div>
@@ -826,10 +827,10 @@ export default function FilmBible() {
                       {scene.has_approved_scout_image && (
                         <div className="mb-4">
                           {imageCache[`scout-${scene.id}`] ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
+                            <ZoomableImage
                               src={imageCache[`scout-${scene.id}`]}
                               alt={`Scene ${scene.scene_number} scout reference`}
+                              caption={`Scene ${scene.scene_number} — scout`}
                               className="rounded-md max-h-48 w-auto"
                               style={{ border: "1px solid var(--brand-steel)" }}
                             />

@@ -4,6 +4,7 @@ import {
   generateWithGemini,
   ReferenceImageUnreachableError,
 } from "@/lib/generate-image";
+import { scoreIdentity, identityBoost, IDENTITY_PASS_SCORE } from "@/lib/realism-gate";
 import { recordProvenance } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
 
@@ -140,6 +141,35 @@ export async function POST(
 
     let isPlaceholder = result.url.startsWith("data:image/svg+xml");
 
+    // ── IDENTITY GATE (REALISM_NOTES_v5 — the Rayne fix) ──────────
+    // The pose sheet must be the SAME person as the approved headshot. Flash
+    // used to drift; even on Pro we verify and re-roll once with an identity
+    // correction if the face doesn't match the locked reference.
+    let identityNote: string | null = null;
+    if (!isPlaceholder) {
+      const verdict = await scoreIdentity(result.url, variation.image_url, char.name);
+      if (verdict && verdict.match < IDENTITY_PASS_SCORE) {
+        const boostedPrompt = [POSE_SHEET_PROMPT, identityBoost(char.name, verdict.issues)].join("\n\n");
+        try {
+          const retry = await generatePoseSheet(char.name, description, variation.image_url, boostedPrompt);
+          if (!retry.url.startsWith("data:image/svg+xml")) {
+            const recheck = await scoreIdentity(retry.url, variation.image_url, char.name);
+            // Keep whichever attempt matches the headshot better
+            if (!recheck || recheck.match >= verdict.match) {
+              result = retry;
+              identityNote = `identity re-rolled (${verdict.match}/10 → ${recheck?.match ?? "?"}/10)`;
+            } else {
+              identityNote = `identity ${verdict.match}/10 — re-roll scored worse, kept original`;
+            }
+          }
+        } catch {
+          // keep original on retry failure
+        }
+      } else if (verdict) {
+        identityNote = `identity ${verdict.match}/10`;
+      }
+    }
+
     // If multimodal was blocked (content policy), retry text-only
     if (isPlaceholder) {
       console.log(`Pose sheet for ${char.name}: multimodal blocked, retrying text-only`);
@@ -181,6 +211,7 @@ export async function POST(
       character_id,
       pose_sheet_url: result.url,
       is_placeholder: isPlaceholder,
+      identity: identityNote,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Pose sheet generation failed";

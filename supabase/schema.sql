@@ -956,3 +956,53 @@ create table if not exists pipeline_lessons (
 create unique index if not exists idx_lessons_unique
   on pipeline_lessons(scope, coalesce(project_id, '00000000-0000-0000-0000-000000000000'::uuid), category, md5(lesson));
 create index if not exists idx_lessons_scope on pipeline_lessons(scope, category);
+
+-- ============================================================
+-- Migration: REVISION VISION R1 foundations (2026-06-12)
+-- ============================================================
+-- 1. Film versioning: every full assembly gets a version number, an
+--    optional human label ('Client Cut'), a parent link (the assembly it
+--    revises), the revision that produced it, and a changelog of what
+--    changed ([{panel_id, action, reason}]).
+alter table assembled_videos add column if not exists version integer not null default 1;
+alter table assembled_videos add column if not exists label text;
+alter table assembled_videos add column if not exists parent_assembly_id uuid references assembled_videos(id) on delete set null;
+alter table assembled_videos add column if not exists revision_id uuid;
+alter table assembled_videos add column if not exists changelog jsonb;
+
+-- 2. Revisions — one row per feedback round. Raw human notes (typed,
+--    dictated, or hub actions) + the Claude-resolved RevisionPlan + links
+--    to the run that executed it and the assembly it produced.
+--    status: draft → planned → approved → running → done | failed | cancelled
+create table if not exists revisions (
+  id uuid primary key default uuid_generate_v4(),
+  project_id uuid not null references projects(id) on delete cascade,
+  source_assembly_id uuid references assembled_videos(id) on delete set null,
+  status text not null default 'draft',
+  raw_feedback jsonb not null default '[]',
+  plan jsonb,
+  result_assembly_id uuid references assembled_videos(id) on delete set null,
+  pipeline_run_id uuid references pipeline_runs(id) on delete set null,
+  qa_verify jsonb,
+  created_at timestamp with time zone default now(),
+  updated_at timestamp with time zone default now()
+);
+create index if not exists idx_revisions_project on revisions(project_id);
+
+-- 3. Revision runs share the pipeline_runs step machine
+alter table pipeline_runs add column if not exists run_type text not null default 'full'; -- 'full' | 'revision'
+alter table pipeline_runs add column if not exists revision_id uuid references revisions(id) on delete set null;
+
+-- 4. Element versioning — variants as rows; one active version per
+--    (project, kind, name). The old unique index must drop so multiple
+--    versions of the same element can coexist.
+alter table project_elements add column if not exists version integer not null default 1;
+alter table project_elements add column if not exists parent_element_id uuid references project_elements(id) on delete set null;
+alter table project_elements add column if not exists active boolean not null default true;
+drop index if exists idx_project_elements_unique;
+create unique index if not exists idx_project_elements_active_unique
+  on project_elements(project_id, kind, name) where active;
+
+-- 5. Variation swap support: runner-up variations are 'superseded'
+--    (kept swappable) instead of 'rejected' when a sibling is approved.
+--    No DDL needed (status columns are text) — recorded here for docs.

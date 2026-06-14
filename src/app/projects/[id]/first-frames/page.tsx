@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import BrainTargetButton from "@/components/BrainTargetButton";
 import ProjectNav from "@/components/ProjectNav";
+import ZoomableImage from "@/components/ZoomableImage";
 import DirectorChat from "@/components/DirectorChat";
 import { createClient } from "@/lib/supabase-browser";
 import {
@@ -659,8 +660,12 @@ export default function FirstFramesPage() {
                       style={{ background: "var(--brand-navy)", aspectRatio: cardAspectRatio }}
                     >
                       {frameImg ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={frameImg} alt={`Panel ${panel.panel_number}`} className="w-full h-full object-cover" />
+                        <ZoomableImage
+                          src={frameImg}
+                          alt={`Panel ${panel.panel_number}`}
+                          caption={`Panel ${panel.panel_number}`}
+                          className="w-full h-full object-cover"
+                        />
                       ) : frame ? (
                         <div className="text-[10px] uppercase tracking-widest animate-pulse" style={{ color: "var(--brand-gray)" }}>
                           Loading frame…

@@ -146,7 +146,7 @@ export interface Character {
   created_at: string;
 }
 
-export type CastVariationStatus = "pending" | "approved" | "rejected";
+export type CastVariationStatus = "pending" | "approved" | "rejected" | "superseded";
 
 export interface CastVariation {
   id: string;
@@ -278,6 +278,7 @@ export interface GenerationJob {
 export type ProjectMode = "auto" | "manual";
 
 export type PipelineStep =
+  | "revision_edits"
   | "extract"
   | "cast_generate"
   | "cast_select"
@@ -313,6 +314,7 @@ export const PIPELINE_STEP_ORDER: PipelineStep[] = [
 ];
 
 export const PIPELINE_STEP_LABELS: Record<PipelineStep, string> = {
+  revision_edits: "Revision — Apply Edits",
   extract: "Script Extraction",
   cast_generate: "Casting — Generate Variations",
   cast_select: "Casting — Auto-Select & Lock",
@@ -340,6 +342,9 @@ export interface PipelineRun {
   phase_timings: Record<string, number>;
   error_log: Array<{ step: string; error: string; at: string }>;
   qa_loops_completed: number;
+  /** 'full' = normal pipeline; 'revision' = targeted feedback run (REVISION_VISION) */
+  run_type: "full" | "revision";
+  revision_id: string | null;
   started_at: string;
   completed_at: string | null;
 }
@@ -373,6 +378,12 @@ export interface AssembledVideo {
   duration_seconds: number | null;
   clip_count: number;
   status: "pending" | "ready" | "failed";
+  /** REVISION_VISION R1 — film versioning */
+  version: number;
+  label: string | null;
+  parent_assembly_id: string | null;
+  revision_id: string | null;
+  changelog: Array<{ panel_id?: string; action: string; reason: string }> | null;
   created_at: string;
 }
 

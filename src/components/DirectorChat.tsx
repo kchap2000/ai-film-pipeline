@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useDictation } from "@/lib/use-dictation";
 import type { ProposedChange } from "@/lib/types";
 
 /**
@@ -72,6 +73,9 @@ export default function DirectorChat({
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const dictation = useDictation((text, isFinal) => {
+    if (isFinal) setInput((prev) => `${prev}${prev && !prev.endsWith(" ") ? " " : ""}${text.trim()}`);
+  });
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
@@ -292,11 +296,24 @@ export default function DirectorChat({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && send()}
-              placeholder="Type your direction…"
+              placeholder={dictation.listening ? "Listening… speak your direction" : "Type your direction…"}
               disabled={sending}
               className="flex-1 text-xs px-3 py-2 rounded-md outline-none"
-              style={{ background: "var(--brand-navy)", color: "var(--brand-white)", border: "1px solid var(--brand-steel)" }}
+              style={{ background: "var(--brand-navy)", color: "var(--brand-white)", border: dictation.listening ? "1px solid rgba(239,68,68,0.6)" : "1px solid var(--brand-steel)" }}
             />
+            {dictation.supported && (
+              <button
+                onClick={dictation.toggle}
+                title={dictation.listening ? "Stop dictation" : "Dictate"}
+                className={`text-sm px-2.5 py-2 rounded-md ${dictation.listening ? "animate-pulse" : ""}`}
+                style={{
+                  color: dictation.listening ? "#f87171" : "var(--brand-gray)",
+                  border: dictation.listening ? "1px solid rgba(239,68,68,0.5)" : "1px solid var(--brand-steel)",
+                }}
+              >
+                {dictation.listening ? "■" : "🎙"}
+              </button>
+            )}
             <button
               onClick={() => send()}
               disabled={sending || !input.trim()}

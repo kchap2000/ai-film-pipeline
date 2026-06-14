@@ -1,6 +1,7 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { selectBest, castingBrief, locationBrief, sceneScoutBrief } from "@/lib/auto-select";
-import { scoreRealism, realismBoost, beatBoost, REALISM_PASS_SCORE, BEAT_PASS_SCORE } from "@/lib/realism-gate";
+import { scoreRealism, scoreIdentity, realismBoost, beatBoost, identityBoost, REALISM_PASS_SCORE, BEAT_PASS_SCORE, IDENTITY_PASS_SCORE } from "@/lib/realism-gate";
+import { recordWin } from "@/lib/lessons";
 import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
@@ -110,9 +111,10 @@ export async function POST(
 
   // Execute one unit of work
   const t0 = Date.now();
+  const runType = (run.run_type as string) || "full";
   let result: StepResult;
   try {
-    result = await executeStep(supabase, id, origin, run.current_step, run.progress || {}, run.qa_loops_completed || 0);
+    result = await executeStep(supabase, id, origin, run.current_step, run.progress || {}, run.qa_loops_completed || 0, runType, run.revision_id || null);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     const errorLog = [...(run.error_log || []), { step: run.current_step, error: msg, at: new Date().toISOString() }];
@@ -181,6 +183,14 @@ export async function POST(
     .select("*")
     .single();
 
+  // Revision runs mirror their lifecycle onto the revisions row
+  if (runType === "revision" && run.revision_id && update.status === "failed") {
+    await supabase
+      .from("revisions")
+      .update({ status: "failed", updated_at: new Date().toISOString() })
+      .eq("id", run.revision_id);
+  }
+
   return NextResponse.json({ run: updated, work: result.work });
 }
 
@@ -193,15 +203,163 @@ async function executeStep(
   origin: string,
   step: string,
   progress: Record<string, unknown>,
-  qaLoops: number
+  qaLoops: number,
+  runType: string = "full",
+  revisionId: string | null = null
 ): Promise<StepResult> {
   const api = (path: string, init?: RequestInit) =>
     fetch(`${origin}/api${path}`, {
       ...init,
       headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
     });
+  const isRevision = runType === "revision";
 
   switch (step) {
+    // ── REVISION runs: apply plan edits first (REVISION_VISION R3) ──
+    // One plan target per call: swaps, metadata edits, element fixes and
+    // recast prep happen here; pure regen targets (reframe/reclip) are
+    // already seeded as regen cursors and run through the normal
+    // first_frames / video_clips steps below.
+    case "revision_edits": {
+      const revId = (progress.revision_id as string) || revisionId;
+      if (!revId) return { work: "", nextStep: step, progress, failed: "Revision run has no revision_id" };
+      const { data: revision } = await supabase.from("revisions").select("plan").eq("id", revId).single();
+      const targets = ((revision?.plan as { targets?: Array<Record<string, unknown>> } | null)?.targets || []);
+      const editActions = ["recast", "swap_location_image", "swap_scene_image", "element_fix", "edit_panel", "edit_scene", "edit_character"];
+      const idx = Number(progress.revision_edit_index) || 0;
+
+      // Find the next edit-type target at or after the cursor
+      let editIdx = -1;
+      for (let i = idx; i < targets.length; i++) {
+        if (editActions.includes(targets[i].action as string)) { editIdx = i; break; }
+      }
+      if (editIdx === -1) {
+        const recastIds = (progress.revision_recast_ids as string[]) || [];
+        const next = { ...progress, revision_edit_index: targets.length };
+        return {
+          work: "Revision edits applied",
+          nextStep: recastIds.length > 0 ? "cast_generate" : "first_frames",
+          progress: recastIds.length > 0 ? { ...next, character_index: 0, variation: 1 } : next,
+        };
+      }
+
+      const t = targets[editIdx] as {
+        action: string; character_id?: string; location_id?: string; scene_id?: string;
+        element_id?: string; variation_id?: string; correction?: string; panel_ids?: string[];
+        updates?: Record<string, string>;
+      };
+      const advance = { ...progress, revision_edit_index: editIdx + 1 };
+
+      switch (t.action) {
+        case "recast": {
+          if (!t.character_id) return { work: "recast target missing character_id — skipped", nextStep: step, progress: advance };
+          // Free the character for a fresh casting pass: old variations go
+          // 'rejected' so the cast POST's skip-existing regenerates new ones.
+          await supabase
+            .from("cast_variations")
+            .update({ status: "rejected" })
+            .eq("character_id", t.character_id)
+            .in("status", ["pending", "approved", "superseded"]);
+          await supabase
+            .from("characters")
+            .update({ locked: false, approved_cast_id: null, pose_sheet_url: null })
+            .eq("id", t.character_id)
+            .eq("project_id", projectId);
+          const { data: ch } = await supabase.from("characters").select("name, version").eq("id", t.character_id).single();
+          await supabase.from("characters").update({ version: (Number(ch?.version) || 1) + 1 }).eq("id", t.character_id);
+          const recastIds = (progress.revision_recast_ids as string[]) || [];
+          return {
+            work: `Recast prep: ${ch?.name || t.character_id} unlocked — will re-cast under current world rules (${t.correction || "director note"})`,
+            nextStep: step,
+            progress: { ...advance, revision_recast_ids: Array.from(new Set([...recastIds, t.character_id])) },
+          };
+        }
+        case "swap_location_image": {
+          const { data: variation } = await supabase
+            .from("location_variations")
+            .select("image_url")
+            .eq("id", t.variation_id as string)
+            .single();
+          if (!variation) return { work: `swap_location_image: variation not found — skipped`, nextStep: step, progress: advance };
+          await supabase.from("location_variations").update({ status: "approved" }).eq("id", t.variation_id as string);
+          await supabase
+            .from("location_variations")
+            .update({ status: "superseded" })
+            .eq("location_id", t.location_id as string)
+            .neq("id", t.variation_id as string)
+            .in("status", ["pending", "approved"]);
+          await supabase.from("locations").update({ approved_image_url: variation.image_url }).eq("id", t.location_id as string);
+          const { data: loc } = await supabase.from("locations").select("name, version").eq("id", t.location_id as string).single();
+          await supabase.from("locations").update({ version: (Number(loc?.version) || 1) + 1 }).eq("id", t.location_id as string);
+          return { work: `Swapped approved image for location ${loc?.name || t.location_id}`, nextStep: step, progress: advance };
+        }
+        case "swap_scene_image": {
+          const { data: variation } = await supabase
+            .from("scene_variations")
+            .select("image_url")
+            .eq("id", t.variation_id as string)
+            .single();
+          if (!variation) return { work: `swap_scene_image: variation not found — skipped`, nextStep: step, progress: advance };
+          await supabase.from("scene_variations").update({ status: "approved" }).eq("id", t.variation_id as string);
+          await supabase
+            .from("scene_variations")
+            .update({ status: "superseded" })
+            .eq("scene_id", t.scene_id as string)
+            .neq("id", t.variation_id as string)
+            .in("status", ["pending", "approved"]);
+          await supabase.from("scenes").update({ approved_scout_image_url: variation.image_url }).eq("id", t.scene_id as string);
+          const { data: sc } = await supabase.from("scenes").select("scene_number, version").eq("id", t.scene_id as string).single();
+          await supabase.from("scenes").update({ version: (Number(sc?.version) || 1) + 1 }).eq("id", t.scene_id as string);
+          return { work: `Swapped approved scout image for scene ${sc?.scene_number ?? "?"}`, nextStep: step, progress: advance };
+        }
+        case "element_fix": {
+          const res = await api(`/projects/${projectId}/elements`, {
+            method: "POST",
+            body: JSON.stringify({ action: "generate_image", element_id: t.element_id, realism_boost: t.correction || undefined }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            return { work: `Element fix failed (${data.error || res.status}) — continuing with old reference`, nextStep: step, progress: advance };
+          }
+          const { data: el } = await supabase.from("project_elements").select("name").eq("id", t.element_id as string).single();
+          return {
+            work: `Element ${el?.name || t.element_id}: reference plate regenerated with correction (Higgsfield element refresh happens at fulfillment)`,
+            nextStep: step,
+            progress: advance,
+          };
+        }
+        case "edit_panel": {
+          const allowed = ["action_description", "shot_type", "camera_angle", "camera_movement", "dialogue"];
+          const update: Record<string, string> = {};
+          for (const k of allowed) if (t.updates?.[k] !== undefined) update[k] = t.updates[k];
+          if (Object.keys(update).length > 0 && t.panel_ids?.length) {
+            await supabase.from("storyboard_panels").update(update).in("id", t.panel_ids).eq("project_id", projectId);
+          }
+          return { work: `Updated ${t.panel_ids?.length || 0} panel(s): ${Object.keys(update).join(", ") || "no-op"}`, nextStep: step, progress: advance };
+        }
+        case "edit_scene": {
+          const allowed = ["action_summary", "mood", "time_of_day", "location"];
+          const update: Record<string, string> = {};
+          for (const k of allowed) if (t.updates?.[k] !== undefined) update[k] = t.updates[k];
+          if (Object.keys(update).length > 0 && t.scene_id) {
+            await supabase.from("scenes").update(update).eq("id", t.scene_id).eq("project_id", projectId);
+          }
+          return { work: `Updated scene: ${Object.keys(update).join(", ") || "no-op"}`, nextStep: step, progress: advance };
+        }
+        case "edit_character": {
+          const allowed = ["description", "personality"];
+          const update: Record<string, string> = {};
+          for (const k of allowed) if (t.updates?.[k] !== undefined) update[k] = t.updates[k];
+          if (Object.keys(update).length > 0 && t.character_id) {
+            await supabase.from("characters").update(update).eq("id", t.character_id).eq("project_id", projectId);
+          }
+          return { work: `Updated character: ${Object.keys(update).join(", ") || "no-op"}`, nextStep: step, progress: advance };
+        }
+        default:
+          return { work: `Unknown edit action ${t.action} — skipped`, nextStep: step, progress: advance };
+      }
+    }
+
     // ── Phase 2: extraction ──────────────────────────────
     case "extract": {
       const res = await api(`/extract`, { method: "POST", body: JSON.stringify({ project_id: projectId }) });
@@ -218,8 +376,10 @@ async function executeStep(
         .eq("project_id", projectId)
         .eq("voice_only", false)
         .order("name");
-      const castable = chars || [];
-      if (castable.length === 0) return { work: "No castable characters", nextStep: "locations_generate", progress: {} };
+      // Revision recasts only touch the characters the plan named
+      const recastIds = (progress.revision_recast_ids as string[]) || null;
+      const castable = (chars || []).filter((c) => !recastIds || recastIds.includes(c.id));
+      if (castable.length === 0) return { work: "No castable characters", nextStep: isRevision ? "first_frames" : "locations_generate", progress };
 
       const ci = Number(progress.character_index) || 0;
       const vi = Number(progress.variation) || 1;
@@ -256,12 +416,15 @@ async function executeStep(
         .eq("voice_only", false)
         .order("name");
       const castSkip = (progress.cast_skip as string[]) || [];
-      const castable = (chars || []).filter((c) => !c.approved_cast_id && !castSkip.includes(c.id));
+      const recastOnly = (progress.revision_recast_ids as string[]) || null;
+      const castable = (chars || []).filter(
+        (c) => !c.approved_cast_id && !castSkip.includes(c.id) && (!recastOnly || recastOnly.includes(c.id))
+      );
       if (castable.length === 0) {
         // All selected — lock everyone and move on
         await api(`/projects/${projectId}/lock`, { method: "PATCH", body: JSON.stringify({ lock_all: true }) });
         const skippedNote = castSkip.length > 0 ? ` (${castSkip.length} skipped — no castable images)` : "";
-        return { work: `All characters locked${skippedNote}`, nextStep: "pose_sheets", progress: {} };
+        return { work: `All characters locked${skippedNote}`, nextStep: "pose_sheets", progress: isRevision ? progress : {} };
       }
       const char = castable[0];
       const { data: variations } = await supabase
@@ -281,7 +444,10 @@ async function executeStep(
             .eq("project_id", projectId)
             .eq("voice_only", false)
             .order("name");
-          const idx = (allCastable || []).findIndex((c) => c.id === char.id);
+          // Index into the SAME list cast_generate iterates (revision
+          // recasts filter to the plan's characters)
+          const generateList = (allCastable || []).filter((c) => !recastOnly || recastOnly.includes(c.id));
+          const idx = generateList.findIndex((c) => c.id === char.id);
           return {
             work: `${char.name}: no variations — backfilling casting for this character`,
             nextStep: "cast_generate",
@@ -325,7 +491,10 @@ async function executeStep(
             .eq("project_id", projectId)
             .eq("voice_only", false)
             .order("name");
-          const idx = (allCastable || []).findIndex((c) => c.id === char.id);
+          // Index into the SAME list cast_generate iterates (revision
+          // recasts filter to the plan's characters)
+          const generateList = (allCastable || []).filter((c) => !recastOnly || recastOnly.includes(c.id));
+          const idx = generateList.findIndex((c) => c.id === char.id);
           return {
             work: `${char.name}: REFERENCE GATE failed (realism ${verdict.score}/10${anachronism ? ", anachronism detected" : ""}: ${verdict.issues[0] || ""}) — re-casting under world rules`,
             nextStep: "cast_generate",
@@ -362,7 +531,7 @@ async function executeStep(
         .eq("voice_only", false)
         .not("approved_cast_id", "is", null);
       const needsSheet = (chars || []).filter((c) => !c.pose_sheet_url);
-      if (needsSheet.length === 0) return { work: "Pose sheets complete", nextStep: "locations_generate", progress: {} };
+      if (needsSheet.length === 0) return { work: "Pose sheets complete", nextStep: isRevision ? "first_frames" : "locations_generate", progress: isRevision ? progress : {} };
       const char = needsSheet[0];
       const res = await api(`/projects/${projectId}/posesheet`, {
         method: "POST",
@@ -375,7 +544,7 @@ async function executeStep(
         await supabase.from("characters").update({ pose_sheet_url: null }).eq("id", char.id);
         return {
           work: `${char.name}: pose sheet failed (${data.error || res.status}) — continuing`,
-          nextStep: needsSheet.length <= 1 ? "locations_generate" : "pose_sheets",
+          nextStep: needsSheet.length <= 1 ? (isRevision ? "first_frames" : "locations_generate") : "pose_sheets",
           progress: { ...progress, [`skip_${char.id}`]: true },
         };
       }
@@ -653,13 +822,20 @@ async function executeStep(
       const panel = targets[0];
       // Two-axis gate retry: if the panel's prior frame failed realism or
       // beat fidelity, this pass regenerates with the targeted addendum.
-      const realismRetries = (progress.realism_retries as Record<string, { frame_id: string; score: number; beat_score?: number; issues: string[]; boost?: string }>) || {};
+      const realismRetries = (progress.realism_retries as Record<string, { frame_id: string; score: number; beat_score?: number; identity_score?: number; issues: string[]; boost?: string }>) || {};
       const priorAttempt = realismRetries[panel.id];
+      // Revision runs inject the director's correction into the frame prompt
+      // (REVISION_VISION R3) — combined with any gate re-roll boost.
+      const frameCorrections = (progress.revision_corrections as Record<string, string>) || {};
+      const noteParts = [
+        frameCorrections[panel.id] ? `DIRECTOR'S REVISION NOTE (must be honored): ${frameCorrections[panel.id]}` : "",
+        priorAttempt ? priorAttempt.boost || realismBoost(priorAttempt.issues) : "",
+      ].filter(Boolean);
       const res = await api(`/projects/${projectId}/first-frames`, {
         method: "POST",
         body: JSON.stringify(
-          priorAttempt
-            ? { panel_id: panel.id, feedback_note: priorAttempt.boost || realismBoost(priorAttempt.issues) }
+          noteParts.length > 0
+            ? { panel_id: panel.id, feedback_note: noteParts.join("\n\n") }
             : { panel_id: panel.id }
         ),
       });
@@ -699,46 +875,86 @@ async function executeStep(
           .select("setting_profile")
           .eq("id", projectId)
           .single();
+        const inShot = ((panel as { characters_in_shot?: string[] }).characters_in_shot || []);
         const panelBeat = {
           shotType: (panel as { shot_type?: string }).shot_type,
           action: (panel as { action_description?: string }).action_description,
-          characters: (panel as { characters_in_shot?: string[] }).characters_in_shot || [],
+          characters: inShot,
         };
+        // THREE-AXIS GATE (REALISM_NOTES_v5): realism + beat fidelity +
+        // IDENTITY. An inconsistent face throws off the video generator, so
+        // the primary in-shot character's frame is compared to their locked
+        // headshot. Only the lead identity is checked (cheapest, matters most).
+        let primaryHeadshotUrl: string | null = null;
+        let primaryCharName = "";
+        if (inShot.length > 0) {
+          const { data: ch } = await supabase
+            .from("characters")
+            .select("name, approved_cast_id, voice_only")
+            .eq("project_id", projectId)
+            .eq("name", inShot[0])
+            .maybeSingle();
+          if (ch?.approved_cast_id && !ch.voice_only) {
+            const { data: cv } = await supabase
+              .from("cast_variations")
+              .select("image_url")
+              .eq("id", ch.approved_cast_id)
+              .maybeSingle();
+            primaryHeadshotUrl = cv?.image_url || null;
+            primaryCharName = ch.name;
+          }
+        }
         const verdict = await scoreRealism(frame.image_url, proj?.setting_profile || null, panelBeat);
+        const identityVerdict = primaryHeadshotUrl
+          ? await scoreIdentity(frame.image_url, primaryHeadshotUrl, primaryCharName)
+          : null;
         if (verdict) {
-          // Two-axis gate: a frame must be photoreal AND depict the
-          // scripted beat. Clip A/B showed fidelity falling (7→4) while
-          // realism climbed — pretty frames drifting off-script.
+          // Three-axis gate: a frame must be photoreal AND depict the
+          // scripted beat AND keep the locked character identity.
           const realismFail = verdict.score < REALISM_PASS_SCORE;
           const beatFail = typeof verdict.beatScore === "number" && verdict.beatScore < BEAT_PASS_SCORE;
-          if ((realismFail || beatFail) && !priorAttempt) {
+          const identityFail = identityVerdict ? identityVerdict.match < IDENTITY_PASS_SCORE : false;
+          if ((realismFail || beatFail || identityFail) && !priorAttempt) {
             const boost = [
               realismFail ? realismBoost(verdict.issues) : "",
               beatFail ? beatBoost(panelBeat, verdict.beatIssues || []) : "",
+              identityFail ? identityBoost(primaryCharName, identityVerdict!.issues) : "",
             ].filter(Boolean).join("\n\n");
             const axes = [
               realismFail ? `realism ${verdict.score}/10 (${verdict.style})` : "",
               beatFail ? `beat ${verdict.beatScore}/10` : "",
+              identityFail ? `identity ${identityVerdict!.match}/10` : "",
             ].filter(Boolean).join(", ");
             return {
               work: `Panel ${panel.panel_number}: gate failed — ${axes} — re-rolling with targeted boost`,
               nextStep: "first_frames",
               progress: {
                 ...progress,
-                realism_retries: { ...realismRetries, [panel.id]: { frame_id: frame.id, score: verdict.score, beat_score: verdict.beatScore, issues: verdict.issues, boost } },
+                realism_retries: { ...realismRetries, [panel.id]: { frame_id: frame.id, score: verdict.score, beat_score: verdict.beatScore, identity_score: identityVerdict?.match, issues: verdict.issues, boost } },
               },
             };
           }
-          // Better-of comparison across BOTH axes (sum; missing beat
-          // score falls back to the realism score so old entries compare)
-          const composite = verdict.score + (verdict.beatScore ?? verdict.score);
-          const priorComposite = priorAttempt ? priorAttempt.score + (priorAttempt.beat_score ?? priorAttempt.score) : -1;
+          // Better-of comparison across ALL THREE axes (sum; missing scores
+          // fall back to realism so old entries still compare)
+          const composite = verdict.score + (verdict.beatScore ?? verdict.score) + (identityVerdict?.match ?? verdict.score);
+          const priorComposite = priorAttempt ? priorAttempt.score + (priorAttempt.beat_score ?? priorAttempt.score) + (priorAttempt.identity_score ?? priorAttempt.score) : -1;
           if (priorAttempt && composite < priorComposite) {
             // Boosted retry came back worse — approve the original attempt
             approveFrameId = priorAttempt.frame_id;
-            realismNote = ` (realism ${priorAttempt.score}/10, beat ${priorAttempt.beat_score ?? "—"}/10; boost re-roll scored worse — kept original)`;
+            realismNote = ` (realism ${priorAttempt.score}/10, beat ${priorAttempt.beat_score ?? "—"}/10, identity ${priorAttempt.identity_score ?? "—"}/10; boost re-roll scored worse — kept original)`;
           } else {
-            realismNote = ` (realism ${verdict.score}/10, beat ${verdict.beatScore ?? "—"}/10${priorAttempt ? ` after boost, was ${priorAttempt.score}/${priorAttempt.beat_score ?? "—"}` : ""})`;
+            realismNote = ` (realism ${verdict.score}/10, beat ${verdict.beatScore ?? "—"}/10, identity ${identityVerdict?.match ?? "—"}/10${priorAttempt ? ` after boost` : ""})`;
+            // LEARNING LOOP: bank a top-tier frame's approach as a win so it
+            // reinforces future prompts (REALISM_NOTES_v5 #6).
+            if (verdict.score >= 9 && (identityVerdict?.match ?? 9) >= 9) {
+              await recordWin(supabase, {
+                scope: "project",
+                projectId,
+                category: "first_frame_realism",
+                pattern: `${panelBeat.shotType || "shot"} of ${primaryCharName || "subject"} held photoreal + on-identity with the locked headshot ref + photoreal still directive`,
+                score: verdict.score,
+              });
+            }
           }
         }
       }
@@ -848,11 +1064,36 @@ async function executeStep(
         return { work: `Video clips complete${notes ? ` (${notes})` : ""}`, nextStep: "assemble", progress: next };
       }
       const panel = targets[0];
+      // Revision corrections: the correction may be keyed by a covered
+      // sibling panel — collect every correction that maps to this head.
+      const clipCorrections = (progress.revision_corrections as Record<string, string>) || {};
+      const clipMotion = (progress.revision_motion as Record<string, string>) || {};
+      const headOf: Record<string, string> = {};
+      for (const c of clips) {
+        for (const cid of (c.covered_panel_ids as string[] | null) || []) headOf[cid] = c.panel_id;
+      }
+      const noteForPanel = Array.from(
+        new Set(
+          Object.entries(clipCorrections)
+            .filter(([pid]) => pid === panel.id || headOf[pid] === panel.id)
+            .map(([, note]) => note)
+        )
+      ).join("\n");
+      const motionForPanel = clipMotion[panel.id] || undefined;
       const res = await api(`/projects/${projectId}/video-clips`, {
         method: "POST",
         // Regens replace the existing covering clip (the route re-rolls the
         // whole sequence the panel belonged to, keeping coverage intact).
-        body: JSON.stringify(effectiveRegen ? { panel_id: panel.id, replace: true } : { panel_id: panel.id }),
+        body: JSON.stringify(
+          effectiveRegen
+            ? {
+                panel_id: panel.id,
+                replace: true,
+                ...(motionForPanel ? { motion_prompt: motionForPanel } : {}),
+                ...(noteForPanel ? { revision_note: noteForPanel } : {}),
+              }
+            : { panel_id: panel.id }
+        ),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) return { work: "", nextStep: step, progress, failed: data.error || `Clip failed for panel ${panel.panel_number}` };
@@ -883,7 +1124,20 @@ async function executeStep(
     case "assemble": {
       // force: auto mode assembles whatever exists (clips may still be
       // pending external fulfillment); the coverage warning rides along.
-      const res = await api(`/projects/${projectId}/assembly`, { method: "POST", body: JSON.stringify({ force: true }) });
+      // Revision runs stamp lineage: revision_id + changelog from the plan.
+      const assembleBody: Record<string, unknown> = { force: true };
+      const revId = (progress.revision_id as string) || revisionId;
+      if (isRevision && revId) {
+        assembleBody.revision_id = revId;
+        const { data: revision } = await supabase.from("revisions").select("plan").eq("id", revId).single();
+        const planTargets = ((revision?.plan as { targets?: Array<{ action: string; correction?: string; panel_ids?: string[] }> } | null)?.targets || []);
+        assembleBody.changelog = planTargets.map((t) => ({
+          action: t.action,
+          reason: t.correction || "",
+          panel_id: t.panel_ids?.[0],
+        }));
+      }
+      const res = await api(`/projects/${projectId}/assembly`, { method: "POST", body: JSON.stringify(assembleBody) });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         // No clips with video (all pending external) — complete the run
@@ -893,7 +1147,8 @@ async function executeStep(
         }
         return { work: "", nextStep: step, progress, failed: data.error || "Assembly failed" };
       }
-      return { work: `Assembled ${data.clip_count} clips (~${Math.round(data.duration_seconds || 0)}s)`, nextStep: "qa", progress };
+      const versionNote = data.version ? ` as v${data.version}` : "";
+      return { work: `Assembled ${data.clip_count} clips (~${Math.round(data.duration_seconds || 0)}s)${versionNote}`, nextStep: "qa", progress };
     }
 
     // ── Phase 12: QA + auto-regen loop ─────────────────────
@@ -904,6 +1159,27 @@ async function executeStep(
       const report = data.report || {};
       const score = Number(report.overall_score) || 0;
       const regenTargets: Array<{ panel_id: string }> = report.regen_targets || [];
+
+      // Revision runs run QA in VERIFY mode — score the fix, write it back
+      // to the revision, and stop. The human is the loop now (REVISION_VISION).
+      if (isRevision) {
+        const revId = (progress.revision_id as string) || revisionId;
+        if (revId) {
+          const flagNotes = (report.beat_accuracy || [])
+            .map((b: { scene_number: number; score: number; notes: string }) => `Scene ${b.scene_number}: ${b.score}/100 — ${b.notes}`)
+            .join(" | ")
+            .slice(0, 800);
+          await supabase
+            .from("revisions")
+            .update({
+              status: "done",
+              qa_verify: { score, notes: flagNotes || "QA verified" },
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", revId);
+        }
+        return { work: `Revision verified — QA score ${score}/100. New version is in the Screening Room.`, nextStep: "done", progress };
+      }
 
       if (score < QA_PASS_SCORE && regenTargets.length > 0 && qaLoops < MAX_QA_LOOPS) {
         const panelIds = regenTargets.map((t) => t.panel_id).filter(Boolean);

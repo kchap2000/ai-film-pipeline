@@ -52,6 +52,28 @@ export async function recordLesson(
   });
 }
 
+/**
+ * Record a WIN — a prompt pattern / approach that scored at the top of the
+ * gate (REALISM_NOTES_v5 #6: "learn which prompts are working"). Wins are
+ * stored as lessons with a "WORKS:" prefix so they inject into future
+ * prompts as positive reinforcement alongside the corrective lessons.
+ * Deduped + reinforced via times_confirmed like any lesson, so the
+ * approaches that repeatedly hit 9-10 rank to the top.
+ */
+export async function recordWin(
+  supabase: SupabaseClient,
+  opts: { scope: "global" | "project"; projectId?: string | null; category: string; pattern: string; score: number; evidence?: string }
+): Promise<void> {
+  if (opts.score < 9) return; // only bank top-tier results
+  await recordLesson(supabase, {
+    scope: opts.scope,
+    projectId: opts.projectId,
+    category: opts.category,
+    lesson: `WORKS (scored ${opts.score}/10): ${opts.pattern}`,
+    evidence: opts.evidence,
+  });
+}
+
 /** Top lessons for prompt injection: project-scoped first, then global. */
 export async function fetchLessons(
   supabase: SupabaseClient,
