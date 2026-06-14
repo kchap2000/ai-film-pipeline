@@ -1,5 +1,19 @@
 export type ProjectType = "client" | "personal";
 
+/**
+ * Director's Chat v2 — a proposed change the agent surfaces for approval
+ * before touching the DB (rendered as a BEFORE→AFTER diff card).
+ */
+export interface ProposedChange {
+  entity_type: "character" | "location" | "scene" | "panel" | "production_notes";
+  entity_id: string;
+  entity_name: string;
+  field: string;
+  before?: string;
+  after: string;
+  reasoning: string;
+}
+
 export const PROJECT_ASPECT_RATIO_OPTIONS = [
   {
     value: "9:16",

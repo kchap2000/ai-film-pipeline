@@ -19,8 +19,27 @@ export const maxDuration = 300;
 
 const AGENT_MODEL = "claude-sonnet-4-6";
 const MAX_TOOL_TURNS = 8;
+const MAX_HISTORY = 20;
 
 const TOOLS: Anthropic.Tool[] = [
+  {
+    name: "propose_changes",
+    description:
+      "Present a proposed change to the director for approval. Do NOT execute — this only SHOWS what would change as a BEFORE→AFTER diff. Use this for any creative rewrite (descriptions, moods, visual direction) before touching the database. The director will then approve ('do it'/'yeah'/'apply'), refine, or reject. After they approve, call the matching update_* / regenerate_* tool.",
+    input_schema: {
+      type: "object",
+      properties: {
+        entity_type: { type: "string", enum: ["character", "location", "scene", "panel", "production_notes"] },
+        entity_id: { type: "string", description: "The id of the entity (the project id for production_notes)" },
+        entity_name: { type: "string", description: "Human-readable name for display (e.g. 'Soldier', 'Scene 3')" },
+        field: { type: "string", description: "Which field changes (e.g. 'description', 'mood', 'camera_movement')" },
+        before: { type: "string", description: "Current value, verbatim from the project context" },
+        after: { type: "string", description: "Proposed new value" },
+        reasoning: { type: "string", description: "Why this addresses the director's note" },
+      },
+      required: ["entity_type", "entity_id", "entity_name", "field", "after", "reasoning"],
+    },
+  },
   {
     name: "update_character",
     description: "Update a character's physical description and/or personality. Bumps version so downstream assets (headshots, pose sheets, panels) are flagged stale.",
@@ -146,15 +165,27 @@ interface ActionTaken {
   result: unknown;
 }
 
+interface ProposedChange {
+  entity_type: string;
+  entity_id: string;
+  entity_name: string;
+  field: string;
+  before?: string;
+  after: string;
+  reasoning: string;
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   const { id } = params;
   const body = await req.json().catch(() => ({}));
-  const message = body.message as string;
+  // v2: accept a conversation history array; fall back to single message.
+  const history = (Array.isArray(body.messages) ? body.messages : []) as Array<{ role: string; content: string }>;
+  const message = (body.message as string) || (history.length > 0 ? history[history.length - 1].content : "");
   const context = (body.context || {}) as { current_page?: string; selected_item_id?: string };
-  if (!message) return NextResponse.json({ error: "message required" }, { status: 400 });
+  if (!message && history.length === 0) return NextResponse.json({ error: "message required" }, { status: 400 });
 
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -175,35 +206,73 @@ export async function POST(
   if (!projectRes.data) return NextResponse.json({ error: "Project not found" }, { status: 404 });
   const project = projectRes.data;
 
-  const systemPrompt = `You are the Director's Agent for an AI film production pipeline — a co-director, not a chatbot. You have full project context below and tools that map to the pipeline's API. When the director gives you direction:
-1. Identify WHAT asset they mean (character / location / scene / panel / project-wide style).
-2. Update the underlying record first (descriptions are the source of truth for all regeneration).
-3. Then regenerate if they want to see the result now.
-4. Tell them which downstream assets are now stale (changing a character → headshots, pose sheets, panels, first frames, clips that used them).
-Be decisive and concise. Execute, don't ask for permission on obvious actions. If direction is ambiguous between two assets, pick the one matching the current page / selected item.
+  const characterBlock = (charsRes.data || []).map((c) => `- ${c.name} [${c.id}] role=${c.role}${c.voice_only ? " VOICE-ONLY" : ""}${c.locked ? " LOCKED" : ""}${c.approved_cast_id ? " cast-approved" : ""}: ${c.description || "(no description)"} | personality: ${c.personality || "-"}`).join("\n");
+  const locationBlock = (locsRes.data || []).map((l) => `- ${l.name} [${l.id}]${l.approved_image_url ? " approved" : ""}: ${l.description || "-"} (${l.time_of_day || "?"}, mood: ${l.mood || "?"})`).join("\n");
+  const sceneBlock = (scenesRes.data || []).map((s) => `- Scene ${s.scene_number} [${s.id}] @ ${s.location} (${s.time_of_day}, mood: ${s.mood})${s.approved_scout_image_url ? " scouted" : ""}: ${s.action_summary} | cast: ${(s.characters_present || []).join(", ")}`).join("\n");
+  const panelBlock = (panelsRes.data || []).map((p) => `- Panel ${p.panel_number} [${p.id}] scene_id=${p.scene_id}: ${p.shot_type}/${p.camera_angle}/${p.camera_movement} — ${p.action_description}`).join("\n");
 
+  const systemPrompt = `You are the Director's Agent for "${project.title}" — a creative collaborator on an AI film pipeline, not a customer-service bot. You have full project context and tools that update the production database.
+
+## How to respond to direction
+1. **Acknowledge what you heard** — restate the note in your own words so the director knows you understood.
+2. **Show the current state** — quote the relevant description/setting as it exists now (verbatim from context below).
+3. **Propose specific changes** — call the propose_changes tool with a clear BEFORE → AFTER. Be specific: quote text, not vague summaries. You may also describe it in your text reply.
+4. **Ask before executing** — end with a question like "Want me to apply this?" Do NOT call update_* / regenerate_* tools yet.
+5. **Execute only when approved** — call the actual update_* / regenerate_* tools only after the director says yes / approves / "just do it" / "go ahead" / "do it" / "yeah" / "apply it". When they approve, execute the change you last proposed.
+6. **After executing** — report what changed, which downstream assets are now stale (changing a character → its headshots, pose sheet, panels, first frames, clips), and suggest the next step.
+
+## When to skip the proposal and execute immediately
+ONLY skip propose_changes if the message is an explicit, unambiguous command with no creative interpretation:
+- "Regenerate panel 7" → just do it
+- "Delete the second location variation" → just do it
+- "Apply that" / "Do it" / "Go ahead" / "Yeah" (right after a proposal) → execute the last proposal
+For anything that rewrites creative content (descriptions, moods, visual direction), ALWAYS propose first.
+
+## Tone
+Sharp, opinionated collaborator with taste — you know this project. When proposing, explain WHY ("the symmetrical panels read sci-fi, not medieval"). If a note is vague, offer two options and recommend one. If you can't tell which asset is meant, ask — don't guess wrong. Keep replies concise: short paragraphs, clear structure, no walls of text.
+
+## Project context
 PROJECT: ${project.title} (phase: ${project.phase_status}, mode: ${project.mode})
 PRODUCTION NOTES (locked style directive): ${project.production_notes || "(none)"}
 CURRENT PAGE: ${context.current_page || "unknown"}${context.selected_item_id ? ` · SELECTED ITEM: ${context.selected_item_id}` : ""}
 
 CHARACTERS:
-${(charsRes.data || []).map((c) => `- ${c.name} [${c.id}] role=${c.role}${c.voice_only ? " VOICE-ONLY" : ""}${c.locked ? " LOCKED" : ""}${c.approved_cast_id ? " cast-approved" : ""}: ${c.description || "(no description)"} | personality: ${c.personality || "-"}`).join("\n")}
+${characterBlock}
 
 LOCATIONS:
-${(locsRes.data || []).map((l) => `- ${l.name} [${l.id}]${l.approved_image_url ? " approved" : ""}: ${l.description || "-"} (${l.time_of_day || "?"}, mood: ${l.mood || "?"})`).join("\n")}
+${locationBlock}
 
 SCENES:
-${(scenesRes.data || []).map((s) => `- Scene ${s.scene_number} [${s.id}] @ ${s.location} (${s.time_of_day}, mood: ${s.mood})${s.approved_scout_image_url ? " scouted" : ""}: ${s.action_summary} | cast: ${(s.characters_present || []).join(", ")}`).join("\n")}
+${sceneBlock}
 
 STORYBOARD PANELS:
-${(panelsRes.data || []).map((p) => `- Panel ${p.panel_number} [${p.id}] scene_id=${p.scene_id}: ${p.shot_type}/${p.camera_angle}/${p.camera_movement} — ${p.action_description}`).join("\n")}`;
+${panelBlock}`;
 
   const anthropic = new Anthropic();
   const actionsTaken: ActionTaken[] = [];
+  const proposals: ProposedChange[] = [];
 
   // ── Tool executor ───────────────────────────────────────────
   async function runTool(name: string, input: Record<string, unknown>): Promise<string> {
     switch (name) {
+      case "propose_changes": {
+        // Does NOT write to the DB — just records the proposal so the UI can
+        // render it as a diff card and the director can approve/refine/reject.
+        proposals.push({
+          entity_type: String(input.entity_type || ""),
+          entity_id: String(input.entity_id || ""),
+          entity_name: String(input.entity_name || ""),
+          field: String(input.field || ""),
+          before: input.before !== undefined ? String(input.before) : undefined,
+          after: String(input.after || ""),
+          reasoning: String(input.reasoning || ""),
+        });
+        return JSON.stringify({
+          status: "proposed",
+          summary: `Proposed: update ${input.entity_name} ${input.field}. Awaiting director approval — do not execute yet.`,
+          awaiting_approval: true,
+        });
+      }
       case "update_character": {
         const update: Record<string, unknown> = {};
         if (input.description !== undefined) update.description = input.description;
@@ -294,7 +363,24 @@ ${(panelsRes.data || []).map((p) => `- Panel ${p.panel_number} [${p.id}] scene_i
 
   // ── Tool-use loop ───────────────────────────────────────────
   try {
-    const messages: Anthropic.MessageParam[] = [{ role: "user", content: message }];
+    // Build the conversation from history (capped) so the agent has
+    // multi-turn memory. Always keep the FIRST message (the direction that
+    // started the thread) and the most recent MAX_HISTORY-1. Roles map
+    // user→user, agent/assistant→assistant.
+    const normalizedHistory = history
+      .filter((m) => m && typeof m.content === "string" && m.content.trim())
+      .map((m) => ({
+        role: (m.role === "assistant" || m.role === "agent" ? "assistant" : "user") as "user" | "assistant",
+        content: m.content,
+      }));
+    let convo = normalizedHistory;
+    if (convo.length > MAX_HISTORY) {
+      convo = [convo[0], ...convo.slice(convo.length - (MAX_HISTORY - 1))];
+    }
+    // Anthropic requires the first message to be a user turn.
+    while (convo.length > 0 && convo[0].role !== "user") convo = convo.slice(1);
+    const messages: Anthropic.MessageParam[] =
+      convo.length > 0 ? convo.map((m) => ({ role: m.role, content: m.content })) : [{ role: "user", content: message }];
     let reply = "";
 
     for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
@@ -330,7 +416,11 @@ ${(panelsRes.data || []).map((p) => `- Panel ${p.panel_number} [${p.id}] scene_i
     }
 
     if (!reply) {
-      reply = actionsTaken.length > 0 ? "Done — actions executed (see below)." : "I wasn't able to complete that — try rephrasing or being more specific about which asset you mean.";
+      reply = actionsTaken.length > 0
+        ? "Done — actions executed (see below)."
+        : proposals.length > 0
+        ? "Here's what I'd change — review the proposal below and tell me to apply it (or refine it)."
+        : "I wasn't able to complete that — try rephrasing or being more specific about which asset you mean.";
     }
 
     // Lightweight follow-up suggestions based on what happened
@@ -346,7 +436,7 @@ ${(panelsRes.data || []).map((p) => `- Panel ${p.panel_number} [${p.id}] scene_i
       suggestions.push("Check the First Frames page to approve the new frame");
     }
 
-    return NextResponse.json({ reply, actions_taken: actionsTaken, suggestions });
+    return NextResponse.json({ reply, actions_taken: actionsTaken, proposals, suggestions });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("Agent crash:", msg);
