@@ -1,5 +1,27 @@
 # AI Film Pipeline — Progress Log
 
+## ✅ BUILT: Director's Chat v2 — conversational agent (2026-06-13, branch feature/director-chat-v2)
+
+From DIRECTOR_CHAT_V2.md. Turns the Director's Chat from a single-shot executor into
+a propose-then-execute creative collaborator. Independent PR off main.
+
+- **Conversation memory:** the chat sends the full (capped at 20) message history; the
+  agent route accepts a `messages[]` array and feeds multi-turn context to Claude.
+  Follow-ups like "actually make it more extreme" now work.
+- **Propose-first behavior:** system prompt rewritten — for any creative rewrite the
+  agent acknowledges → quotes current state → proposes a BEFORE→AFTER → asks before
+  executing. It only calls update_*/regenerate_* tools after the director approves
+  ("do it"/"yeah"/"apply"). Unambiguous commands ("regenerate panel 7") still execute now.
+- **`propose_changes` tool:** new structured tool that records a proposal WITHOUT writing
+  to the DB; the route returns `proposals[]` and the UI renders each as a diff card
+  (entity · field · BEFORE/AFTER · why) with **Apply / Refine / Reject**.
+- **UI:** wider drawer (380→440px), light markdown (bold/bullets) for agent replies,
+  contextual conversation-starter chips per page, New-thread (clear) button.
+- Streaming was the spec's explicit nice-to-have follow-up — not built this pass.
+
+**Validation:** build clean + app boots; the propose→approve conversation needs a live
+run (API keys + a real project) to exercise end-to-end.
+
 ## ✅ BUILT: REALISM + CONSISTENCY pass (2026-06-13, branch feature/realism-consistency)
 
 From Khalil's review notes (REALISM_NOTES_v5.md). Targets a 10/10 production on

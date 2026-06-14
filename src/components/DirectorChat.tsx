@@ -1,13 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useDictation } from "@/lib/use-dictation";
+import type { ProposedChange } from "@/lib/types";
 
 /**
- * Director's Chat (FINAL_VISION.md — Agent Revision System).
- * Collapsible bottom-right drawer mounted on every pipeline page. Sends
- * natural-language direction to /api/projects/:id/agent; the agent updates
- * records and triggers regeneration, then reports actions + suggestions.
+ * Director's Chat v2 (DIRECTOR_CHAT_V2.md) — a conversational co-director,
+ * not a single-shot executor. Sends the full (capped) conversation history
+ * so the agent has multi-turn memory; the agent proposes BEFORE→AFTER diffs
+ * and only executes once the director approves. Proposals render as diff
+ * cards with Apply / Refine / Reject.
  */
 
 interface ChatMessage {
@@ -15,6 +17,43 @@ interface ChatMessage {
   text: string;
   actions?: Array<{ type: string; target: string }>;
   suggestions?: string[];
+  proposals?: ProposedChange[];
+}
+
+const MAX_HISTORY = 20;
+
+// Contextual conversation starters per page.
+const STARTERS: Record<string, string[]> = {
+  cast: ["Change a character's look", "This casting doesn't match the era"],
+  lock: ["The pose sheet doesn't match the headshot", "Re-cast this character"],
+  locations: ["Make a location's mood warmer", "This set feels too modern"],
+  scenes: ["Change the atmosphere of a scene", "The lighting here is too flat"],
+  storyboard: ["Adjust the camera on a panel", "Change the action in a scene"],
+  "first-frames": ["Regenerate this frame", "The lighting is too flat"],
+  hub: ["Change a character's look", "Update a location's mood"],
+  video: ["Push the camera in instead of panning", "This shot's motion looks off"],
+};
+
+/** Tiny markdown: **bold**, bullet lines, preserved breaks. No deps. */
+function renderMarkdown(text: string): React.ReactNode {
+  const lines = text.split("\n");
+  return lines.map((line, i) => {
+    const bullet = /^\s*[-•]\s+/.test(line);
+    const content = bullet ? line.replace(/^\s*[-•]\s+/, "") : line;
+    const parts = content.split(/(\*\*[^*]+\*\*)/g).map((seg, j) =>
+      seg.startsWith("**") && seg.endsWith("**") ? (
+        <strong key={j} style={{ color: "var(--brand-white)" }}>{seg.slice(2, -2)}</strong>
+      ) : (
+        <span key={j}>{seg}</span>
+      )
+    );
+    return (
+      <div key={i} style={bullet ? { paddingLeft: 12, position: "relative" } : undefined}>
+        {bullet && <span style={{ position: "absolute", left: 0 }}>•</span>}
+        {parts}
+      </div>
+    );
+  });
 }
 
 export default function DirectorChat({
@@ -33,6 +72,7 @@ export default function DirectorChat({
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const dictation = useDictation((text, isFinal) => {
     if (isFinal) setInput((prev) => `${prev}${prev && !prev.endsWith(" ") ? " " : ""}${text.trim()}`);
   });
@@ -41,18 +81,30 @@ export default function DirectorChat({
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages, open]);
 
-  const send = async (text?: string) => {
-    const msg = (text || input).trim();
+  const starters = useMemo(() => STARTERS[currentPage] || STARTERS.hub, [currentPage]);
+
+  const send = async (text?: string, baseMessages?: ChatMessage[]) => {
+    const msg = (text ?? input).trim();
     if (!msg || sending) return;
     setInput("");
-    setMessages((prev) => [...prev, { role: "user", text: msg }]);
+    const prior = baseMessages ?? messages;
+    const nextMessages: ChatMessage[] = [...prior, { role: "user", text: msg }];
+    setMessages(nextMessages);
     setSending(true);
     try {
+      // Cap history: always keep the first message + the most recent ones.
+      let history = nextMessages.map((m) => ({
+        role: m.role === "user" ? "user" : "assistant",
+        content: m.text,
+      }));
+      if (history.length > MAX_HISTORY) {
+        history = [history[0], ...history.slice(history.length - (MAX_HISTORY - 1))];
+      }
       const res = await fetch(`/api/projects/${projectId}/agent`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          message: msg,
+          messages: history,
           context: { current_page: currentPage, selected_item_id: selectedItemId },
         }),
       });
@@ -60,7 +112,13 @@ export default function DirectorChat({
       if (!res.ok) throw new Error(data.error || `Agent error (${res.status})`);
       setMessages((prev) => [
         ...prev,
-        { role: "agent", text: data.reply || "Done.", actions: data.actions_taken, suggestions: data.suggestions },
+        {
+          role: "agent",
+          text: data.reply || "Done.",
+          actions: data.actions_taken,
+          suggestions: data.suggestions,
+          proposals: data.proposals,
+        },
       ]);
       if ((data.actions_taken || []).length > 0) onActionComplete?.();
     } catch (err) {
@@ -73,12 +131,22 @@ export default function DirectorChat({
     }
   };
 
+  const clearThread = () => {
+    setMessages([]);
+    setInput("");
+  };
+
+  const refine = () => {
+    setInput("I'd change ");
+    inputRef.current?.focus();
+  };
+
   return (
     <div className="fixed bottom-4 right-4 z-50 no-print">
       {open ? (
         <div
-          className="w-[380px] max-w-[calc(100vw-2rem)] rounded-xl overflow-hidden shadow-2xl flex flex-col"
-          style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)", maxHeight: "70vh" }}
+          className="w-[440px] max-w-[calc(100vw-2rem)] rounded-xl overflow-hidden shadow-2xl flex flex-col"
+          style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)", maxHeight: "78vh" }}
         >
           {/* Header */}
           <div
@@ -88,32 +156,107 @@ export default function DirectorChat({
             <span className="text-[10px] uppercase tracking-widest font-bold" style={{ color: "var(--brand-orange)" }}>
               🎬 Director&apos;s Chat
             </span>
-            <button onClick={() => setOpen(false)} className="text-xs" style={{ color: "var(--brand-gray)" }}>
-              ✕
-            </button>
+            <div className="flex items-center gap-3">
+              {messages.length > 0 && (
+                <button onClick={clearThread} title="New thread" className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-gray)" }}>
+                  ↻ New
+                </button>
+              )}
+              <button onClick={() => setOpen(false)} className="text-xs" style={{ color: "var(--brand-gray)" }}>
+                ✕
+              </button>
+            </div>
           </div>
 
           {/* Messages */}
-          <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3" style={{ minHeight: 160 }}>
+          <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3" style={{ minHeight: 200 }}>
             {messages.length === 0 && (
-              <p className="text-[11px] leading-relaxed" style={{ color: "var(--brand-gray)" }}>
-                Give direction in plain language — I know the script, the cast, the locked choices, and the visual style.
-                Try: &ldquo;Make the kitchen more rustic — exposed brick, warm wood tones&rdquo; or
-                &ldquo;Push the camera in on panel 3 instead of panning&rdquo;.
-              </p>
+              <div>
+                <p className="text-[11px] leading-relaxed mb-3" style={{ color: "var(--brand-gray)" }}>
+                  Give direction in plain language — I know the script, the cast, the locked choices, and the
+                  visual style. I&apos;ll propose a change and show you a before/after before applying anything.
+                </p>
+                <div className="space-y-1.5">
+                  {starters.map((s, i) => (
+                    <button
+                      key={i}
+                      onClick={() => send(s)}
+                      className="block w-full text-left text-[11px] px-3 py-2 rounded transition-colors"
+                      style={{ color: "var(--brand-cyan)", border: "1px solid rgba(76,201,240,0.25)" }}
+                    >
+                      → {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
             {messages.map((m, i) => (
               <div key={i}>
                 <div
-                  className="rounded-lg px-3 py-2 text-xs leading-relaxed whitespace-pre-wrap"
+                  className="rounded-lg px-3 py-2 text-xs leading-relaxed"
                   style={{
                     background: m.role === "user" ? "rgba(255,138,42,0.08)" : "var(--brand-navy)",
                     border: m.role === "user" ? "1px solid rgba(255,138,42,0.25)" : "1px solid var(--brand-steel)",
                     color: "var(--brand-white)",
                   }}
                 >
-                  {m.text}
+                  {m.role === "agent" ? renderMarkdown(m.text) : m.text}
                 </div>
+
+                {/* Proposal diff cards */}
+                {m.proposals && m.proposals.length > 0 && (
+                  <div className="mt-2 space-y-2">
+                    {m.proposals.map((p, j) => (
+                      <div key={j} className="rounded-lg overflow-hidden" style={{ border: "1px solid rgba(255,138,42,0.4)" }}>
+                        <div className="px-3 py-2 text-[10px] uppercase tracking-widest flex items-center gap-2" style={{ background: "rgba(255,138,42,0.06)", color: "var(--brand-orange)" }}>
+                          📝 {p.entity_name} · {p.field}
+                        </div>
+                        <div className="px-3 py-2 space-y-2" style={{ background: "var(--brand-navy)" }}>
+                          {p.before && (
+                            <div>
+                              <p className="text-[8px] uppercase tracking-widest mb-0.5" style={{ color: "#f87171" }}>Before</p>
+                              <p className="text-[11px] leading-snug" style={{ color: "var(--brand-gray)" }}>{p.before}</p>
+                            </div>
+                          )}
+                          <div>
+                            <p className="text-[8px] uppercase tracking-widest mb-0.5 text-green-400">After</p>
+                            <p className="text-[11px] leading-snug" style={{ color: "var(--brand-white)" }}>{p.after}</p>
+                          </div>
+                          {p.reasoning && (
+                            <p className="text-[10px] italic leading-snug" style={{ color: "var(--brand-cyan)" }}>Why: {p.reasoning}</p>
+                          )}
+                          <div className="flex gap-2 pt-1">
+                            <button
+                              onClick={() => send("Apply that")}
+                              disabled={sending}
+                              className="text-[9px] uppercase tracking-widest px-3 py-1.5 disabled:opacity-40"
+                              style={{ background: "var(--brand-orange)", color: "var(--brand-navy)", fontWeight: 700 }}
+                            >
+                              ✓ Apply
+                            </button>
+                            <button
+                              onClick={refine}
+                              disabled={sending}
+                              className="text-[9px] uppercase tracking-widest px-3 py-1.5 disabled:opacity-40"
+                              style={{ color: "var(--brand-cyan)", border: "1px solid rgba(76,201,240,0.35)" }}
+                            >
+                              ✎ Refine
+                            </button>
+                            <button
+                              onClick={() => send("No, leave it as is")}
+                              disabled={sending}
+                              className="text-[9px] uppercase tracking-widest px-3 py-1.5 disabled:opacity-40"
+                              style={{ color: "var(--brand-gray)", border: "1px solid var(--brand-steel)" }}
+                            >
+                              ✕ Reject
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
                 {m.actions && m.actions.length > 0 && (
                   <div className="mt-1 flex flex-wrap gap-1">
                     {m.actions.map((a, j) => (
@@ -149,6 +292,7 @@ export default function DirectorChat({
           {/* Input */}
           <div className="px-3 py-3 flex gap-2 flex-shrink-0" style={{ borderTop: "1px solid var(--brand-steel)" }}>
             <input
+              ref={inputRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && send()}
