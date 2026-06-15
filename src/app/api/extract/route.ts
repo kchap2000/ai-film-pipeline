@@ -8,7 +8,7 @@ const pdfParse = require("pdf-parse/lib/pdf-parse.js");
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const mammoth = require("mammoth");
 
-export const maxDuration = 60; // Allow up to 60s for Claude extraction
+export const maxDuration = 300; // Claude extraction of a rich script (chars+scenes+locations+structure+setting_profile, 8192 tokens) routinely exceeds 60s
 
 export async function POST(req: NextRequest) {
   // Top-level try-catch ensures we ALWAYS return JSON, never Vercel's HTML error page
