@@ -197,6 +197,7 @@ export async function POST(
 For each shot, provide: shot_type (wide/medium/close-up/extreme-close-up/OTS/POV/two-shot/insert), camera_angle (eye-level/low/high/dutch/bird's-eye/worm's-eye), camera_movement (static/pan-left/pan-right/tilt-up/tilt-down/dolly-in/dolly-out/crane-up/crane-down/handheld/steadicam), action_description (what happens in this shot — ONE clear action beat, not several), dialogue (the dialogue spoken during this shot, empty string if none), characters_in_shot (array of character names visible), duration_seconds (2.0-6.0; up to 9.0 only for a major set-piece beat).
 
 SHOT DENSITY — match TV-drama pacing:
+- BINDING SHOT BUDGET: if the user message specifies a HARD SHOT CAP for this scene, that cap OVERRIDES every range below — never exceed it. Favor fewer, stronger shots; merge beats to fit.
 - Action/set-piece scenes: 14-24 shots. Dialogue scenes: 8-14 shots.
 - EVERY scripted dialogue line gets its own shot of its speaker (or a reaction shot carrying the line as off-screen audio).
 - Key reactions get their own shots. Big action beats split into multiple shots (approach / impact / aftermath).
@@ -216,7 +217,15 @@ Return ONLY valid JSON: { "shots": [...] }.`,
       messages: [
         {
           role: "user",
-          content: `${worldDirectives ? `${worldDirectives}\n\n` : ""}Break this scene into individual storyboard shots:
+          content: `${(() => {
+            // Short-form shot budget (ASSET INTAKE I4): a target like "total
+            // roughly N shots" in production notes becomes a hard per-scene cap
+            // so a 90s episode doesn't get 117 panels. Falls back to a sane cap.
+            const m = productionNotes.match(/(?:total|roughly|about)\D{0,12}(\d{1,3})\s*shots/i);
+            const totalTarget = m ? Number(m[1]) : 0;
+            const perScene = totalTarget ? Math.max(2, Math.ceil(totalTarget / Math.max(1, scenes.length))) : 8;
+            return `HARD SHOT CAP for this scene: at most ${perScene} shots — do not exceed it.\n\n`;
+          })()}${worldDirectives ? `${worldDirectives}\n\n` : ""}Break this scene into individual storyboard shots:
 
 Scene ${scene.scene_number}: ${scene.location || "Unknown Location"}
 Time: ${scene.time_of_day || "Day"}
