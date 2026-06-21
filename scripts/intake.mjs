@@ -53,6 +53,12 @@ const RUNTIME = Number(opt("runtime") || 90);
 const DRY = has("dry");
 const DO_RUN = has("run");
 const FILL = has("fill-gaps") || DO_RUN;
+// Deterministic explicit asset map (paths relative to the intake folder).
+// { characters:{Hint:{headshot,pose,element}}, locations:{Hint:{reference,element}},
+//   elements:[{name,kind,reference,element}] }. When present, loose-image vision
+// auto-classify is skipped (the manifest is authoritative).
+const MANIFEST = opt("manifest") && fs.existsSync(opt("manifest")) ? JSON.parse(fs.readFileSync(opt("manifest"), "utf8")) : null;
+const SKIP_EXTRACT = has("skip-extract"); // reuse the existing project's extracted entities
 
 const IMG_EXT = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const TXT_EXT = new Set([".md", ".txt"]);
@@ -186,15 +192,62 @@ async function matchSubject(subject, entities, kindLabel) {
   if (!texts.length) { console.error("No .md/.txt script found in folder."); process.exit(1); }
   const { scriptText, bibleText, scriptFile, bibleFile } = pickScriptAndBible(texts);
   log(`Script: ${scriptFile ? path.basename(scriptFile) : "—"}${bibleFile ? ` · Bible: ${path.basename(bibleFile)}` : ""}`);
-  log(`\n🧠 Extracting story locally (Claude — bypasses the 60s deploy cap)…`);
-  const story = await extractStory([scriptText, bibleText].filter(Boolean).join("\n\n---\n\n"));
-  log(`   → ${story.characters?.length || 0} characters, ${story.scenes?.length || 0} scenes, ${story.locations?.length || 0} locations, setting era: ${story.setting_profile?.era || "—"}`);
+  let story;
+  if (SKIP_EXTRACT && opt("project-id")) {
+    // Reuse the existing project's extracted entities (deterministic 2nd pass)
+    const pid = opt("project-id");
+    const [c, l, s, ex] = await Promise.all([
+      supabase.from("characters").select("name, description, role, personality, voice_only").eq("project_id", pid),
+      supabase.from("locations").select("name, description, time_of_day, mood").eq("project_id", pid),
+      supabase.from("scenes").select("scene_number, location, time_of_day, scene_type, action_summary, mood, props, wardrobe, characters_present").eq("project_id", pid).order("scene_number"),
+      supabase.from("extractions").select("structure").eq("project_id", pid).limit(1).maybeSingle(),
+    ]);
+    story = { characters: c.data || [], locations: l.data || [], scenes: s.data || [], structure: ex.data?.structure || {}, setting_profile: null };
+    log(`   (--skip-extract) loaded ${story.characters.length} characters, ${story.scenes.length} scenes, ${story.locations.length} locations from project ${pid}`);
+  } else {
+    log(`\n🧠 Extracting story locally (Claude — bypasses the 60s deploy cap)…`);
+    story = await extractStory([scriptText, bibleText].filter(Boolean).join("\n\n---\n\n"));
+    log(`   → ${story.characters?.length || 0} characters, ${story.scenes?.length || 0} scenes, ${story.locations?.length || 0} locations, setting era: ${story.setting_profile?.era || "—"}`);
+  }
 
   // ── classify + match images ──
   const elementMap = opt("element-map") && fs.existsSync(opt("element-map")) ? JSON.parse(fs.readFileSync(opt("element-map"), "utf8")) : {};
   const charByNorm = Object.fromEntries((story.characters || []).map(c => [norm(c.name), c]));
   const locByNorm = Object.fromEntries((story.locations || []).map(l => [norm(l.name), l]));
-  const assigned = { characters: {}, locations: {}, props: [] }; // name -> {headshot, pose_sheet, references[], element}
+  const assigned = { characters: {}, locations: {}, props: [], elements: [] }; // name -> {headshot, pose_sheet, references[], element}
+  const rel = (p) => path.isAbsolute(p) ? p : path.join(folder, p);
+
+  // ── MANIFEST path (authoritative; deterministic) ──────────────────
+  if (MANIFEST) {
+    log(`\n📋 Applying manifest (deterministic asset map)…`);
+    for (const [hint, a] of Object.entries(MANIFEST.characters || {})) {
+      const ent = findEntity(story.characters || [], hint);
+      if (!ent) { log(`   ⚠ UNMATCHED character "${hint}" — not found among: ${(story.characters || []).map(c => c.name).join(", ")}`); continue; }
+      const dst = assigned.characters[ent.name] = assigned.characters[ent.name] || { references: [] };
+      if (a.headshot && fs.existsSync(rel(a.headshot))) dst.headshot = rel(a.headshot);
+      if (a.pose && fs.existsSync(rel(a.pose))) dst.pose_sheet = rel(a.pose);
+      if (a.element) dst.element = a.element;
+      log(`   ✓ ${hint} → ${ent.name}${dst.headshot ? " [headshot]" : ""}${dst.pose_sheet ? " [pose]" : ""}${dst.element ? " [element]" : ""}`);
+    }
+    for (const [hint, a] of Object.entries(MANIFEST.locations || {})) {
+      const ent = findEntity(story.locations || [], hint);
+      if (!ent) { log(`   ⚠ UNMATCHED location "${hint}" — not found among: ${(story.locations || []).map(l => l.name).join(", ")}`); continue; }
+      const dst = assigned.locations[ent.name] = assigned.locations[ent.name] || { references: [] };
+      if (a.reference && fs.existsSync(rel(a.reference))) dst.references.push(rel(a.reference));
+      if (a.element) dst.element = a.element;
+      log(`   ✓ ${hint} → ${ent.name}${dst.references.length ? " [reference]" : ""}${dst.element ? " [element]" : ""}`);
+    }
+    for (const e of (MANIFEST.elements || [])) {
+      if (e.reference && fs.existsSync(rel(e.reference))) {
+        assigned.elements.push({ name: e.name, kind: e.kind || "prop", image: rel(e.reference), element: e.element || null });
+        log(`   ✓ element ${e.name} [${e.kind || "prop"}]${e.element ? " (live id)" : ""}`);
+      } else log(`   ⚠ element "${e.name}" reference missing: ${e.reference}`);
+    }
+    const pc = Object.values(assigned.characters), pl = Object.values(assigned.locations);
+    log(`   → locked: ${pc.filter(a => a.headshot).length} headshots, ${pl.filter(a => a.references.length).length} locations, ${assigned.elements.length} elements/props`);
+    await applyAndFinish();
+    return;
+  }
 
   log(`\n🔎 Classifying ${images.length} images…`);
   for (const img of images) {
@@ -237,24 +290,28 @@ async function matchSubject(subject, entities, kindLabel) {
   const provided = { ch: Object.entries(assigned.characters), loc: Object.entries(assigned.locations) };
   log(`   → matched headshots: ${provided.ch.filter(([, a]) => a.headshot).length}, pose sheets: ${provided.ch.filter(([, a]) => a.pose_sheet).length}, location refs: ${provided.loc.length}, props: ${assigned.props.length}`);
 
-  if (DRY) { log("\n--dry: stopping before any DB write.\n"); printReadiness(story, assigned, elementMap); return; }
+  await applyAndFinish();
 
-  // ── create/seed project + write extraction ──
-  let projectId = opt("project-id");
-  if (!projectId) {
-    const res = await fetch(`${BASE}/api/projects`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: TITLE, type: "personal", mode: "auto", aspect_ratio: ASPECT }) });
-    projectId = (await res.json()).id;
-    log(`\n📦 Project created: ${projectId}`);
+  // ── shared finisher: create/reuse project, seed, lock, report, run ──
+  async function applyAndFinish() {
+    if (DRY) { log("\n--dry: stopping before any DB write.\n"); printReadiness(story, assigned, elementMap); return; }
+    let projectId = opt("project-id");
+    if (!projectId) {
+      const res = await fetch(`${BASE}/api/projects`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: TITLE, type: "personal", mode: "auto", aspect_ratio: ASPECT }) });
+      projectId = (await res.json()).id;
+      log(`\n📦 Project created: ${projectId}`);
+    }
+    // --skip-extract reuses the existing project's characters/locations/scenes
+    // (deterministic two-pass: extract once, then tune the manifest + re-attach).
+    if (!SKIP_EXTRACT) await seedExtraction(projectId, story, scriptText, RUNTIME);
+    else log(`   (--skip-extract: reusing existing extraction)`);
+    await attachLocks(projectId, story, assigned);
+    await attachElements(projectId, assigned);
+    const report = printReadiness(story, assigned, elementMap);
+    if (FILL) await fillAndRun(projectId, story, assigned, report);
+    else log(`\n(report-only — re-run with --run to fill gaps and build the episode)\n`);
+    log(`\n✅ Intake complete for project ${projectId}\n   ${BASE}/projects/${projectId}\n`);
   }
-  await seedExtraction(projectId, story, scriptText, RUNTIME);
-  await attachLocks(projectId, story, assigned);
-
-  // ── readiness ──
-  const report = printReadiness(story, assigned, elementMap);
-
-  if (FILL) await fillAndRun(projectId, story, assigned, report);
-  else log(`\n(report-only — re-run with --run to fill gaps and build the episode)\n`);
-  log(`\n✅ Intake complete for project ${projectId}\n   ${BASE}/projects/${projectId}\n`);
 })().catch(e => { console.error("\nINTAKE FAILED:", e.message); process.exit(1); });
 
 // ── seed extraction into DB (mirrors /api/extract writes) ───────────
@@ -310,6 +367,23 @@ async function attachLocks(pid, story, assigned) {
 }
 function locByContains(a, b) { return norm(a).includes(norm(b)) || norm(b).includes(norm(a)); }
 
+// ── lock provided props / outfits / vehicles as project_elements ────
+async function attachElements(pid, assigned) {
+  for (const e of (assigned.elements || [])) {
+    const { dataUrl } = toDataUrl(e.image);
+    const row = {
+      project_id: pid, kind: e.kind || "prop", name: e.name, match_terms: [e.name],
+      description: `${e.name} — locked provided reference; match it exactly, do not redesign.`,
+      scene_numbers: [], ref_image_url: dataUrl,
+      higgsfield_element_id: e.element || null,
+      status: e.element ? "element_ready" : "image_ready",
+    };
+    const { data: existing } = await supabase.from("project_elements").select("id").eq("project_id", pid).eq("kind", row.kind).eq("name", row.name).maybeSingle();
+    if (existing) await supabase.from("project_elements").update(row).eq("id", existing.id);
+    else await supabase.from("project_elements").insert(row);
+  }
+}
+
 // ── readiness report ────────────────────────────────────────────────
 function printReadiness(story, assigned, elementMap) {
   const gaps = []; const autoGen = [];
@@ -333,6 +407,10 @@ function printReadiness(story, assigned, elementMap) {
     const ref = a.references?.length ? "✓(you)" : "→gen"; if (!a.references?.length) autoGen.push(`scout ${l.name}`);
     const el = a.element ? "✓" : "→derive";
     log(`  ${l.name.slice(0,20).padEnd(20)} ${"✓".padEnd(5)} ${ref.padEnd(10)} ${el}`);
+  }
+  if ((assigned.elements || []).length) {
+    log(`\nELEMENTS / PROPS (locked)`);
+    for (const e of assigned.elements) log(`  ${e.name.padEnd(22)} [${e.kind}]${e.element ? " ✓ live Higgsfield element" : " ✓ reference locked"}`);
   }
   const scoutCount = (story.scenes || []).length;
   log(`\nSCENES   ${scoutCount} scenes — storyboard + first frames will generate.`);
