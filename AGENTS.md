@@ -61,9 +61,9 @@ It is **git-tracked** in a scoped repo at `/Users/khalilchapman/Desktop`. Every 
   the **live** `brain.json` (following the §3 protocol) and regenerate the dashboard.
 
 ### 6. Reference docs
-- Audit & inventory: `~/Desktop/SKILLS_INVENTORY.md`
-- Architecture: `~/Documents/Claude/Projects/BRAIN_ARCHITECTURE.md` (see Layer 4)
-- Library README: `~/Documents/Claude/Skills Library/README.md`
+- Audit & inventory: `/Users/khalilchapman/Desktop/SKILLS_INVENTORY.md`
+- Architecture: `/Users/khalilchapman/Documents/Claude/Projects/BRAIN_ARCHITECTURE.md` (see Layer 4)
+- Library README: `/Users/khalilchapman/Documents/Claude/Skills Library/README.md`
 
 ### Quick rules
 **Do:** read the brain first · validate + commit after every brain edit · one skill = one library
