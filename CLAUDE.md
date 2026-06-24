@@ -1,4 +1,10 @@
 # Claude Code — AI Film Pipeline
+
+> 📖 **New here? Read [`PROJECT_BRAIN.md`](./PROJECT_BRAIN.md) first** — the single catch-up
+> file: current state, the architecture in 60 seconds, what's built, what's next, and a doc
+> index. (This CLAUDE.md is the *rules*; PROJECT_BRAIN is the *current state*; `brain.json`
+> key `ai_film_pipeline` is the cross-project status.)
+
 ## Operating Mode: FULLY AUTONOMOUS
 You have full authority to build, fix, refactor, commit, and deploy **without asking permission or checking in**. Do not say "Should I…", "Would you like me to…", or "Let me know if…". Just execute. When something is ambiguous, pick the most reasonable interpretation and proceed.
 
