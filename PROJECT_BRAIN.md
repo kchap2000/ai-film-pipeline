@@ -28,6 +28,8 @@ identity-locked frames and video.
 - **Verified working:** the element-keyframe connector seam (proven live on EP03's failed shots),
   graceful degradation (app unaffected pre-migration), full `npm run build`, agent review of the
   series layer (4 bugs found + fixed + re-verified).
+- **PR #37 title/body are updated** to the true scope:
+  `Asset Intake + Element Connector Seam + No-Pro Worker + Series Layer`.
 
 ## 3. The ONE architectural truth to understand
 There are effectively **two pipelines** and the whole design hinges on connecting them:
@@ -54,8 +56,7 @@ Full detail: `ELEMENTS_VS_GEMINI.md`, `PIPELINE_REVIEW.md`.
 
 ## 5. Next actions (the gates)
 1. **Merge PR #37 → main** (only Khalil can; auto-deploys to Vercel). Migration is already applied.
-2. (Optional) Update PR #37 title/body — blocked for the agent by the permission classifier; Khalil runs `gh pr edit`.
-3. (Optional infra) Higgsfield REST creds → headless `fulfill-frames/clips`; Vercel Pro is NOT needed (worker.mjs covers the cap).
+2. (Optional infra) Higgsfield REST creds → headless `fulfill-frames/clips`; Vercel Pro is NOT needed (worker.mjs covers the cap).
 - To run a season once live: **`GO_LIVE_RUNBOOK.md`** (copy-paste: ingest → build → watch → propagate).
 
 ## 6. Rules an agent MUST NOT break (from CLAUDE.md)
