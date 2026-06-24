@@ -11,7 +11,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // panels are generated as ONE Seedance clip with numbered Shot 1/2/3
 // syntax — real cut rhythm inside the clip instead of disconnected
 // 4-second beats. Caps per Seedance limits.
-const MAX_SEQUENCE_SHOTS = 3;
+// Seedance 2.0 does true multi-shot in one generation (model card: multi-shot,
+// consistent identity). The Higgsfield 2.0 guide + seedance-prompting skill run
+// 5–6 numbered shots per 10–15s clip, so group up to 5 (still ≤15s) — fewer
+// seams, more story flow per clip, while staying inside the model's sweet spot.
+const MAX_SEQUENCE_SHOTS = 5;
 const MAX_SEQUENCE_SECONDS = 15;
 
 /**
