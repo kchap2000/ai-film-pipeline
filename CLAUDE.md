@@ -122,6 +122,17 @@ After completing ANY work, update `PROGRESS.md`:
 - Note new file paths in the relevant phase checklist
 - If blocked, mark ❌ Blocked with the reason
 
+### Keep the shared brain current (REQUIRED — this is how agents stay on the same page)
+The three layers are a shared bulletin board: every agent READS them at the start of a task
+and WRITES them at the end. If you change project status/state/next-steps, update ALL that apply:
+1. **`PROJECT_BRAIN.md`** — refresh the "Current state" + "Next actions" sections (and the doc
+   index if you added a doc). This is the single catch-up file; a stale one misleads every agent.
+2. **`brain.json`** (key `ai_film_pipeline`) — per the Brain Protocol below (read → edit →
+   validate → commit). Cross-project status.
+3. **`PROGRESS.md`** — the build-log entry above.
+Concurrency: if a file changed under you while you worked (another agent wrote it), re-read and
+re-apply your change. Keep edits small and atomic.
+
 ---
 
 ## Pre-Launch Task (NOT YET — hold until Khalil says go)
