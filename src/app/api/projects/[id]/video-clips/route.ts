@@ -335,9 +335,11 @@ export async function POST(
         ? buildSequencePrompt(
             group.map((p) => ({
               shotType: p.shot_type || "Medium",
+              cameraAngle: p.camera_angle || "",
               cameraMovement: p.camera_movement || "",
               actionDescription: p.action_description || "",
               dialogue: p.dialogue || "",
+              durationSeconds: Number(p.duration_seconds) || undefined,
             })),
             {
               mood: scene.mood,

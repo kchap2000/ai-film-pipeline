@@ -74,30 +74,28 @@ export async function recordWin(
   });
 }
 
-/** Top lessons for prompt injection: project-scoped first, then global. */
+/**
+ * Top lessons for prompt injection — PROJECT-SCOPED ONLY.
+ * Global lessons were injecting another show's QA history (e.g. a
+ * fantasy-war note about a soldier's modern camouflage / "Commander
+ * Caster") into unrelated projects, polluting every prompt. Re-introduce
+ * globals only behind a world-agnostic tag.
+ */
 export async function fetchLessons(
   supabase: SupabaseClient,
   projectId: string,
   limit = 10
 ): Promise<Lesson[]> {
-  const [proj, glob] = await Promise.all([
-    supabase
-      .from("pipeline_lessons")
-      .select("category, lesson, times_confirmed")
-      .eq("scope", "project")
-      .eq("project_id", projectId)
-      .order("times_confirmed", { ascending: false })
-      .limit(limit),
-    supabase
-      .from("pipeline_lessons")
-      .select("category, lesson, times_confirmed")
-      .eq("scope", "global")
-      .order("times_confirmed", { ascending: false })
-      .limit(limit),
-  ]);
+  const proj = await supabase
+    .from("pipeline_lessons")
+    .select("category, lesson, times_confirmed")
+    .eq("scope", "project")
+    .eq("project_id", projectId)
+    .order("times_confirmed", { ascending: false })
+    .limit(limit);
   const seen = new Set<string>();
   const out: Lesson[] = [];
-  for (const l of [...(proj.data || []), ...(glob.data || [])]) {
+  for (const l of proj.data || []) {
     if (seen.has(l.lesson)) continue;
     seen.add(l.lesson);
     out.push(l);
