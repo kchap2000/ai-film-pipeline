@@ -2,6 +2,7 @@ import { createRouteClient } from "@/lib/supabase-route";
 import { generateVideoClip, pollHiggsfieldJob, buildMotionPrompt, selectVideoModel, VideoGenRequest } from "@/lib/generate-video";
 import { getWorldDirectives } from "@/lib/lessons";
 import { buildSequencePrompt } from "@/lib/prompt-engine";
+import { loadProjectElementRegistry } from "@/lib/element-keyframes";
 import { recordProvenance } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -173,48 +174,10 @@ export async function POST(
   for (const s of scenes || []) sceneById[s.id] = { scene_number: s.scene_number, mood: s.mood || "", location: s.location || "" };
 
   // Element registry: characters + locations carry their element ids
-  // directly; project_elements adds props, outfits, and any extra
-  // environments derived from the script. All of them feed the prompt
-  // engine's <<<element_id>>> placeholder swaps.
-  const registryElements: import("@/lib/prompt-engine").RegistryElement[] = [];
-
-  const { data: charRows } = await supabase
-    .from("characters")
-    .select("name, higgsfield_element_id")
-    .eq("project_id", id)
-    .not("higgsfield_element_id", "is", null);
-  for (const c of charRows || []) {
-    registryElements.push({
-      kind: "character",
-      name: c.name,
-      elementId: c.higgsfield_element_id as string,
-      matchTerms: [c.name],
-    });
-  }
-
-  const { data: locRows } = await supabase
-    .from("locations")
-    .select("name, higgsfield_element_id")
-    .eq("project_id", id)
-    .not("higgsfield_element_id", "is", null);
-  const locationElementByName: Record<string, string> = {};
-  for (const l of locRows || []) locationElementByName[(l.name || "").toLowerCase().trim()] = l.higgsfield_element_id as string;
-
-  const { data: extraElements } = await supabase
-    .from("project_elements")
-    .select("kind, name, match_terms, description, higgsfield_element_id")
-    .eq("project_id", id)
-    .eq("status", "element_ready")
-    .not("higgsfield_element_id", "is", null);
-  for (const el of extraElements || []) {
-    registryElements.push({
-      kind: el.kind as "character" | "prop" | "outfit" | "environment",
-      name: el.name,
-      elementId: el.higgsfield_element_id as string,
-      matchTerms: (el.match_terms || []).length > 0 ? el.match_terms : [el.name],
-      description: el.description || undefined,
-    });
-  }
+  // directly; project_elements adds props, outfits, and extra environments;
+  // and (Track C1) any series-level library is merged in. Shared loader so
+  // keyframes and clips lock identity/wardrobe/set the same way.
+  const { registryElements, locationElementByName } = await loadProjectElementRegistry(supabase, id);
 
   const { data: projectAspect } = await supabase
     .from("projects")

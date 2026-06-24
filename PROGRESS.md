@@ -1800,3 +1800,22 @@ Write findings to the build log. Then proceed with implementation:
 - **WebSocket/SSE for real-time cascade progress** — use polling initially, upgrade if UX demands it.
 - **Export: PDF storyboard / first-frames book** — build after first frames are generating correctly.
 
+
+---
+## Build Log — 2026-06-23: Connector-seam + no-Pro worker + series library (Tracks A/B/C)
+- **Track A (connector seam):** `src/lib/element-keyframes.ts` (shared element registry loader + connector-ready <<<element_id>>> keyframe prompt builder + `planElementKeyframes`); first-frames POST `action:"plan_elements"` + PATCH connector-fulfillment (`image_url` write-back); `scripts/fulfill-frames.mjs` runner (REST + agent-manifest, `--apply`). PROVEN live on EP03 panels S2/S3: route→engine→runner→Higgsfield MCP→PATCH writeback. Caught+fixed a real bug: absent characters consumed the 4 element slots ahead of in-shot wardrobe (now keyframes scope to in-shot characters).
+- **Track B (no Vercel Pro):** `scripts/worker.mjs` runs extraction + storyboard LOCALLY (no 60s cap), writes the same rows, then orchestrator resumes at cast_generate (every other step is already under the cap). `--drive` to auto-run.
+- **Track C (series library + auto-elements):** migration `supabase/migrations/2026-06-23_series_library.sql` (series table + series_id on projects + dual-scope project_elements + series_element_id on characters/locations); series inheritance merged into the shared registry loader (used by BOTH keyframes and video-clips, which was refactored to use it); `scripts/intake.mjs` auto-creates element + wardrobe rows from headshots (single-face crop) + emits `.intake-element-work.json` for connector fulfillment.
+- `npm run build` clean. NEEDS KHALIL: apply the series migration in Supabase; push commits (sandbox can't); optional Higgsfield REST creds to make fulfill-frames/clips fully headless. Full review: PIPELINE_REVIEW.md.
+
+---
+## Build Log — 2026-06-23: SERIES LAYER (turn the one-episode engine into a series container)
+Spec: SERIES_LAYER_PLAN.md. Built P0–P6, build green, agent-reviewed (4 dimensions) + fixes re-verified.
+- **P0 types** (src/lib/types.ts): Series, EpisodeStage/EpisodeStatus, Project.series_id/episode_number. Migration `supabase/migrations/2026-06-23_series_library.sql` — **NEEDS KHALIL to apply** (classifier blocks prod DB migration). All code degrades gracefully until then (verified: dashboard + video paths unaffected pre-migration).
+- **P1 episode-status** (src/lib/episode-status.ts): one true definition of completion through ingest→QA (not just first_frames). Counts COVERED panels (not clip rows); QA tied to the current assembled video.
+- **P2 Series API** (src/app/api/series/**): list/create, detail (episodes w/ status+thumbnail), attach/detach/reorder/bible, promote-element.
+- **P3 UI**: dashboard groups by series + "New Series"; /series/[id] episode lineup (EpisodeTile: lazy thumbnail, true status bar, QA badge, Watch → existing screening room); episodes hidden from the flat grid.
+- **P4 propagation** (src/lib/series-propagation.ts + /propagate): change-once-update-everywhere — re-points a recast/asset across all episodes and QUEUES regen of affected shots. NON-DESTRUCTIVE (exact-match, current frames stay watchable until rebuilt). Promotion never downgrades a trained element.
+- **P5 ingest** (scripts/intake.mjs): --series/--series-id/--episode — create/attach series, build the shared asset library once; later episodes inherit.
+- **P6 verify**: build green; graceful degradation re-confirmed; review agents found 4 real bugs (destructive propagation, substring mis-match, element downgrade, clip undercount) — ALL FIXED + re-verified PASS.
+- NEEDS KHALIL: apply the series migration; push commits (sandbox can't). Then the series view lights up.

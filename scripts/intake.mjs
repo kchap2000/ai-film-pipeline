@@ -50,6 +50,11 @@ const BASE = opt("base") || "https://ai-film-pipeline-git-main-khalil-chapmans-p
 const TITLE = opt("project") || path.basename(folder.replace(/\/$/, ""));
 const ASPECT = opt("aspect") || "9:16";
 const RUNTIME = Number(opt("runtime") || 90);
+// Series layer: attach this episode to a series and build the shared asset
+// library once. --series "<title>" (create/find) or --series-id <id>; --episode N.
+const SERIES_TITLE = typeof opt("series") === "string" ? opt("series") : null;
+const SERIES_ID = typeof opt("series-id") === "string" ? opt("series-id") : null;
+const EPISODE_NUM = opt("episode") ? Number(opt("episode")) : null;
 const DRY = has("dry");
 const DO_RUN = has("run");
 const FILL = has("fill-gaps") || DO_RUN;
@@ -307,6 +312,8 @@ async function matchSubject(subject, entities, kindLabel) {
     else log(`   (--skip-extract: reusing existing extraction)`);
     await attachLocks(projectId, story, assigned);
     await attachElements(projectId, assigned);
+    await autoCreateElements(projectId, story, assigned);
+    await seriesIngest(projectId);
     const report = printReadiness(story, assigned, elementMap);
     if (FILL) await fillAndRun(projectId, story, assigned, report);
     else log(`\n(report-only — re-run with --run to fill gaps and build the episode)\n`);
@@ -381,6 +388,120 @@ async function attachElements(pid, assigned) {
     const { data: existing } = await supabase.from("project_elements").select("id").eq("project_id", pid).eq("kind", row.kind).eq("name", row.name).maybeSingle();
     if (existing) await supabase.from("project_elements").update(row).eq("id", existing.id);
     else await supabase.from("project_elements").insert(row);
+  }
+}
+
+// ── auto-create Higgsfield elements from provided headshots (Track C2) ──
+// Multi-pose contact sheets DEGRADE elements — crop to a single centred face
+// plate first. No HIGGSFIELD REST creds → "agent mode": write planned
+// project_elements rows + a work-manifest a Cowork session (Higgsfield MCP)
+// fulfills (create element from the plate, then PATCH the id back).
+function cropSingleFace(file) {
+  try {
+    const dim = execSync(`sips -g pixelWidth -g pixelHeight ${JSON.stringify(file)}`, { encoding: "utf8" });
+    const w = Number((dim.match(/pixelWidth:\s*(\d+)/) || [])[1]);
+    const h = Number((dim.match(/pixelHeight:\s*(\d+)/) || [])[1]);
+    if (w && h && w / h > 1.35) {
+      // Wide image = likely a turnaround/contact sheet. Crop a centred square.
+      const side = Math.min(w, h);
+      const out = `/tmp/intake_face_${randomUUID()}.jpg`;
+      execSync(`sips -s format jpeg -c ${side} ${side} -Z 1024 ${JSON.stringify(file)} --out ${JSON.stringify(out)}`, { stdio: "ignore" });
+      return out;
+    }
+  } catch {}
+  return file;
+}
+
+async function autoCreateElements(pid, story, assigned) {
+  if (process.argv.includes("--no-make-elements")) return;
+  const items = [];
+  // wardrobe description per character from the extraction
+  const wardrobeFor = (name) => {
+    for (const s of story.scenes || []) {
+      const w = (s.wardrobe || []).find((x) => x && x.character && nameMatch(x.character, name));
+      if (w?.description) return w.description;
+    }
+    return "";
+  };
+  for (const [name, a] of Object.entries(assigned.characters)) {
+    if (!a.headshot || a.element) continue; // already has a live element → skip
+    const crop = cropSingleFace(a.headshot);
+    const { dataUrl } = toDataUrl(crop);
+    // planned character element row (status image_ready: plate exists, no element yet)
+    const charRow = {
+      project_id: pid, kind: "character", name, match_terms: [name],
+      description: `${name} — trained identity element (auto-created from provided headshot). ${(story.characters || []).find((c) => nameMatch(c.name, name))?.description || ""}`.trim(),
+      scene_numbers: [], ref_image_url: dataUrl, higgsfield_element_id: null, status: "image_ready",
+    };
+    const { data: existsC } = await supabase.from("project_elements").select("id").eq("project_id", pid).eq("kind", "character").eq("name", name).maybeSingle();
+    const cid = existsC ? (await supabase.from("project_elements").update(charRow).eq("id", existsC.id).select("id").single()).data?.id
+                        : (await supabase.from("project_elements").insert(charRow).select("id").single()).data?.id;
+    items.push({ element_row_id: cid, kind: "character", name, local_image: crop, character_name: name });
+
+    // wardrobe / outfit element so the work uniform is locked (the EP03 failure)
+    const wd = wardrobeFor(name);
+    if (wd) {
+      const outName = `${name} wardrobe`;
+      const outRow = {
+        project_id: pid, kind: "outfit", name: outName,
+        match_terms: [outName, `${name}'s outfit`, `${name}'s uniform`],
+        description: `${name}'s wardrobe — ${wd}. Same outfit every shot, no wardrobe changes.`,
+        scene_numbers: [], ref_image_url: null, higgsfield_element_id: null, status: "planned",
+      };
+      const { data: existsO } = await supabase.from("project_elements").select("id").eq("project_id", pid).eq("kind", "outfit").eq("name", outName).maybeSingle();
+      const oid = existsO ? (await supabase.from("project_elements").update(outRow).eq("id", existsO.id).select("id").single()).data?.id
+                          : (await supabase.from("project_elements").insert(outRow).select("id").single()).data?.id;
+      items.push({ element_row_id: oid, kind: "outfit", name: outName, generate_from: "description", description: wd, character_name: name });
+    }
+  }
+  if (items.length === 0) return;
+  const manifestPath = path.join(folder, ".intake-element-work.json");
+  fs.writeFileSync(manifestPath, JSON.stringify({ project_id: pid, base: BASE, items }, null, 2));
+  log(`\n🧩 ${items.length} element(s) staged for creation → ${manifestPath}`);
+  log(`   (agent w/ Higgsfield MCP: create each, then PATCH /projects/${pid}/elements {element_id, higgsfield_element_id})`);
+}
+
+// ── attach to a series + build the shared asset library once ────────
+async function seriesIngest(pid) {
+  if (!SERIES_TITLE && !SERIES_ID) return;
+  try {
+    let seriesId = SERIES_ID;
+    if (!seriesId && SERIES_TITLE) {
+      const { data: existing } = await supabase.from("series").select("id").eq("title", SERIES_TITLE).maybeSingle();
+      if (existing) seriesId = existing.id;
+      else {
+        const { data: ins, error } = await supabase.from("series").insert({ title: SERIES_TITLE }).select("id").single();
+        if (error) throw error;
+        seriesId = ins.id;
+        log(`\n📺 Series created: "${SERIES_TITLE}" (${seriesId})`);
+      }
+    }
+    if (!seriesId) return;
+    await supabase.from("projects").update({ series_id: seriesId, episode_number: EPISODE_NUM }).eq("id", pid);
+    log(`   episode attached to series ${seriesId}${EPISODE_NUM != null ? ` as EP${EPISODE_NUM}` : ""}`);
+
+    // Promote this episode's element-ready elements + element-linked
+    // characters/locations into the SERIES library (idempotent by name) so
+    // later episodes inherit them automatically via the registry.
+    const promote = async (kind, name, elementId, refUrl, desc) => {
+      if (!elementId && !refUrl) return;
+      const { data: have } = await supabase.from("project_elements").select("id").eq("series_id", seriesId).eq("kind", kind).eq("name", name).eq("active", true).maybeSingle();
+      const row = { series_id: seriesId, project_id: null, kind, name, match_terms: [name], description: desc || null, ref_image_url: refUrl || null, higgsfield_element_id: elementId || null, status: elementId ? "element_ready" : "image_ready", active: true };
+      if (have) await supabase.from("project_elements").update(row).eq("id", have.id);
+      else await supabase.from("project_elements").insert(row);
+    };
+    const { data: pels } = await supabase.from("project_elements").select("kind, name, higgsfield_element_id, ref_image_url, description").eq("project_id", pid).in("status", ["element_ready", "image_ready"]);
+    for (const e of pels || []) await promote(e.kind, e.name, e.higgsfield_element_id, e.ref_image_url, e.description);
+    const { data: chs } = await supabase.from("characters").select("name, higgsfield_element_id").eq("project_id", pid).not("higgsfield_element_id", "is", null);
+    for (const c of chs || []) await promote("character", c.name, c.higgsfield_element_id, null, null);
+    const { data: lcs } = await supabase.from("locations").select("name, higgsfield_element_id").eq("project_id", pid).not("higgsfield_element_id", "is", null);
+    for (const l of lcs || []) await promote("environment", l.name, l.higgsfield_element_id, null, null);
+    log(`   series asset library updated (characters/locations/elements shared across episodes)`);
+  } catch (e) {
+    const m = (e?.message || "").toLowerCase();
+    if (m.includes("does not exist") || m.includes("schema cache") || m.includes("could not find")) {
+      log(`   ⚠ series tables not migrated yet — apply supabase/migrations/2026-06-23_series_library.sql, then re-run with --series`);
+    } else log(`   ⚠ series attach failed: ${e?.message || e}`);
   }
 }
 

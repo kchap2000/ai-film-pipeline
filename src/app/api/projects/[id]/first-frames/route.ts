@@ -1,5 +1,6 @@
 import { createRouteClient } from "@/lib/supabase-route";
 import { generateProjectFirstFrames } from "@/lib/first-frame-generation";
+import { planElementKeyframes } from "@/lib/element-keyframes";
 import { recordProvenance } from "@/lib/provenance";
 import { normalizeProjectAspectRatio } from "@/lib/types";
 import { evaluateProjectAutomation, recordProjectDecision } from "@/lib/workflow";
@@ -105,12 +106,22 @@ export async function POST(
 ) {
   const { id } = params;
   const body = await req.json().catch(() => ({}));
+  const action = body.action as string | undefined;
   const singlePanelId = body.panel_id as string | undefined;
   // Realism-gate regeneration: anti-illustration addendum from the failed
   // attempt's scored issues (diagnostic v3)
   const feedbackNote = (body.feedback_note as string | undefined) || undefined;
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // Track A: plan deferred ELEMENT keyframes (connector-fulfilled) for every
+  // character shot with a trained element. Environment shots stay on Gemini.
+  if (action === "plan_elements") {
+    const planned = await planElementKeyframes(supabase, id, {
+      panelIds: body.panel_ids as string[] | undefined,
+    });
+    return NextResponse.json({ success: true, ...planned });
+  }
 
   const result = await generateProjectFirstFrames(supabase, id, { panelId: singlePanelId, feedbackNote });
   const failedCompletely = result.framesGenerated === 0 && result.errors.length > 0;
@@ -127,9 +138,14 @@ export async function POST(
 
 // ──────────────────────────────────────────────────────────────
 // PATCH /api/projects/:id/first-frames
-// Body: { frame_id: string, status: "approved" }
-// Marks a frame approved and stamps storyboard_panels.approved_first_frame_id.
-// Any previously-approved frame for the same panel flips to "replaced".
+// Two uses:
+// 1. Approve: { frame_id, status: "approved" }
+// 2. Connector fulfillment (Track A): the Higgsfield runner / Cowork agent
+//    posts the finished ELEMENT keyframe back for a deferred placeholder
+//    frame: { frame_id, status: "approved", image_url, model_used? }. The
+//    image replaces the placeholder, then the frame is approved + stamped.
+// Either way: stamps storyboard_panels.approved_first_frame_id and flips any
+// prior approved frame for the same panel to "replaced".
 // ──────────────────────────────────────────────────────────────
 export async function PATCH(
   req: NextRequest,
@@ -137,13 +153,18 @@ export async function PATCH(
 ) {
   const { id } = params;
   const body = await req.json().catch(() => ({}));
-  const { frame_id, status } = body as { frame_id?: string; status?: string };
+  const { frame_id, status, image_url, model_used } = body as {
+    frame_id?: string;
+    status?: string;
+    image_url?: string;
+    model_used?: string;
+  };
   const { supabase, user } = await createRouteClient();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  if (!frame_id || status !== "approved") {
+  if (!frame_id || (status !== "approved" && status !== "completed")) {
     return NextResponse.json(
-      { error: "frame_id and status: 'approved' required" },
+      { error: "frame_id and status: 'approved' | 'completed' required" },
       { status: 400 }
     );
   }
@@ -157,6 +178,14 @@ export async function PATCH(
     .single();
   if (frameErr || !frame) {
     return NextResponse.json({ error: "Frame not found" }, { status: 404 });
+  }
+
+  // Connector fulfillment: replace the deferred placeholder with the real
+  // element keyframe image before approving.
+  if (image_url) {
+    const fulfillUpdate: Record<string, unknown> = { image_url };
+    if (model_used) fulfillUpdate.model_used = model_used;
+    await supabase.from("first_frames").update(fulfillUpdate).eq("id", frame_id);
   }
 
   // Flip any prior approved frame for this panel → replaced
