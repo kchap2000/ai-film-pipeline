@@ -154,10 +154,14 @@ export async function POST(
 
   // Always fetch ALL panels (ordered) — sequence grouping needs to look
   // ahead at a target panel's neighbors even in single-panel mode.
+  // Order by SCENE first, then panel_number, so consecutive same-scene
+  // shots are adjacent in the array — otherwise multi-shot grouping (which
+  // walks allPanels[startIdx+1]) lands on another scene's panel and breaks.
   const { data: allPanels, error: panelErr } = await supabase
     .from("storyboard_panels")
     .select("id, scene_id, panel_number, shot_type, camera_angle, camera_movement, action_description, dialogue, characters_in_shot, duration_seconds, approved_first_frame_id")
     .eq("project_id", id)
+    .order("scene_id", { ascending: true })
     .order("panel_number", { ascending: true });
   if (panelErr || !allPanels || allPanels.length === 0) {
     return NextResponse.json({ error: "No storyboard panels found" }, { status: 400 });
