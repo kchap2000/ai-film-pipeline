@@ -10,13 +10,15 @@ Live URL: the Vercel production deploy (after merge). Supabase ref: `onavhfhpdxw
 
 ## PHASE 0 — Deploy the code (one-time)
 
-**1. Apply the series migration.** Open the Supabase SQL editor for project
-`onavhfhpdxwzdwotkddq`, paste the entire contents of:
+**1. Verify the series migration.** The migration has been applied to Supabase project
+`onavhfhpdxwzdwotkddq` and is recorded as `20260624153250 series_library`.
+If you are deploying this branch against a fresh Supabase project, open the SQL editor,
+paste the entire contents of:
 ```
 supabase/migrations/2026-06-23_series_library.sql
 ```
-and run it. It's additive + idempotent — safe to re-run. (This is the one step the
-agent is blocked from doing; everything degrades gracefully until it's applied.)
+and run it. It's additive; for the production project, just confirm `/api/series`
+returns `migrated: true` after deploy.
 
 **2. Merge PR #37 → main.** https://github.com/kchap2000/ai-film-pipeline/pull/37
 ```bash
