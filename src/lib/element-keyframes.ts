@@ -188,6 +188,34 @@ const KEYFRAME_NEGATIVES =
   "No facial warping, no identity drift, no wardrobe change, no text overlays or watermarks.";
 
 /**
+ * Trim the production-notes blob into a clean STYLE block: a capped bible
+ * summary, the WORLD RULES (anachronism) line, and the TOP 3 QA lessons —
+ * instead of dumping the full bible + a 2000-char lessons paragraph into
+ * every prompt. productionNotes = bible + "\n\n" + worldDirectives, where
+ * worldDirectives starts with "WORLD RULES" / "LESSONS FROM PRIOR REVIEWS".
+ */
+function trimKeyframeStyle(productionNotes?: string): { style: string; world: string; lessons: string } {
+  const pn = (productionNotes || "").trim();
+  if (!pn) return { style: "Cinematic, photoreal film still.", world: "", lessons: "" };
+  const cap = (s: string, n: number) => (s.length > n ? s.slice(0, n).replace(/\s+\S*$/, "") + "…" : s);
+  const wrIdx = pn.search(/WORLD RULES/i);
+  const leIdx = pn.search(/LESSONS FROM PRIOR REVIEWS/i);
+  let bibleEnd = pn.length;
+  if (wrIdx > -1) bibleEnd = Math.min(bibleEnd, wrIdx);
+  if (leIdx > -1) bibleEnd = Math.min(bibleEnd, leIdx);
+  const style = cap(pn.slice(0, bibleEnd).trim(), 460) || "Cinematic, photoreal film still.";
+  let world = "";
+  if (wrIdx > -1) world = cap(pn.slice(wrIdx, leIdx > wrIdx ? leIdx : undefined).trim(), 360);
+  let lessons = "";
+  if (leIdx > -1) {
+    const items = pn.slice(leIdx).replace(/LESSONS FROM PRIOR REVIEWS \(apply all\):/i, "")
+      .split("|").map((s) => s.trim()).filter(Boolean).slice(0, 3).map((s) => cap(s, 150));
+    if (items.length) lessons = `AVOID (prior QA): ${items.join(" · ")}`;
+  }
+  return { style, world, lessons };
+}
+
+/**
  * Build a single-keyframe prompt with element placeholders. Reuses the video
  * prompt engine's element ranking + match-term → <<<id>>> swap (the SAME
  * locks the video step uses), but emits a STILL structure: identity lock →
@@ -204,8 +232,14 @@ export function buildKeyframePrompt(
   // in-shot character's wardrobe/props (the wardrobe-drift bug). Non-character
   // elements (outfits/props/extra envs) are kept; ranking sorts them.
   const inShotLower = new Set(panel.charactersInShot.map((n) => n.toLowerCase()));
-  const scopedElements = registry.registryElements.filter(
-    (el) => el.kind !== "character" || el.matchTerms.some((t) => inShotLower.has(t.toLowerCase()))
+  const actionLower = (panel.actionDescription || "").toLowerCase();
+  // Characters → only if in this shot. Props/outfits → only if a match-term
+  // actually appears in the action text (so an Eye-Locket / pirate-outfit shot
+  // locks them, but the other registered props don't spam every prompt).
+  const scopedElements = registry.registryElements.filter((el) =>
+    el.kind === "character"
+      ? el.matchTerms.some((t) => inShotLower.has(t.toLowerCase()))
+      : el.matchTerms.some((t) => t.trim().length > 1 && actionLower.includes(t.toLowerCase()))
   );
 
   // Rank + cap to the ~4-reference practical limit; the location reserves a slot.
@@ -243,24 +277,29 @@ export function buildKeyframePrompt(
           .join(", ")}. Do not regenerate, beautify, or restyle any face.`
       : "";
 
-  // Continuity descriptions for capped-out elements (kept as text, no slot).
-  const continuityText = [...used, ...unmentioned, ...overflow]
-    .filter((el) => el.description)
+  // Continuity: ONLY visual descriptions of elements actually in this shot
+  // (character elements carry no description here; prop/outfit element
+  // descriptions are bible meta, not visual — the <<<id>>> tag already locks
+  // them — so they're excluded to avoid the "lock in every shot…" spam).
+  const continuityText = [...used, ...unmentioned]
+    .filter((el) => el.kind === "character" && el.description)
     .map((el) => el.description)
     .join(" ");
 
   const framing = [panel.shotType || "medium shot", panel.cameraAngle && panel.cameraAngle !== "eye-level" ? panel.cameraAngle : ""]
     .filter(Boolean)
     .join(", ");
-  const grade = (panel.productionNotes || "").trim();
+  const { style, world, lessons } = trimKeyframeStyle(panel.productionNotes);
 
   const lines = [
     identityLock,
     `SUBJECT: ${action}.${castNote}${setNote}`,
     panel.mood ? `MOOD: ${panel.mood}.` : "",
     `SHOT: ${framing}. ${panel.timeOfDay ? panel.timeOfDay + ", " : ""}cinematic lighting.`,
-    grade ? `STYLE: ${grade}` : "Photoreal, cinematic film still.",
+    `STYLE: ${style}`,
+    world,
     continuityText ? `CONTINUITY: ${continuityText}` : "",
+    lessons,
     `NEGATIVE: ${KEYFRAME_NEGATIVES}`,
     `FORMAT: single photographic keyframe, ${panel.aspectRatio}.`,
   ].filter(Boolean);
