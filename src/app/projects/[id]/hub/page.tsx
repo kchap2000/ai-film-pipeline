@@ -18,7 +18,14 @@ import type { RevisionPlan } from "@/lib/revision";
  * new version", which feeds the same Revision Engine as Director's Notes.
  */
 
-type Tab = "cast" | "locations" | "scenes" | "elements" | "films";
+type Tab = "readiness" | "cast" | "locations" | "scenes" | "elements" | "films";
+
+interface ReadinessReport {
+  characters: Array<{ name: string; role: string; has_description: boolean; has_headshot: boolean; locked: boolean; has_pose_sheet: boolean; has_element: boolean }>;
+  locations: Array<{ name: string; has_reference: boolean; locked: boolean; has_element: boolean }>;
+  scenes: Array<{ scene_number: number; has_scout: boolean; panel_count: number }>;
+  summary: { auto_generate: number; needs_you: string[]; gaps: string[]; start_step: string; ready_to_run: boolean; provided_locked: number };
+}
 
 interface VariationMeta {
   id: string;
@@ -101,7 +108,9 @@ interface CascadeState {
 export default function HubPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>("cast");
+  const [tab, setTab] = useState<Tab>("readiness");
+  const [readiness, setReadiness] = useState<ReadinessReport | null>(null);
+  const [runningGaps, setRunningGaps] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [characters, setCharacters] = useState<HubCharacter[]>([]);
@@ -137,7 +146,27 @@ export default function HubPage() {
     setFilms(data.films || []);
     setRevisions(data.revisions || []);
     setLoading(false);
+    // readiness / gap report (ASSET INTAKE I3)
+    fetch(`/api/projects/${id}/readiness-report`).then((r) => r.ok ? r.json() : null).then((rr) => rr && setReadiness(rr)).catch(() => {});
   }, [id]);
+
+  const fillGapsAndRun = async () => {
+    if (!readiness || runningGaps) return;
+    setRunningGaps(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects/${id}/auto-pipeline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "start", start_from_step: readiness.summary.start_step }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Could not start the run");
+      router.push(`/projects/${id}/pipeline`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setRunningGaps(false);
+    }
+  };
 
   useEffect(() => {
     fetchData();
@@ -348,6 +377,7 @@ export default function HubPage() {
   }
 
   const TABS: Array<{ key: Tab; label: string; count: number }> = [
+    { key: "readiness", label: "Readiness", count: readiness?.summary.auto_generate ?? 0 },
     { key: "cast", label: "Cast", count: characters.length },
     { key: "locations", label: "Locations", count: locations.length },
     { key: "scenes", label: "Scenes", count: scenes.length },
@@ -441,6 +471,67 @@ export default function HubPage() {
                 </button>
               </div>
             </div>
+          )}
+
+          {/* ── READINESS (ASSET INTAKE I3) ────────────────── */}
+          {tab === "readiness" && (
+            readiness ? (
+              <div className="space-y-6">
+                <div className="rounded-xl p-5 flex items-center justify-between gap-4 flex-wrap" style={{ background: "var(--brand-mid)", border: `1px solid ${readiness.summary.ready_to_run ? "rgba(74,222,128,0.4)" : "rgba(255,138,42,0.4)"}` }}>
+                  <div>
+                    <p className="text-sm font-bold" style={{ color: "var(--brand-white)" }}>
+                      {readiness.summary.ready_to_run ? "Ready to build" : "Gaps before run-ready"}
+                    </p>
+                    <p className="text-xs mt-1" style={{ color: "var(--brand-gray)" }}>
+                      {readiness.summary.provided_locked} locked from your assets · {readiness.summary.auto_generate} pieces the system will auto-generate · {readiness.summary.needs_you.length} need you
+                    </p>
+                  </div>
+                  <button onClick={fillGapsAndRun} disabled={runningGaps} className="text-xs uppercase tracking-widest px-5 py-2.5 disabled:opacity-40" style={{ background: "var(--brand-orange)", color: "var(--brand-navy)", fontWeight: 700 }}>
+                    {runningGaps ? "Starting…" : `Fill gaps & run`}
+                  </button>
+                </div>
+                {readiness.summary.needs_you.length > 0 && (
+                  <div className="rounded-md px-4 py-3 text-[11px]" style={{ background: "rgba(255,138,42,0.06)", border: "1px solid rgba(255,138,42,0.3)", color: "var(--brand-orange)" }}>
+                    {readiness.summary.needs_you.map((n, i) => <div key={i}>⚠ {n}</div>)}
+                  </div>
+                )}
+                {/* characters grid */}
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest mb-2" style={{ color: "var(--brand-gray)" }}>Characters — desc · headshot · pose · element</p>
+                  <div className="space-y-1.5">
+                    {readiness.characters.map((c) => {
+                      const dot = (ok: boolean, you?: boolean) => <span style={{ color: ok ? (you ? "var(--brand-cyan)" : "#4ade80") : "var(--brand-gray)" }}>{ok ? (you ? "✓ yours" : "✓") : "→ gen"}</span>;
+                      return (
+                        <div key={c.name} className="flex items-center justify-between px-3 py-2 rounded text-[11px]" style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>
+                          <span style={{ color: "var(--brand-white)" }}>{c.name} <span style={{ color: "var(--brand-steel)" }}>· {c.role}</span></span>
+                          <span className="flex gap-4">{dot(c.has_description)}{dot(c.has_headshot, c.locked)}{dot(c.has_pose_sheet, c.locked && c.has_pose_sheet)}{dot(c.has_element, c.has_element)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                {/* locations grid */}
+                <div>
+                  <p className="text-[10px] uppercase tracking-widest mb-2" style={{ color: "var(--brand-gray)" }}>Locations — reference · element</p>
+                  <div className="space-y-1.5">
+                    {readiness.locations.map((l) => (
+                      <div key={l.name} className="flex items-center justify-between px-3 py-2 rounded text-[11px]" style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>
+                        <span style={{ color: "var(--brand-white)" }}>{l.name}</span>
+                        <span className="flex gap-4">
+                          <span style={{ color: l.has_reference ? (l.locked ? "var(--brand-cyan)" : "#4ade80") : "var(--brand-gray)" }}>{l.has_reference ? (l.locked ? "✓ yours" : "✓") : "→ scout"}</span>
+                          <span style={{ color: l.has_element ? "#4ade80" : "var(--brand-gray)" }}>{l.has_element ? "✓" : "→ derive"}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <p className="text-[11px]" style={{ color: "var(--brand-gray)" }}>
+                  {readiness.scenes.length} scenes · {readiness.scenes.filter((s) => s.panel_count > 0).length} storyboarded. Provided assets are locked and never regenerated; “Fill gaps & run” starts the pipeline at <strong style={{ color: "var(--brand-white)" }}>{readiness.summary.start_step.replace(/_/g, " ")}</strong>.
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs" style={{ color: "var(--brand-gray)" }}>Computing readiness…</p>
+            )
           )}
 
           {/* ── CAST ───────────────────────────────────────── */}

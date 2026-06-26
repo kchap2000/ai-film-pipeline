@@ -116,7 +116,70 @@ export interface Project {
   version: number;
   created_at: string;
   updated_at: string;
+  /** Series container (Track C / series layer). Null = standalone project. */
+  series_id?: string | null;
+  episode_number?: number | null;
 }
+
+// ── Series layer ──────────────────────────────────────────────────────
+export interface Series {
+  id: string;
+  title: string;
+  bible_text?: string | null;
+  setting_profile?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * The TRUE production stage of an episode — unlike phase_status (which stops
+ * at first_frames), this spans through video, assembly, and QA. One shared
+ * definition (computeEpisodeStatus) used by the project card and series tiles.
+ */
+export type EpisodeStage =
+  | "ingested"
+  | "extracted"
+  | "cast"
+  | "storyboard"
+  | "first_frames"
+  | "clips"
+  | "assembled"
+  | "complete";
+
+export interface EpisodeStatus {
+  stage: EpisodeStage;
+  /** 0-100 overall progress across the full ingest→QA ladder. */
+  pct: number;
+  label: string;
+  /** QA overall score /100 once QA has run, else null. */
+  qaScore: number | null;
+  /** True when an assembled full video exists — the episode is watchable. */
+  watchable: boolean;
+  /** first_frames id for the tile thumbnail (served via /first-frames/image), or null. */
+  thumbnailFrameId: string | null;
+}
+
+export const EPISODE_STAGE_LABELS: Record<EpisodeStage, string> = {
+  ingested: "Ingested",
+  extracted: "Extracted",
+  cast: "Cast & scouted",
+  storyboard: "Storyboard",
+  first_frames: "Key frames",
+  clips: "Clips",
+  assembled: "Assembled",
+  complete: "Complete",
+};
+
+export const EPISODE_STAGE_ORDER: EpisodeStage[] = [
+  "ingested",
+  "extracted",
+  "cast",
+  "storyboard",
+  "first_frames",
+  "clips",
+  "assembled",
+  "complete",
+];
 
 export interface ProjectFile {
   id: string;

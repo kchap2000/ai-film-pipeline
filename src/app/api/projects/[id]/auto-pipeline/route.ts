@@ -372,13 +372,17 @@ async function executeStep(
     case "cast_generate": {
       const { data: chars } = await supabase
         .from("characters")
-        .select("id, name, voice_only")
+        .select("id, name, voice_only, locked, approved_cast_id")
         .eq("project_id", projectId)
         .eq("voice_only", false)
         .order("name");
-      // Revision recasts only touch the characters the plan named
+      // Revision recasts only touch the characters the plan named.
+      // ASSET INTAKE (I4): skip characters that already have a LOCKED approved
+      // headshot (a provided reference) — only gaps get cast generated.
       const recastIds = (progress.revision_recast_ids as string[]) || null;
-      const castable = (chars || []).filter((c) => !recastIds || recastIds.includes(c.id));
+      const castable = (chars || []).filter(
+        (c) => (!recastIds || recastIds.includes(c.id)) && !(c.locked && c.approved_cast_id)
+      );
       if (castable.length === 0) return { work: "No castable characters", nextStep: isRevision ? "first_frames" : "locations_generate", progress };
 
       const ci = Number(progress.character_index) || 0;
@@ -596,17 +600,24 @@ async function executeStep(
         }
         progress = { ...progress, locations_initialized: true };
       }
-      // Rows exist: generate missing variations one location per call
-      const { data: locations } = await supabase.from("locations").select("id, name").eq("project_id", projectId).order("name");
+      // Rows exist: generate missing variations one location per call.
+      // ASSET INTAKE (I4): skip locations that already have a LOCKED approved
+      // reference image (provided) — only gaps get scouted.
+      const { data: locations } = await supabase
+        .from("locations")
+        .select("id, name, locked, approved_image_url")
+        .eq("project_id", projectId)
+        .order("name");
+      const scoutable = (locations || []).filter((l) => !(l.locked && l.approved_image_url));
       const li = Number(progress.location_index) || 0;
-      if (!locations || li >= locations.length) return { work: "Location generation complete", nextStep: "locations_select", progress: {} };
-      const loc = locations[li];
+      if (!scoutable || li >= scoutable.length) return { work: "Location generation complete", nextStep: "locations_select", progress: {} };
+      const loc = scoutable[li];
       const res = await api(`/projects/${projectId}/locations`, { method: "POST", body: JSON.stringify({ location_id: loc.id }) });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         return { work: "", nextStep: step, progress, failed: data.error || `Location gen failed for ${loc.name}` };
       }
-      return { work: `${loc.name}: variations generated`, nextStep: li + 1 >= locations.length ? "locations_select" : "locations_generate", progress: { ...progress, location_index: li + 1 } };
+      return { work: `${loc.name}: variations generated`, nextStep: li + 1 >= scoutable.length ? "locations_select" : "locations_generate", progress: { ...progress, location_index: li + 1 } };
     }
 
     // ── Phase 6b: auto-select best location image ─────────

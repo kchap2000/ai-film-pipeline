@@ -5,9 +5,12 @@ import Link from "next/link";
 import { Project } from "@/lib/types";
 import ProjectCard from "@/components/ProjectCard";
 
+interface SeriesSummary { id: string; title: string; episode_count: number }
+
 export default function Dashboard() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [archivedProjects, setArchivedProjects] = useState<Project[]>([]);
+  const [series, setSeries] = useState<SeriesSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
   const [loadingArchived, setLoadingArchived] = useState(false);
@@ -20,6 +23,11 @@ export default function Dashboard() {
         setLoading(false);
       })
       .catch(() => setLoading(false));
+    // Series rollup — degrades to empty (flat grid) until the migration is applied.
+    fetch("/api/series")
+      .then((res) => res.json())
+      .then((data) => { if (Array.isArray(data?.series)) setSeries(data.series); })
+      .catch(() => {});
   }, []);
 
   async function loadArchived() {
@@ -63,6 +71,20 @@ export default function Dashboard() {
     setArchivedProjects((prev) => prev.filter((x) => x.id !== id));
   }
 
+  async function createSeries() {
+    const title = window.prompt("New series title (e.g. “The Maiden Voyage”):")?.trim();
+    if (!title) return;
+    const res = await fetch("/api/series", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (data?.series) setSeries((prev) => [data.series, ...prev]);
+    else if (data?.migrated === false) window.alert("Series tables aren’t migrated yet — apply supabase/migrations/2026-06-23_series_library.sql, then try again.");
+    else window.alert(data?.error || "Could not create series.");
+  }
+
   return (
     <div className="min-h-screen" style={{ background: "var(--brand-navy)" }}>
       <div className="max-w-6xl mx-auto px-6 py-12">
@@ -79,6 +101,14 @@ export default function Dashboard() {
               Pipeline{" "}
               <span className="font-extralight" style={{ color: "var(--brand-gray)" }}>Overview</span>
             </h1>
+            <div className="flex items-center gap-3">
+            <button
+              onClick={createSeries}
+              className="text-xs font-bold uppercase tracking-widest px-5 py-3 rounded-xl transition-all duration-150 hover:opacity-90"
+              style={{ background: "var(--brand-mid)", color: "var(--brand-white)", border: "1px solid var(--brand-steel)" }}
+            >
+              New Series
+            </button>
             <Link
               href="/projects/new"
               className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest px-5 py-3 rounded-xl transition-all duration-150 hover:opacity-90 hover:shadow-lg"
@@ -95,11 +125,34 @@ export default function Dashboard() {
               </svg>
               Create Project
             </Link>
+            </div>
           </div>
           <p className="text-sm max-w-2xl mt-5 leading-relaxed" style={{ color: "var(--brand-gray)" }}>
             Start a project, choose the delivery format, upload the source document, then follow each project card&apos;s next action through casting, scouting, storyboard, and first frames.
           </p>
         </header>
+
+        {/* Series (only once the migration is applied + a series exists) */}
+        {series.length > 0 && (
+          <section className="mb-10">
+            <h2 className="text-xs font-bold uppercase tracking-widest mb-3" style={{ color: "var(--brand-gray)" }}>Series</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {series.map((s) => (
+                <Link key={s.id} href={`/series/${s.id}`}>
+                  <div className="rounded-2xl p-5 h-full transition-all duration-150 hover:opacity-90"
+                       style={{ background: "var(--brand-mid)", border: "1px solid var(--brand-steel)" }}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="w-1.5 h-1.5 rounded-full" style={{ background: "var(--brand-orange)" }} />
+                      <span className="text-[10px] uppercase tracking-widest" style={{ color: "var(--brand-orange)" }}>Series</span>
+                    </div>
+                    <p className="text-lg font-bold" style={{ color: "var(--brand-white)" }}>{s.title}</p>
+                    <p className="text-xs mt-1" style={{ color: "var(--brand-gray)" }}>{s.episode_count} episode{s.episode_count === 1 ? "" : "s"} →</p>
+                  </div>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Active projects grid */}
         {loading ? (
@@ -111,7 +164,8 @@ export default function Dashboard() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {projects.map((project) => (
+            {/* Episodes attached to a series are shown under their series above. */}
+            {projects.filter((p) => !p.series_id).map((project) => (
               <ProjectCard
                 key={project.id}
                 project={project}

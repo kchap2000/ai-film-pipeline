@@ -1,4 +1,10 @@
 # Claude Code — AI Film Pipeline
+
+> 📖 **New here? Read [`PROJECT_BRAIN.md`](./PROJECT_BRAIN.md) first** — the single catch-up
+> file: current state, the architecture in 60 seconds, what's built, what's next, and a doc
+> index. (This CLAUDE.md is the *rules*; PROJECT_BRAIN is the *current state*; `brain.json`
+> key `ai_film_pipeline` is the cross-project status.)
+
 ## Operating Mode: FULLY AUTONOMOUS
 You have full authority to build, fix, refactor, commit, and deploy **without asking permission or checking in**. Do not say "Should I…", "Would you like me to…", or "Let me know if…". Just execute. When something is ambiguous, pick the most reasonable interpretation and proceed.
 
@@ -116,6 +122,17 @@ After completing ANY work, update `PROGRESS.md`:
 - Note new file paths in the relevant phase checklist
 - If blocked, mark ❌ Blocked with the reason
 
+### Keep the shared brain current (REQUIRED — this is how agents stay on the same page)
+The three layers are a shared bulletin board: every agent READS them at the start of a task
+and WRITES them at the end. If you change project status/state/next-steps, update ALL that apply:
+1. **`PROJECT_BRAIN.md`** — refresh the "Current state" + "Next actions" sections (and the doc
+   index if you added a doc). This is the single catch-up file; a stale one misleads every agent.
+2. **`brain.json`** (key `ai_film_pipeline`) — per the Brain Protocol below (read → edit →
+   validate → commit). Cross-project status.
+3. **`PROGRESS.md`** — the build-log entry above.
+Concurrency: if a file changed under you while you worked (another agent wrote it), re-read and
+re-apply your change. Keep edits small and atomic.
+
 ---
 
 ## Pre-Launch Task (NOT YET — hold until Khalil says go)
@@ -135,3 +152,20 @@ Do not implement this until explicitly asked.
 - [ ] Compound location names in existing "Life of The Lazy Mon" project (e.g. "Khalil's Apartment / Apartment Complex Exterior / City Streets / The Rock Bar") — Claude Haiku normalization now runs for new projects but old data has the verbose names. Could offer a one-time migration.
 - [ ] Janet and Khalil pose sheets are SVG placeholders — Gemini policy blocks real-person likenesses. Text-only retry is wired in but may also fail. Badge shows "Placeholder — Regenerate".
 - [ ] Janet character has no physical description in the source PDF — only personality info.
+
+
+<!-- BRAIN-PROTOCOL:START (managed block — safe to regenerate) -->
+## 🧠 Brain Protocol
+
+This project is part of Khalil's connected brain system. The brain is the single source of truth for status across all projects.
+
+**At the START of a session here:** read `/Users/khalilchapman/Desktop/brain.json`, find this project's entry, and load its current phase, status, key contacts, and next actions before doing work.
+
+**At the END of a session where anything changed** (status, deliverable, a contact, a decision, a next action): update this project's entry in `/Users/khalilchapman/Desktop/brain.json`, then bump `_meta.lastUpdatedAt` and set `_meta.lastUpdatedBy` to a short note. If no entry exists for this project, create one.
+
+- **This project's brain.json key:** `ai_film_pipeline`
+
+**Skills:** all skills live in ONE canonical library: `/Users/khalilchapman/Documents/Claude/Skills Library`. Use them from there — do not copy skills into this project folder. The `skills` block in brain.json maps each skill to its canonical path.
+
+**References:** skills inventory `/Users/khalilchapman/Desktop/SKILLS_INVENTORY.md` · architecture `/Users/khalilchapman/Documents/Claude/Projects/BRAIN_ARCHITECTURE.md`
+<!-- BRAIN-PROTOCOL:END -->

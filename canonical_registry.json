@@ -1,0 +1,137 @@
+{
+  "updated": "2026-06-25",
+  "characters": {
+    "jing li greenhill": "998bfde7-97e8-4357-b7a5-b274f285cc78",
+    "ying hui": "d3f28913-1705-487d-afcd-8ad0461d3d2d",
+    "zhang wang": "240c6373-790e-4367-94f1-a483faf5984f",
+    "connor nir": "d0f84aee-ca6d-45da-8f71-9f36b85ef571",
+    "zhan bao": "36d12a06-78c6-46bb-9244-3e2b07c84258",
+    "ching shih": "602e6b96-d7dc-4852-bbd0-95f38c8ed468",
+    "john cushing": "4a9e0afe-c4eb-4d8d-8566-bc14f54f8269",
+    "dl": "7c4675f5-3766-42b6-9780-9535716e1afd",
+    "huifen": "7bb07f0f-d9e2-45d1-803e-722039163966",
+    "the magistrate": "65e763ed-2350-4ba2-9c1c-14969d91b697",
+    "fei": "e5e0e723-0427-49d6-a26c-0552f7d1573e"
+  },
+  "locations": [
+    {
+      "key": "san francisco luxury tower",
+      "id": "ffb07ce0-f3ac-4a67-90a2-7379ac087c41"
+    },
+    {
+      "key": "ying penthouse",
+      "id": "f538f8e2-59d1-415a-8abd-f2f2b0610287"
+    },
+    {
+      "key": "neptune",
+      "id": "103b1481-2fbd-476f-8054-f1b8bcb82f95"
+    },
+    {
+      "key": "canton market",
+      "id": "6c808dd7-ec35-4cd9-95d7-559bb6239a39"
+    },
+    {
+      "key": "golden ghetto",
+      "id": "42b7fe2a-1e51-4172-aaac-a18b5926bd6b"
+    },
+    {
+      "key": "canton docks",
+      "id": "f4db0fb4-b1f0-4bc7-bbb7-fe7641c8c6fa"
+    },
+    {
+      "key": "courtroom",
+      "id": "6e9b2a40-47e0-4f97-a6ce-2a801818af40"
+    },
+    {
+      "key": "canton court",
+      "id": "6e9b2a40-47e0-4f97-a6ce-2a801818af40"
+    },
+    {
+      "key": "prison",
+      "id": "99b088a7-8c30-4f14-ae4d-f0ecc3c1646d"
+    },
+    {
+      "key": "pirate hall",
+      "id": "b48e22a3-b082-4669-8dde-355d47426307"
+    },
+    {
+      "key": "ching's stronghold",
+      "id": "882c6221-e27c-495c-8e3c-0f819ceae77c"
+    }
+  ],
+  "props": [
+    {
+      "kind": "prop",
+      "name": "Eye Locket",
+      "terms": [
+        "Eye Locket",
+        "the locket",
+        "locket"
+      ],
+      "id": "1cd29283-f93e-4e97-987f-0391cae5b6e6"
+    },
+    {
+      "kind": "outfit",
+      "name": "Canton Pirate Outfit",
+      "terms": [
+        "Canton pirate outfit",
+        "pirate outfit",
+        "pirate costume"
+      ],
+      "id": "6af0bffd-97b5-496e-b180-5d7505b93cdf"
+    },
+    {
+      "kind": "prop",
+      "name": "Green Immortals",
+      "terms": [
+        "Green Immortals",
+        "jade immortals",
+        "the immortals"
+      ],
+      "id": "4e677c69-66af-4902-a288-c79919451992"
+    },
+    {
+      "kind": "prop",
+      "name": "Handcuffs",
+      "terms": [
+        "handcuffs"
+      ],
+      "id": "1b2b8a9d-d384-4800-ab51-9cb98bca3b13"
+    },
+    {
+      "kind": "prop",
+      "name": "Pirate Cutlass",
+      "terms": [
+        "cutlass",
+        "curved blade"
+      ],
+      "id": "05a8d14c-b965-454a-9702-091d1c6ebf72"
+    },
+    {
+      "kind": "prop",
+      "name": "2037 Beater Car",
+      "terms": [
+        "beater car",
+        "beater"
+      ],
+      "id": "bfbd44a8-72f2-46c8-a92d-84531fe92321"
+    },
+    {
+      "kind": "prop",
+      "name": "The Watcher",
+      "terms": [
+        "the Watcher"
+      ],
+      "id": "22dccc54-da36-47c3-8e1f-806c26444204"
+    },
+    {
+      "kind": "prop",
+      "name": "Healing Gourd",
+      "terms": [
+        "healing gourd",
+        "gourd"
+      ],
+      "id": "59109681-deac-4dfc-b477-f95755fbbb8a"
+    }
+  ]
+}

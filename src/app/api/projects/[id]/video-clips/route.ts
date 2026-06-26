@@ -2,6 +2,7 @@ import { createRouteClient } from "@/lib/supabase-route";
 import { generateVideoClip, pollHiggsfieldJob, buildMotionPrompt, selectVideoModel, VideoGenRequest } from "@/lib/generate-video";
 import { getWorldDirectives } from "@/lib/lessons";
 import { buildSequencePrompt } from "@/lib/prompt-engine";
+import { loadProjectElementRegistry } from "@/lib/element-keyframes";
 import { recordProvenance } from "@/lib/provenance";
 import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -10,7 +11,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // panels are generated as ONE Seedance clip with numbered Shot 1/2/3
 // syntax — real cut rhythm inside the clip instead of disconnected
 // 4-second beats. Caps per Seedance limits.
-const MAX_SEQUENCE_SHOTS = 3;
+// Seedance 2.0 does true multi-shot in one generation (model card: multi-shot,
+// consistent identity). The Higgsfield 2.0 guide + seedance-prompting skill run
+// 5–6 numbered shots per 10–15s clip, so group up to 5 (still ≤15s) — fewer
+// seams, more story flow per clip, while staying inside the model's sweet spot.
+const MAX_SEQUENCE_SHOTS = 5;
 const MAX_SEQUENCE_SECONDS = 15;
 
 /**
@@ -149,10 +154,14 @@ export async function POST(
 
   // Always fetch ALL panels (ordered) — sequence grouping needs to look
   // ahead at a target panel's neighbors even in single-panel mode.
+  // Order by SCENE first, then panel_number, so consecutive same-scene
+  // shots are adjacent in the array — otherwise multi-shot grouping (which
+  // walks allPanels[startIdx+1]) lands on another scene's panel and breaks.
   const { data: allPanels, error: panelErr } = await supabase
     .from("storyboard_panels")
     .select("id, scene_id, panel_number, shot_type, camera_angle, camera_movement, action_description, dialogue, characters_in_shot, duration_seconds, approved_first_frame_id")
     .eq("project_id", id)
+    .order("scene_id", { ascending: true })
     .order("panel_number", { ascending: true });
   if (panelErr || !allPanels || allPanels.length === 0) {
     return NextResponse.json({ error: "No storyboard panels found" }, { status: 400 });
@@ -173,48 +182,10 @@ export async function POST(
   for (const s of scenes || []) sceneById[s.id] = { scene_number: s.scene_number, mood: s.mood || "", location: s.location || "" };
 
   // Element registry: characters + locations carry their element ids
-  // directly; project_elements adds props, outfits, and any extra
-  // environments derived from the script. All of them feed the prompt
-  // engine's <<<element_id>>> placeholder swaps.
-  const registryElements: import("@/lib/prompt-engine").RegistryElement[] = [];
-
-  const { data: charRows } = await supabase
-    .from("characters")
-    .select("name, higgsfield_element_id")
-    .eq("project_id", id)
-    .not("higgsfield_element_id", "is", null);
-  for (const c of charRows || []) {
-    registryElements.push({
-      kind: "character",
-      name: c.name,
-      elementId: c.higgsfield_element_id as string,
-      matchTerms: [c.name],
-    });
-  }
-
-  const { data: locRows } = await supabase
-    .from("locations")
-    .select("name, higgsfield_element_id")
-    .eq("project_id", id)
-    .not("higgsfield_element_id", "is", null);
-  const locationElementByName: Record<string, string> = {};
-  for (const l of locRows || []) locationElementByName[(l.name || "").toLowerCase().trim()] = l.higgsfield_element_id as string;
-
-  const { data: extraElements } = await supabase
-    .from("project_elements")
-    .select("kind, name, match_terms, description, higgsfield_element_id")
-    .eq("project_id", id)
-    .eq("status", "element_ready")
-    .not("higgsfield_element_id", "is", null);
-  for (const el of extraElements || []) {
-    registryElements.push({
-      kind: el.kind as "character" | "prop" | "outfit" | "environment",
-      name: el.name,
-      elementId: el.higgsfield_element_id as string,
-      matchTerms: (el.match_terms || []).length > 0 ? el.match_terms : [el.name],
-      description: el.description || undefined,
-    });
-  }
+  // directly; project_elements adds props, outfits, and extra environments;
+  // and (Track C1) any series-level library is merged in. Shared loader so
+  // keyframes and clips lock identity/wardrobe/set the same way.
+  const { registryElements, locationElementByName } = await loadProjectElementRegistry(supabase, id);
 
   const { data: projectAspect } = await supabase
     .from("projects")
@@ -372,9 +343,11 @@ export async function POST(
         ? buildSequencePrompt(
             group.map((p) => ({
               shotType: p.shot_type || "Medium",
+              cameraAngle: p.camera_angle || "",
               cameraMovement: p.camera_movement || "",
               actionDescription: p.action_description || "",
               dialogue: p.dialogue || "",
+              durationSeconds: Number(p.duration_seconds) || undefined,
             })),
             {
               mood: scene.mood,

@@ -25,7 +25,7 @@ export async function GET(
   const [charsRes, variationsRes] = await Promise.all([
     supabase
       .from("characters")
-      .select("id, name, description, role, personality, approved_cast_id, locked, voice_only")
+      .select("id, name, description, role, personality, approved_cast_id, locked, voice_only, element_preview_url")
       .eq("project_id", id)
       .order("role", { ascending: true })
       .order("name", { ascending: true }),

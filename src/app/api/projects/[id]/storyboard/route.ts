@@ -194,13 +194,21 @@ export async function POST(
       model: "claude-sonnet-4-6",
       max_tokens: 16000,
       system: `You are a film storyboard artist breaking a scene into individual shots for a premium vertical-drama episode (DramaBox-style pacing).
-For each shot, provide: shot_type (wide/medium/close-up/extreme-close-up/OTS/POV/two-shot/insert), camera_angle (eye-level/low/high/dutch/bird's-eye/worm's-eye), camera_movement (static/pan-left/pan-right/tilt-up/tilt-down/dolly-in/dolly-out/crane-up/crane-down/handheld/steadicam), action_description (what happens in this shot — ONE clear action beat, not several), dialogue (the dialogue spoken during this shot, empty string if none), characters_in_shot (array of character names visible), duration_seconds (2.0-6.0; up to 9.0 only for a major set-piece beat).
+For each shot, provide: shot_type (wide/medium/close-up/extreme-close-up/OTS/POV/two-shot/insert), camera_angle (eye-level/low/high/dutch/bird's-eye/worm's-eye), camera_movement (static/pan-left/pan-right/tilt-up/tilt-down/dolly-in/dolly-out/crane-up/crane-down/handheld/steadicam), action_description (the ONE action beat written as PHYSICAL, renderable performance — what the face and body DO, e.g. "her jaw tightens, she looks away, her knuckles whiten on the chair back"; NEVER mood words like "devastated", "intense", or "powerful"), dialogue (the dialogue spoken during this shot, empty string if none), characters_in_shot (array of character names visible), duration_seconds (2.0-6.0; up to 9.0 only for a major set-piece beat).
 
 SHOT DENSITY — match TV-drama pacing:
+- BINDING SHOT BUDGET: if the user message specifies a HARD SHOT CAP for this scene, that cap OVERRIDES every range below — never exceed it. Favor fewer, stronger shots; merge beats to fit.
 - Action/set-piece scenes: 14-24 shots. Dialogue scenes: 8-14 shots.
 - EVERY scripted dialogue line gets its own shot of its speaker (or a reaction shot carrying the line as off-screen audio).
 - Key reactions get their own shots. Big action beats split into multiple shots (approach / impact / aftermath).
 - Alternate framings: wide for geography, medium for action, close-up for emotion, extreme-close-up as punctuation (an eye, a weapon, a hand).
+
+DRAMATIC CRAFT — make each beat land (seedance director playbook):
+- Emotion = physical action. Render verbs, not feelings: "eyes flick down then back up", "a breath he doesn't let out", "his hand stops halfway". Restraint reads as drama — keep performances contained, emotion in the eyes and breath.
+- One camera move per shot, chosen with intent and set in camera_movement: slow dolly-in on a realization or a line landing; rack-focus to redirect attention at the turn; OTS for two-handers; tight insert on the subtext object; static/locked-off to let a performance carry; pull-out for the aftermath. Do not default everything to "static".
+- Escalation arc across the scene: calm/normal → first crack of tension → peak/turn → aftermath. Reserve ONE close-up for the single emotional peak — the scene's hinge.
+- Subtext through one object: pick a physical object the scene returns to (a ring, a locket, an untouched glass) and stage beats around it instead of having characters announce feelings.
+- Dialogue carries delivery: in the (tone) tag, direct HOW the line is said and what it is doing — "quiet, breaking", "flat, amused, not believing it".
 
 DIALOGUE FIDELITY — non-negotiable:
 - When the script text is provided, use its dialogue VERBATIM. Never invent, paraphrase, trim, or merge lines.
@@ -216,7 +224,15 @@ Return ONLY valid JSON: { "shots": [...] }.`,
       messages: [
         {
           role: "user",
-          content: `${worldDirectives ? `${worldDirectives}\n\n` : ""}Break this scene into individual storyboard shots:
+          content: `${(() => {
+            // Short-form shot budget (ASSET INTAKE I4): a target like "total
+            // roughly N shots" in production notes becomes a hard per-scene cap
+            // so a 90s episode doesn't get 117 panels. Falls back to a sane cap.
+            const m = productionNotes.match(/(?:total|roughly|about)\D{0,12}(\d{1,3})\s*shots/i);
+            const totalTarget = m ? Number(m[1]) : 0;
+            const perScene = totalTarget ? Math.max(2, Math.ceil(totalTarget / Math.max(1, scenes.length))) : 8;
+            return `HARD SHOT CAP for this scene: at most ${perScene} shots — do not exceed it.\n\n`;
+          })()}${worldDirectives ? `${worldDirectives}\n\n` : ""}Break this scene into individual storyboard shots:
 
 Scene ${scene.scene_number}: ${scene.location || "Unknown Location"}
 Time: ${scene.time_of_day || "Day"}
