@@ -144,7 +144,7 @@ export default function ProjectOverview({ projectId }: { projectId: string }) {
 
       {/* top bar */}
       <div className="pb-top">
-        <Link href="/projects" className="pb-back">← All projects</Link>
+        <Link href="/" className="pb-back">← All projects</Link>
         <nav className="pb-nav">
           <a href="#story">Story</a><a href="#characters">Characters</a><a href="#locations">Locations</a><a href="#episodes">Episodes</a><a href="#films">Films</a>
         </nav>
