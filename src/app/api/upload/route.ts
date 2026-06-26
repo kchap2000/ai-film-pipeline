@@ -6,7 +6,17 @@ const ACCEPTED_TYPES = [
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "text/plain",
+  "text/markdown",
+  "text/x-markdown",
 ];
+
+// Browsers sometimes send an empty or octet-stream type for .md files — fall
+// back to the extension so Markdown scripts upload natively.
+function isAcceptedFile(file: File): boolean {
+  if (ACCEPTED_TYPES.includes(file.type)) return true;
+  const name = (file.name || "").toLowerCase();
+  return name.endsWith(".md") || name.endsWith(".markdown") || name.endsWith(".txt");
+}
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 
@@ -39,9 +49,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  if (!ACCEPTED_TYPES.includes(file.type)) {
+  if (!isAcceptedFile(file)) {
     return NextResponse.json(
-      { error: "Only PDF, DOCX, and TXT files are accepted" },
+      { error: "Only PDF, DOCX, TXT, and Markdown (.md) files are accepted" },
       { status: 400 }
     );
   }

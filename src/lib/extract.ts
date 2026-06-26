@@ -134,33 +134,45 @@ export async function extractFromText(
 
   const client = new Anthropic({ apiKey });
 
-  const message = await client.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 8192,
-    system: EXTRACTION_SYSTEM_PROMPT,
-    messages: [
-      {
-        role: "user",
-        content: `Please analyze the following document(s) and extract all characters, scenes, and structure as specified.\n\n---\n\n${documentText}`,
-      },
-    ],
-  });
+  // max_tokens 16000 (was 8192): a rich script's full extraction — characters +
+  // 8 scenes + locations + structure + setting_profile — overran 8192 and the
+  // JSON came back truncated. And Claude intermittently emits slightly invalid
+  // JSON, so we retry the whole call up to 2× on a parse failure instead of
+  // hard-failing the run. (Found in the "We Bought a Bar" Ep1 test run.)
+  let lastRaw = "";
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const message = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 16000,
+      system: EXTRACTION_SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: `Please analyze the following document(s) and extract all characters, scenes, and structure as specified.\n\n---\n\n${documentText}`,
+        },
+      ],
+    });
 
-  const responseText =
-    message.content[0].type === "text" ? message.content[0].text : "";
+    const responseText = message.content[0].type === "text" ? message.content[0].text : "";
+    lastRaw = responseText;
+    const cleaned = responseText
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
 
-  // Strip markdown code fences if Claude adds them despite instructions
-  const cleaned = responseText
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-
-  try {
-    const parsed = JSON.parse(cleaned) as ExtractionResult;
-    return parsed;
-  } catch {
-    throw new Error(
-      `Failed to parse extraction response as JSON. Raw response: ${responseText.slice(0, 500)}`
-    );
+    try {
+      return JSON.parse(cleaned) as ExtractionResult;
+    } catch {
+      if (message.stop_reason === "max_tokens") {
+        console.error(`extractFromText: response truncated at max_tokens (attempt ${attempt})`);
+      } else {
+        console.error(`extractFromText: JSON parse failed (attempt ${attempt})`);
+      }
+      // fall through to retry
+    }
   }
+
+  throw new Error(
+    `Failed to parse extraction response as JSON after 3 attempts. Raw response: ${lastRaw.slice(0, 500)}`
+  );
 }

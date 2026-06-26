@@ -7,8 +7,8 @@ interface FileUploadProps {
   onUploadComplete: () => void;
 }
 
-const ACCEPTED_EXTENSIONS = ".pdf,.docx,.txt";
-const ACCEPTED_DISPLAY = "PDF, DOCX, TXT";
+const ACCEPTED_EXTENSIONS = ".pdf,.docx,.txt,.md,.markdown";
+const ACCEPTED_DISPLAY = "PDF, DOCX, TXT, MD";
 
 export default function FileUpload({
   projectId,
