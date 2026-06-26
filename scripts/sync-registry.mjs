@@ -66,7 +66,7 @@ const CANON_LOCATIONS = [
 // props/outfits → project_elements rows (kind, name, match_terms, element_id)
 const CANON_PROPS = [
   { kind: "prop",   name: "Eye Locket",          terms: ["Eye Locket", "the locket", "locket"],            id: "1cd29283-f93e-4e97-987f-0391cae5b6e6" },
-  { kind: "outfit", name: "Canton Pirate Outfit", terms: ["Canton pirate outfit", "pirate outfit", "pirate costume"], id: "9e951dbc-f590-4f44-ac05-e7775d82a031" },
+  { kind: "outfit", name: "Canton Pirate Outfit", terms: ["Canton pirate outfit", "pirate outfit", "pirate costume"], id: "6af0bffd-97b5-496e-b180-5d7505b93cdf" },
   { kind: "prop",   name: "Green Immortals",     terms: ["Green Immortals", "jade immortals", "the immortals"], id: "4e677c69-66af-4902-a288-c79919451992" },
   { kind: "prop",   name: "Handcuffs",           terms: ["handcuffs"],                                     id: "1b2b8a9d-d384-4800-ab51-9cb98bca3b13" },
   { kind: "prop",   name: "Pirate Cutlass",      terms: ["cutlass", "curved blade"],                       id: "05a8d14c-b965-454a-9702-091d1c6ebf72" },
