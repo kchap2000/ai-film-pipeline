@@ -23,7 +23,7 @@ export async function GET(
   const [scenesRes, varsRes, projectRes] = await Promise.all([
     supabase
       .from("scenes")
-      .select("id, project_id, scene_number, location, time_of_day, mood, action_summary, characters_present, props, wardrobe, locked, scene_type")
+      .select("id, project_id, scene_number, location, time_of_day, mood, action_summary, characters_present, props, wardrobe, locked, scene_type, episode_number, episode_title")
       .eq("project_id", id)
       .order("scene_number", { ascending: true }),
     supabase
