@@ -135,7 +135,7 @@ export default function ProjectOverview({ projectId }: { projectId: string }) {
       if (!m.has(ep)) m.set(ep, { ep, title: (s.episode_title || "").replace(/^S\d+E\d+\s*—\s*/, "") || `Episode ${ep}`, scenes: [] });
       m.get(ep)!.scenes.push(s);
     }
-    return [...m.values()].filter((e) => e.ep > 0).sort((a, b) => a.ep - b.ep);
+    return Array.from(m.values()).filter((e) => e.ep > 0).sort((a, b) => a.ep - b.ep);
   })();
 
   return (
