@@ -145,20 +145,47 @@ export async function loadProjectElementRegistry(
   return { registryElements, locationElementByName, hasAnyCharacterElement };
 }
 
-/** Resolve the location element id for a scene's location name (exact, then substring). */
+// Generic scene-heading words that must NEVER be a matchable location token
+// (they appear in almost every heading and would cause false binds).
+const HEADING_STOPWORDS = new Set([
+  "int", "ext", "the", "and", "morning", "day", "night", "evening", "dawn", "dusk",
+  "late", "early", "afternoon", "continuous", "moments", "later", "present", "past",
+  "house", "room", "1807", "2037", "1800", "1800s",
+]);
+
+function locationTokens(s: string): string[] {
+  return (s || "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((t) => t.length > 3 && !HEADING_STOPWORDS.has(t));
+}
+
+/**
+ * Resolve the location element id for a scene heading. Exact → substring →
+ * SHARED-TOKEN (e.g. "EXT. THE NEPTUNE - MERCHANT SHIP HIJACK" ↔
+ * "PB-Neptune-Deck-1807-V" share "neptune"). The token pass is what stops the
+ * model inventing a set when heading and element name aren't substrings of each
+ * other. null = MISSING SET — the caller should flag it, not let the model
+ * improvise a background.
+ */
 export function resolveLocationElementId(
   locationName: string,
   locationElementByName: Record<string, string>
 ): string | null {
   const key = (locationName || "").toLowerCase().trim();
   if (!key) return null;
-  return (
-    locationElementByName[key] ||
-    Object.entries(locationElementByName).find(
-      ([name]) => name.includes(key) || key.includes(name)
-    )?.[1] ||
-    null
+  if (locationElementByName[key]) return locationElementByName[key];
+  const sub = Object.entries(locationElementByName).find(
+    ([name]) => name.includes(key) || key.includes(name)
   );
+  if (sub) return sub[1];
+  const keyTokens = new Set(locationTokens(key));
+  let best: { id: string; score: number } | null = null;
+  for (const [name, id] of Object.entries(locationElementByName)) {
+    const shared = locationTokens(name).filter((t) => keyTokens.has(t)).length;
+    if (shared > 0 && (!best || shared > best.score)) best = { id, score: shared };
+  }
+  return best?.id || null;
 }
 
 export interface KeyframePanelInput {
@@ -172,6 +199,50 @@ export interface KeyframePanelInput {
   mood?: string;
   productionNotes?: string;
   aspectRatio: string;
+  /** Per-character wardrobe for THIS scene (scenes.wardrobe). Drives the
+   *  wardrobe-by-character lock so an outfit element is injected on every shot
+   *  a character appears in — not only shots whose action text says "outfit". */
+  sceneWardrobe?: Array<{ character: string; description: string }>;
+}
+
+/**
+ * Resolve which trained outfit element each in-shot character should wear,
+ * from the scene's wardrobe map. This is the fix for costume drift: wardrobe
+ * binds to character+scene, not to whether the action text happens to mention
+ * the outfit. Matches a wardrobe description (e.g. "Antique 1800s Canton female
+ * pirate outfit") to an outfit element by shared significant tokens with the
+ * element's match-terms or name (e.g. "Canton Pirate Outfit").
+ */
+export function resolveWardrobeForShot(
+  charactersInShot: string[],
+  sceneWardrobe: Array<{ character: string; description: string }> | undefined,
+  registry: ProjectElementRegistry
+): Array<{ character: string; elementId: string; name: string; description: string }> {
+  if (!sceneWardrobe?.length) return [];
+  const outfits = registry.registryElements.filter((el) => el.kind === "outfit");
+  if (!outfits.length) return [];
+  const inShot = new Set(charactersInShot.map((n) => (n || "").toLowerCase().trim()));
+  const out: Array<{ character: string; elementId: string; name: string; description: string }> = [];
+  const seen = new Set<string>();
+  for (const w of sceneWardrobe) {
+    if (!inShot.has((w.character || "").toLowerCase().trim())) continue;
+    const desc = (w.description || "").toLowerCase();
+    if (!desc) continue;
+    // Match a wardrobe description to an outfit element via (a) a full match-term
+    // hit, or (b) ≥2 shared significant name tokens. The ≥2 floor stops a single
+    // common token like "pirate" from putting Jing's female Canton outfit onto
+    // Zhan Bao (whose "pirate attire" shares only that one word).
+    const el = outfits.find((o) => {
+      if (o.matchTerms.some((t) => t.trim().length > 2 && desc.includes(t.toLowerCase()))) return true;
+      const shared = locationTokens(o.name).filter((tk) => desc.includes(tk)).length;
+      return shared >= 2;
+    });
+    if (el && !seen.has(`${w.character}|${el.elementId}`)) {
+      seen.add(`${w.character}|${el.elementId}`);
+      out.push({ character: w.character, elementId: el.elementId, name: el.name, description: w.description });
+    }
+  }
+  return out;
 }
 
 export interface KeyframePromptResult {
@@ -277,6 +348,24 @@ export function buildKeyframePrompt(
           .join(", ")}. Do not regenerate, beautify, or restyle any face.`
       : "";
 
+  // WARDROBE LOCK (character+scene → outfit element). Inject the outfit on every
+  // shot the character is in, regardless of whether the action text names it —
+  // the fix for the multi-outfit drift. Drop outfits already tagged via the
+  // action text to avoid a double placeholder.
+  const wardrobe = resolveWardrobeForShot(panel.charactersInShot, panel.sceneWardrobe, registry).filter(
+    (w) => !used.some((u) => u.elementId === w.elementId)
+  );
+  const wardrobeNote =
+    wardrobe.length > 0
+      ? "WARDROBE LOCK: " +
+        wardrobe
+          .map(
+            (w) =>
+              `<<<${w.elementId}>>> — ${w.character} wears the EXACT ${w.name} (${(w.description || "").slice(0, 90)}), identical in every shot; no substitutions, no added hat.`
+          )
+          .join(" ")
+      : "";
+
   // Continuity: ONLY visual descriptions of elements actually in this shot
   // (character elements carry no description here; prop/outfit element
   // descriptions are bible meta, not visual — the <<<id>>> tag already locks
@@ -299,6 +388,7 @@ export function buildKeyframePrompt(
     `STYLE: ${style}`,
     world,
     continuityText ? `CONTINUITY: ${continuityText}` : "",
+    wardrobeNote,
     lessons,
     `NEGATIVE: ${KEYFRAME_NEGATIVES}`,
     `FORMAT: single photographic keyframe, ${panel.aspectRatio}.`,
@@ -307,6 +397,7 @@ export function buildKeyframePrompt(
   // Collect the element ids actually referenced in the prompt text.
   const idSet = new Set<string>();
   for (const el of [...used, ...unmentioned]) idSet.add(el.elementId);
+  for (const w of wardrobe) idSet.add(w.elementId);
   if (locationElementId) idSet.add(locationElementId);
 
   return {
@@ -365,10 +456,17 @@ export async function planElementKeyframes(
   const sceneIds = Array.from(new Set(panels.map((p) => p.scene_id)));
   const { data: scenes } = await supabase
     .from("scenes")
-    .select("id, location, time_of_day, mood")
+    .select("id, location, time_of_day, mood, wardrobe")
     .in("id", sceneIds);
-  const sceneById: Record<string, { location: string; time_of_day: string; mood: string }> = {};
-  for (const s of scenes || []) sceneById[s.id] = { location: s.location || "", time_of_day: s.time_of_day || "", mood: s.mood || "" };
+  type SceneMeta = { location: string; time_of_day: string; mood: string; wardrobe: Array<{ character: string; description: string }> };
+  const sceneById: Record<string, SceneMeta> = {};
+  for (const s of scenes || [])
+    sceneById[s.id] = {
+      location: s.location || "",
+      time_of_day: s.time_of_day || "",
+      mood: s.mood || "",
+      wardrobe: Array.isArray(s.wardrobe) ? s.wardrobe : [],
+    };
 
   // Dedup: never queue a second PENDING element frame for a panel. In normal
   // (non-regen) planning also skip panels that already have an APPROVED element
@@ -392,7 +490,7 @@ export async function planElementKeyframes(
   for (const panel of panels) {
     if (pendingElementFrame.has(panel.id)) continue; // already queued
     if (!options.regen && approvedElementFrame.has(panel.id)) continue; // already done
-    const scene = sceneById[panel.scene_id] || { location: "", time_of_day: "", mood: "" };
+    const scene = sceneById[panel.scene_id] || { location: "", time_of_day: "", mood: "", wardrobe: [] };
     const built = buildKeyframePrompt(
       {
         panelNumber: panel.panel_number,
@@ -405,6 +503,7 @@ export async function planElementKeyframes(
         mood: scene.mood,
         productionNotes,
         aspectRatio,
+        sceneWardrobe: scene.wardrobe,
       },
       registry
     );

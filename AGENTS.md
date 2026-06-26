@@ -5,7 +5,7 @@ Required context for ANY agent (Codex, Cursor, Claude, etc.) working in this rep
 <!-- AGENT-BRAIN:START (managed — regenerate from AGENTS_BRAIN_INSTRUCTIONS.md) -->
 ## Khalil's Operating Brain — Instructions for All Agents
 
-_Last generated: 2026-06-22. Mirrored as `CLAUDE.md` and `AGENTS.md` at connected roots, as
+_Last generated: 2026-06-25. Mirrored as `CLAUDE.md` and `AGENTS.md` at connected roots, as
 `AGENTS.md` in code repos including `/Users/khalilchapman/Documents/Command Center`, and as the
 master file `~/Documents/Claude/AGENTS_BRAIN_INSTRUCTIONS.md`. Edit the master, then regenerate
 with `python3 /Users/khalilchapman/Documents/Claude/sync_agent_brain_instructions.py`._
@@ -31,7 +31,8 @@ You are operating inside Khalil's connected workspace. Three things are global l
 - `brain.json` has a `skills` block mapping each skill to its canonical path.
 - **Installed-registry skills** (client-portal, film-story-production, video-prompting, docx, pptx,
   xlsx, pdf, etc.) load automatically — don't duplicate them on disk.
-- There is **no "Seedance" skill** — use `video-prompting` for Seedance/Veo/Kling/Sora prompts.
+- Use `seedance-prompting` for Seedance dramatic narrative scenes and `video-prompting` for broader
+  model-agnostic Seedance/Veo/Kling/Sora prompts.
 
 ### 3. Editing brain.json SAFELY (required write protocol)
 `brain.json` is the whole memory layer; one malformed edit breaks every agent and scheduled task.
